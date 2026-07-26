@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-07-26
+
 ### Added
 
 - **`cip`, a one-word CLI for Docker installs.** If you set CipherMoth up with `install.sh` you never cloned the repo, so the `ciphermoth` command was out of reach entirely. The CLI now ships inside the backend image, and `install.sh` leaves a small `cip` script next to your compose file: `./cip password list`, no Python and no clone. Link it onto your PATH (`sudo ln -s ~/ciphermoth/cip /usr/local/bin/cip`) and it works from anywhere. It finds your install folder through symlinks, and tells you how to start the stack if it isn't running.
