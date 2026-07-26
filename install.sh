@@ -83,6 +83,14 @@ main() {
   curl -fsSL "$BASE/docker-compose.prod.yml" -o docker-compose.prod.yml ||
     die "Could not download docker-compose.prod.yml"
 
+  if curl -fsSL "$BASE/scripts/cip" -o cip.tmp 2>/dev/null && [ -s cip.tmp ]; then
+    mv cip.tmp cip
+    chmod +x cip
+  else
+    rm -f cip.tmp
+    warn "Could not download the 'cip' CLI shortcut; the vault itself is unaffected."
+  fi
+
   if [ -f .env ]; then
     info ".env already exists -> keeping your existing settings."
   else
@@ -142,6 +150,11 @@ EOF
   info "Open ${BOLD}http://localhost:3000${NC} and create your master password."
   info "Folder: $(pwd)"
   info "Stop:   docker compose -f docker-compose.prod.yml down"
+  if [ -x ./cip ]; then
+    printf '\n'
+    info "Prefer the terminal? ${BOLD}./cip password list${NC} (try ${BOLD}./cip --help${NC})"
+    info "Use it from anywhere: ${BOLD}sudo ln -s $(pwd)/cip /usr/local/bin/cip${NC}"
+  fi
   printf '\n'
   warn "There is no password recovery. Write your master password down somewhere safe,"
   warn "and take a backup once you've added a few entries."

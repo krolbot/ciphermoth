@@ -18,7 +18,8 @@ FROM python:3.13-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    CIPHERMOTH_API_URL=http://localhost/api
 
 RUN useradd -ms /bin/bash ciphermoth
 
@@ -27,6 +28,8 @@ WORKDIR /app/src
 COPY --from=builder /app/.venv /app/.venv
 COPY backend/ .
 RUN chmod +x entrypoint.sh
+RUN printf '#!/bin/sh\nexec python /app/src/cli.py "$@"\n' > /usr/local/bin/ciphermoth \
+    && chmod +x /usr/local/bin/ciphermoth
 RUN mkdir -p /update-control && chown ciphermoth:ciphermoth /update-control
 
 USER ciphermoth

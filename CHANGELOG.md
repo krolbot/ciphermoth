@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`cip`, a one-word CLI for Docker installs.** If you set CipherMoth up with `install.sh` you never cloned the repo, so the `ciphermoth` command was out of reach entirely. The CLI now ships inside the backend image, and `install.sh` leaves a small `cip` script next to your compose file: `./cip password list`, no Python and no clone. Link it onto your PATH (`sudo ln -s ~/ciphermoth/cip /usr/local/bin/cip`) and it works from anywhere. It finds your install folder through symlinks, and tells you how to start the stack if it isn't running.
+- **`ciphermoth password create --kind note`** creates a secure note from the terminal. Notes were previously web-only; the CLI now skips the login-specific prompts (username, URL, 2FA) and asks for the note body instead. `password update` does the same when editing a note.
+- **Help text on every command.** `ciphermoth --help` and `ciphermoth password --help` listed each command with a blank description. Every command, argument, and option now explains itself.
+
+### Security
+
+- **The CLI addressed the wrong entry for names containing `#`, `?`, or `../`.** Entry names went into the request URL unencoded, so `password delete "notes#2024"` truncated at the `#` and trashed a different entry named `notes` while reporting success. `?` injected a query string and `../` escaped the `/passwords/` namespace onto unrelated endpoints. Names are now percent-encoded, so every command acts on exactly the entry you named or fails cleanly. This mattered most for `delete` and `purge`, where the wrong target means losing a secret you didn't mean to touch.
+- **A warning before your master password crosses the network in the clear.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI now says so before prompting. Local use is unaffected and stays silent.
+- **Backups written by `ciphermoth backup` are now `0600`** (owner-only) instead of world-readable, on top of the AES-256 encryption they already had.
+- **Redirects are explicitly never followed**, so the key-derivation header and master password can't be replayed to a host chosen by whatever the API pointed at.
+
+### Fixed
+
+- **`ciphermoth password get` no longer crashes on passwords containing square brackets.** A value like `P[bold]ass` was parsed as terminal-formatting markup and blew up with a Python traceback instead of printing the password. Every value the CLI prints (passwords, notes, usernames, descriptions, custom fields, entry names) is now escaped, so you see exactly what you stored.
+- **`ciphermoth password update` no longer forces a password change.** The value prompt now accepts a blank line to keep the current one, so you can correct a URL or a description without retyping the password. Typing a new value still asks you to repeat it, and a mismatch aborts.
+- **Readable message when you hit a rate limit.** The API answered with a raw `{"error": "Rate limit exceeded: 10 per 1 hour"}` blob that the CLI printed verbatim and the web UI couldn't read at all, falling back to a generic "An error occurred". Both now get a plain sentence, and the CLI adds a hint about `CIPHERMOTH_RATE_LIMIT`.
+- **Aligned, readable `password get` output.** Custom fields were printed in their own ragged column instead of lining up with the built-in labels, and multi-line secure notes ran back to the left margin after the first line. Everything now shares one column, sized to the longest label.
+
+### Changed
+
+- **Unlocking is limited to 30 attempts an hour instead of 10.** Every CLI command unlocks the vault once, so ten commands in an hour locked you out of the web UI too. Thirty guesses an hour is still hopeless against the enforced 12-character minimum, and `CIPHERMOTH_RATE_LIMIT` now reaches the production stack through `.env` if you want a different number.
+
 ## [1.4.4] - 2026-07-23
 
 ### Fixed

@@ -75,7 +75,7 @@ Everything is optional, the defaults work fine for local use.
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed frontend origins |
 | `DISABLE_DOCS` | `false` | Set `true` to hide `/docs` and `/redoc` |
 | `DEBUG` | `false` | FastAPI debug mode |
-| `CIPHERMOTH_RATE_LIMIT` | `100/hour` | Rate limit per route (e.g. `50/hour`, `10/minute`) |
+| `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
 
 **Frontend:**
 
@@ -87,7 +87,10 @@ Everything is optional, the defaults work fine for local use.
 
 | Variable | Default | Description |
 |---|---|---|
-| `CIPHERMOTH_API_URL` | `http://localhost:8000/api` | Backend API base URL |
+| `CIPHERMOTH_API_URL` | `http://localhost:8000/api` | Backend API base URL (baked to `http://localhost/api` inside the backend image) |
+| `CIPHERMOTH_COMPOSE_FILE` | `<cip's folder>/docker-compose.prod.yml` | Compose file the `cip` wrapper drives |
+
+The CLI warns before prompting if `CIPHERMOTH_API_URL` points at a remote host over plain HTTP, since the master password would cross the network unencrypted. See [docs/CLI.md](./docs/CLI.md).
 
 ## Putting it on a real server
 

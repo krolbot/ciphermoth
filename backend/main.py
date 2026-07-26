@@ -1,9 +1,8 @@
 from fastapi import FastAPI, Request
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
@@ -23,12 +22,23 @@ _SECURITY_HEADERS = {
 }
 
 
+def rate_limit_exceeded(request: Request, exc: Exception) -> Response:
+    limit = exc.detail if isinstance(exc, RateLimitExceeded) else "too many requests"
+    response = JSONResponse(
+        {"detail": f"Too many attempts. Try again later (limit: {limit})."},
+        status_code=429,
+    )
+    return request.app.state.limiter._inject_headers(
+        response, request.state.view_rate_limit
+    )
+
+
 def get_application() -> FastAPI:
     settings = get_api_settings()
     server = FastAPI(**settings.fastapi_kwargs)
 
     server.state.limiter = limiter
-    server.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # ty: ignore[invalid-argument-type]
+    server.add_exception_handler(RateLimitExceeded, rate_limit_exceeded)
 
     server.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]

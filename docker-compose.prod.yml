@@ -28,6 +28,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-ciphermoth}
       # The browser origin that serves the UI; CORS must allow it.
       CORS_ORIGINS: '["${CIPHERMOTH_FRONTEND_ORIGIN:-http://localhost:3000}"]'
+      # Overrides the per-route rate limits (e.g. 200/hour) when set.
+      CIPHERMOTH_RATE_LIMIT: ${CIPHERMOTH_RATE_LIMIT:-}
     ports:
       - "${CIPHERMOTH_BACKEND_PORT:-8000}:80"
     volumes:

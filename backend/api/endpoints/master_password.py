@@ -44,7 +44,7 @@ async def get_status(
         }
     ),
 )
-@limiter.limit(rate("10/hour"))
+@limiter.limit(rate("30/hour"))
 async def check_master_password(
     request: Request,
     body: MasterPassword,

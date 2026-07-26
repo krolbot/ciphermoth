@@ -1,11 +1,15 @@
+import binascii
 import os
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
+from urllib.parse import quote, urlparse
 
 import httpx
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from helpers import generate_totp
@@ -17,7 +21,7 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 pw_app = typer.Typer(
-    help="Manage passwords.",
+    help="List, reveal, add, edit and delete vault entries.",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
@@ -26,13 +30,18 @@ app.add_typer(pw_app, name="password")
 _out = Console()
 _err = Console(stderr=True)
 
+_LABEL_WIDTH = 13
+_KINDS = ("login", "note")
+_CONFLICTS = ("skip", "overwrite")
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
 
 def _api_url() -> str:
     return os.environ.get("CIPHERMOTH_API_URL", "http://localhost:8000/api").rstrip("/")
 
 
 def _die(msg: str) -> NoReturn:
-    _err.print(f"[red]✗[/red]  {msg}")
+    _err.print(f"[red]✗[/red]  {escape(msg)}")
     raise typer.Exit(1)
 
 
@@ -41,15 +50,38 @@ def _ok(msg: str) -> None:
 
 
 def _check(resp: httpx.Response) -> None:
-    if not resp.is_success:
-        try:
-            detail = resp.json().get("detail", resp.text)
-        except ValueError:
-            detail = resp.text
-        _die(str(detail))
+    if resp.is_success:
+        return
+
+    try:
+        payload = resp.json()
+        detail = payload.get("detail") or payload.get("error") or resp.text
+    except ValueError:
+        detail = resp.text
+
+    if resp.status_code == 429:
+        _die(
+            f"{detail} Every command unlocks the vault once, so a batch of them "
+            f"can hit this. Raise CIPHERMOTH_RATE_LIMIT on the backend to lift it."
+        )
+
+    _die(str(detail))
+
+
+def _warn_plaintext_transport() -> None:
+    parsed = urlparse(_api_url())
+    host = parsed.hostname or ""
+    if parsed.scheme == "https" or host in _LOCAL_HOSTS:
+        return
+
+    _err.print(
+        f"[yellow]![/yellow]  {escape(host)} is reached over plain HTTP, so your "
+        f"master password crosses the network unencrypted. Put the API behind HTTPS."
+    )
 
 
 def _unlock(client: httpx.Client) -> tuple[str, str]:
+    _warn_plaintext_transport()
     master = typer.prompt("Master password", hide_input=True)
     try:
         resp = client.post("/master_password/check", json={"master_password": master})
@@ -69,9 +101,85 @@ def _hdr(key: str) -> dict[str, str]:
     return {"x-ciphermoth-key-derivation": key}
 
 
-@pw_app.command("list")
+def _entry_path(name: str, suffix: str = "") -> str:
+    return f"/passwords/{quote(name, safe='')}{suffix}"
+
+
+def _optional(label: str, current: str | None = None) -> str | None:
+    return (
+        typer.prompt(label, default=current or "", show_default=bool(current)) or None
+    )
+
+
+def _prompt_secret(label: str) -> str:
+    return typer.prompt(label, hide_input=True, confirmation_prompt=True)
+
+
+def _prompt_optional_secret(label: str) -> str | None:
+    value = typer.prompt(label, hide_input=True, default="", show_default=False)
+    if not value:
+        return None
+
+    if typer.prompt("Repeat for confirmation", hide_input=True) != value:
+        _die("The two entries did not match.")
+
+    return value
+
+
+def _totp_code(secret: str) -> str:
+    try:
+        return generate_totp(secret)
+    except (binascii.Error, ValueError):
+        return "unreadable 2FA secret"
+
+
+def _detail_rows(item: dict) -> list[tuple[str, str]]:
+    rows = [("Note" if item.get("kind") == "note" else "Value", item["password_value"])]
+
+    for label, key in (("Username", "username"), ("URL", "url")):
+        if item.get(key):
+            rows.append((label, item[key]))
+
+    if item.get("totp_secret"):
+        rows.append(("2FA code", _totp_code(item["totp_secret"])))
+
+    if item.get("folder"):
+        rows.append(("Folder", item["folder"]))
+
+    if item.get("tags"):
+        rows.append(("Tags", ", ".join(item["tags"])))
+
+    for field in item.get("custom_fields") or []:
+        shown = "••••••••" if field.get("hidden") else field.get("value", "")
+        rows.append((field["label"], shown))
+
+    if item.get("description"):
+        rows.append(("Description", item["description"]))
+
+    return rows
+
+
+def _print_details(item: dict) -> None:
+    rows = _detail_rows(item)
+    width = max([_LABEL_WIDTH, *(len(label) + 2 for label, _ in rows)])
+
+    _out.print(f"\n  [bold cyan]{escape(item['password_name'])}[/bold cyan]")
+
+    for label, value in rows:
+        head, *rest = str(value).split("\n")
+        padding = " " * (width - len(label))
+        _out.print(f"  [dim]{escape(label)}[/dim]{padding}{escape(head)}")
+        for line in rest:
+            _out.print(f"  {' ' * width}{escape(line)}")
+
+    _out.print()
+
+
+@pw_app.command("list", help="List every entry in the vault.")
 def pw_list() -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
         resp = client.get("/passwords", headers=_hdr(key))
 
@@ -89,80 +197,61 @@ def pw_list() -> None:
 
     for item in items:
         table.add_row(
-            item["password_name"],
-            item.get("description") or "-",
+            escape(item["password_name"]),
+            escape(item.get("description") or "-"),
             "[green]✓[/green]" if item["backed_up"] else "[dim]–[/dim]",
         )
 
     _out.print(table)
 
 
-@pw_app.command("get")
-def pw_get(name: Annotated[str, typer.Argument(help="Password name.")]) -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+@pw_app.command("get", help="Reveal one entry, including its live 2FA code.")
+def pw_get(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
-        resp = client.get(f"/passwords/{name}", headers=_hdr(key))
+        resp = client.get(_entry_path(name), headers=_hdr(key))
 
     _check(resp)
 
-    item = resp.json()
-
-    value_label = "Note" if item.get("kind") == "note" else "Value"
-    _out.print(f"\n  [bold cyan]{item['password_name']}[/bold cyan]")
-    _out.print(f"  [dim]{value_label}[/dim]        {item['password_value']}")
-
-    if item.get("username"):
-        _out.print(f"  [dim]Username[/dim]     {item['username']}")
-
-    if item.get("url"):
-        _out.print(f"  [dim]URL[/dim]          {item['url']}")
-
-    if item.get("totp_secret"):
-        _out.print(f"  [dim]2FA code[/dim]     {generate_totp(item['totp_secret'])}")
-
-    if item.get("folder"):
-        _out.print(f"  [dim]Folder[/dim]       {item['folder']}")
-
-    if item.get("tags"):
-        _out.print(f"  [dim]Tags[/dim]         {', '.join(item['tags'])}")
-
-    for field in item.get("custom_fields") or []:
-        shown = "••••••••" if field.get("hidden") else field.get("value", "")
-        _out.print(f"  [dim]{field['label']}[/dim]  {shown}")
-
-    if item.get("description"):
-        _out.print(f"  [dim]Description[/dim]  {item['description']}")
-
-    _out.print()
+    _print_details(resp.json())
 
 
-@pw_app.command("create")
-def pw_create(name: Annotated[str, typer.Argument(help="Password name.")]) -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+@pw_app.command(
+    "create", help="Add a login or a secure note, prompting for each field."
+)
+def pw_create(
+    name: Annotated[str, typer.Argument(help="Name for the new entry.")],
+    kind: Annotated[
+        str, typer.Option("--kind", "-k", help="Entry type: login or note.")
+    ] = "login",
+) -> None:
+    if kind not in _KINDS:
+        _die("--kind must be 'login' or 'note'.")
+
+    is_note = kind == "note"
+
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
         headers = _hdr(key)
 
-        if client.get(f"/passwords/{name}", headers=headers).is_success:
-            _die(f"A password named '{name}' already exists.")
+        if client.get(_entry_path(name), headers=headers).is_success:
+            _die(f"An entry named '{name}' already exists.")
 
-        value = typer.prompt(
-            "Password value", hide_input=True, confirmation_prompt=True
-        )
-        username = (
-            typer.prompt("Username / email", default="", show_default=False) or None
-        )
-        url = typer.prompt("URL", default="", show_default=False) or None
-        totp_secret = (
-            typer.prompt("TOTP secret", default="", show_default=False) or None
-        )
-        description = (
-            typer.prompt("Description", default="", show_default=False) or None
-        )
-        folder = typer.prompt("Folder", default="", show_default=False) or None
+        value = _prompt_secret("Note body" if is_note else "Password value")
+        username = None if is_note else _optional("Username / email")
+        url = None if is_note else _optional("URL")
+        totp_secret = None if is_note else _optional("TOTP secret")
+        description = _optional("Description")
+        folder = _optional("Folder")
         resp = client.post(
             "/passwords/create",
             json={
                 "password_name": name,
+                "kind": kind,
                 "username": username,
                 "password_value": value,
                 "url": url,
@@ -175,97 +264,69 @@ def pw_create(name: Annotated[str, typer.Argument(help="Password name.")]) -> No
 
     _check(resp)
 
-    _ok(f"Created [cyan]{name}[/cyan]")
+    _ok(f"Created [cyan]{escape(name)}[/cyan]")
 
 
-@pw_app.command("update")
-def pw_update(name: Annotated[str, typer.Argument(help="Password name.")]) -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+@pw_app.command(
+    "update",
+    help="Edit an entry. Leave a prompt blank to keep the current value.",
+)
+def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
         headers = _hdr(key)
 
-        current_resp = client.get(f"/passwords/{name}", headers=headers)
+        current_resp = client.get(_entry_path(name), headers=headers)
 
         _check(current_resp)
 
         current = current_resp.json()
-        if current.get("username"):
-            _out.print(f"  [dim]Current username:[/dim] {current['username']}")
-        if current.get("description"):
-            _out.print(f"  [dim]Current description:[/dim] {current['description']}")
+        is_note = current.get("kind") == "note"
 
-        new_value = typer.prompt(
-            "New password value", hide_input=True, confirmation_prompt=True
+        secret_label = "New note" if is_note else "New password value"
+        new_value = (
+            _prompt_optional_secret(f"{secret_label} (blank to keep the current one)")
+            or current["password_value"]
         )
         new_username = (
-            typer.prompt(
-                "New username / email",
-                default=current.get("username") or "",
-                show_default=bool(current.get("username")),
-            )
-            or None
+            None if is_note else _optional("Username / email", current.get("username"))
         )
-        new_url = (
-            typer.prompt(
-                "New URL",
-                default=current.get("url") or "",
-                show_default=bool(current.get("url")),
-            )
-            or None
-        )
+        new_url = None if is_note else _optional("URL", current.get("url"))
         new_totp = (
-            typer.prompt(
-                "New TOTP secret",
-                default=current.get("totp_secret") or "",
-                show_default=bool(current.get("totp_secret")),
-            )
-            or None
+            None if is_note else _optional("TOTP secret", current.get("totp_secret"))
         )
-        new_description = (
-            typer.prompt(
-                "New description",
-                default=current.get("description") or "",
-                show_default=bool(current.get("description")),
-            )
-            or None
-        )
-        new_folder = (
-            typer.prompt(
-                "New folder",
-                default=current.get("folder") or "",
-                show_default=bool(current.get("folder")),
-            )
-            or None
-        )
+        new_description = _optional("Description", current.get("description"))
+        new_folder = _optional("Folder", current.get("folder"))
 
+        shared = {
+            "password_name": name,
+            "kind": current.get("kind", "login"),
+            "tags": current.get("tags", []),
+            "custom_fields": current.get("custom_fields", []),
+            "favorite": current.get("favorite", False),
+        }
         resp = client.patch(
             "/passwords/update",
             json={
                 "password": {
-                    "password_name": name,
-                    "kind": current.get("kind", "login"),
+                    **shared,
                     "username": current.get("username"),
                     "password_value": current["password_value"],
                     "url": current.get("url"),
                     "totp_secret": current.get("totp_secret"),
                     "description": current.get("description"),
-                    "tags": current.get("tags", []),
-                    "custom_fields": current.get("custom_fields", []),
                     "folder": current.get("folder"),
-                    "favorite": current.get("favorite", False),
                 },
                 "new_password": {
-                    "password_name": name,
-                    "kind": current.get("kind", "login"),
+                    **shared,
                     "username": new_username,
                     "password_value": new_value,
                     "url": new_url,
                     "totp_secret": new_totp,
                     "description": new_description,
-                    "tags": current.get("tags", []),
-                    "custom_fields": current.get("custom_fields", []),
                     "folder": new_folder,
-                    "favorite": current.get("favorite", False),
                 },
             },
             headers=headers,
@@ -273,37 +334,41 @@ def pw_update(name: Annotated[str, typer.Argument(help="Password name.")]) -> No
 
     _check(resp)
 
-    _ok(f"Updated [cyan]{name}[/cyan]")
+    _ok(f"Updated [cyan]{escape(name)}[/cyan]")
 
 
-@pw_app.command("delete")
+@pw_app.command("delete", help="Move an entry to the trash. It can be restored later.")
 def pw_delete(
-    name: Annotated[str, typer.Argument(help="Password name.")],
+    name: Annotated[str, typer.Argument(help="Entry name.")],
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
 ) -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
         headers = _hdr(key)
 
-        exists = client.get(f"/passwords/{name}", headers=headers)
+        exists = client.get(_entry_path(name), headers=headers)
         if not exists.is_success:
             _check(exists)
 
         if not yes:
             typer.confirm(f"Move '{name}' to trash?", abort=True)
 
-        resp = client.delete(f"/passwords/{name}", headers=headers)
+        resp = client.delete(_entry_path(name), headers=headers)
 
     _check(resp)
 
-    _ok(f"Moved [cyan]{name}[/cyan] to trash")
+    _ok(f"Moved [cyan]{escape(name)}[/cyan] to trash")
 
 
-@pw_app.command("trash")
+@pw_app.command("trash", help="List the entries waiting in the trash.")
 def pw_trash() -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
         resp = client.get("/passwords/trash", headers=_hdr(key))
 
@@ -321,28 +386,34 @@ def pw_trash() -> None:
 
     for item in items:
         table.add_row(
-            item["password_name"],
-            item.get("description") or "-",
+            escape(item["password_name"]),
+            escape(item.get("description") or "-"),
             (item.get("deleted") or "-")[:19].replace("T", " "),
         )
 
     _out.print(table)
 
 
-@pw_app.command("restore")
-def pw_restore(name: Annotated[str, typer.Argument(help="Password name.")]) -> None:
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+@pw_app.command(
+    "restore", help="Move an entry out of the trash and back into the vault."
+)
+def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
-        resp = client.post(f"/passwords/{name}/restore", headers=_hdr(key))
+        resp = client.post(_entry_path(name, "/restore"), headers=_hdr(key))
 
     _check(resp)
 
-    _ok(f"Restored [cyan]{name}[/cyan]")
+    _ok(f"Restored [cyan]{escape(name)}[/cyan]")
 
 
-@pw_app.command("purge")
+@pw_app.command(
+    "purge", help="Permanently delete a trashed entry. This cannot be undone."
+)
 def pw_purge(
-    name: Annotated[str, typer.Argument(help="Password name.")],
+    name: Annotated[str, typer.Argument(help="Entry name.")],
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
@@ -350,22 +421,28 @@ def pw_purge(
     if not yes:
         typer.confirm(f"Permanently delete '{name}' from trash?", abort=True)
 
-    with httpx.Client(base_url=_api_url(), timeout=30) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=30, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
-        resp = client.delete(f"/passwords/{name}/purge", headers=_hdr(key))
+        resp = client.delete(_entry_path(name, "/purge"), headers=_hdr(key))
 
     _check(resp)
 
-    _ok(f"Permanently deleted [cyan]{name}[/cyan]")
+    _ok(f"Permanently deleted [cyan]{escape(name)}[/cyan]")
 
 
-@app.command("backup")
+@app.command(
+    "backup", help="Export the vault as a ZIP encrypted with your master password."
+)
 def cmd_backup(
     out_dir: Annotated[
         Path, typer.Option("--out", "-o", help="Directory to save the backup file.")
     ] = Path("."),
 ) -> None:
-    with httpx.Client(base_url=_api_url(), timeout=60) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=60, follow_redirects=False
+    ) as client:
         master, key = _unlock(client)
         resp = client.post(
             "/passwords/backup",
@@ -378,12 +455,33 @@ def cmd_backup(
     out_dir.mkdir(parents=True, exist_ok=True)
     filename = f"ciphermoth_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.zip"
     dest = out_dir / filename
+    dest.touch(mode=stat.S_IRUSR | stat.S_IWUSR)
+    dest.chmod(stat.S_IRUSR | stat.S_IWUSR)
     dest.write_bytes(resp.content)
 
-    _ok(f"Backup saved to [cyan]{dest}[/cyan]")
+    _ok(f"Backup saved to [cyan]{escape(str(dest))}[/cyan]")
 
 
-@app.command("import")
+def _report_import(payload: dict) -> None:
+    _ok(
+        f"Import complete - "
+        f"[cyan]{payload['imported']}[/cyan] added, "
+        f"[cyan]{payload['overwritten']}[/cyan] overwritten, "
+        f"[cyan]{payload['skipped']}[/cyan] skipped"
+    )
+
+
+def _read_import_file(file: Path, on_conflict: str) -> bytes:
+    if not file.exists():
+        _die(f"File not found: {file}")
+
+    if on_conflict not in _CONFLICTS:
+        _die("--on-conflict must be 'skip' or 'overwrite'.")
+
+    return file.read_bytes()
+
+
+@app.command("import", help="Restore entries from a CipherMoth backup ZIP.")
 def cmd_import(
     file: Annotated[Path, typer.Argument(help="Path to the ciphermoth backup ZIP.")],
     on_conflict: Annotated[
@@ -393,15 +491,11 @@ def cmd_import(
         ),
     ] = "skip",
 ) -> None:
-    if not file.exists():
-        _die(f"File not found: {file}")
+    file_bytes = _read_import_file(file, on_conflict)
 
-    if on_conflict not in ("skip", "overwrite"):
-        _die("--on-conflict must be 'skip' or 'overwrite'.")
-
-    file_bytes = file.read_bytes()
-
-    with httpx.Client(base_url=_api_url(), timeout=60) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=60, follow_redirects=False
+    ) as client:
         master, key = _unlock(client)
         resp = client.post(
             "/passwords/import",
@@ -412,17 +506,13 @@ def cmd_import(
 
     _check(resp)
 
-    r = resp.json()
-
-    _ok(
-        f"Import complete - "
-        f"[cyan]{r['imported']}[/cyan] added, "
-        f"[cyan]{r['overwritten']}[/cyan] overwritten, "
-        f"[cyan]{r['skipped']}[/cyan] skipped"
-    )
+    _report_import(resp.json())
 
 
-@app.command("import-csv")
+@app.command(
+    "import-csv",
+    help="Import a CSV exported from Chrome, Bitwarden, KeePass or Proton Pass.",
+)
 def cmd_import_csv(
     file: Annotated[
         Path, typer.Argument(help="Path to a CSV exported from another manager.")
@@ -434,15 +524,11 @@ def cmd_import_csv(
         ),
     ] = "skip",
 ) -> None:
-    if not file.exists():
-        _die(f"File not found: {file}")
+    file_bytes = _read_import_file(file, on_conflict)
 
-    if on_conflict not in ("skip", "overwrite"):
-        _die("--on-conflict must be 'skip' or 'overwrite'.")
-
-    file_bytes = file.read_bytes()
-
-    with httpx.Client(base_url=_api_url(), timeout=60) as client:
+    with httpx.Client(
+        base_url=_api_url(), timeout=60, follow_redirects=False
+    ) as client:
         _, key = _unlock(client)
         resp = client.post(
             "/passwords/import/csv",
@@ -453,14 +539,7 @@ def cmd_import_csv(
 
     _check(resp)
 
-    r = resp.json()
-
-    _ok(
-        f"Import complete - "
-        f"[cyan]{r['imported']}[/cyan] added, "
-        f"[cyan]{r['overwritten']}[/cyan] overwritten, "
-        f"[cyan]{r['skipped']}[/cyan] skipped"
-    )
+    _report_import(resp.json())
 
 
 if __name__ == "__main__":
