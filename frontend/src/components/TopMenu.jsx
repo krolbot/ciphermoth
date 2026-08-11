@@ -14,16 +14,19 @@ import {
 import SettingsIcon from "@mui/icons-material/Settings";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import { useStoreActions, useStoreState } from "easy-peasy";
+import { useTranslation } from "react-i18next";
 
 import { isAuth, removeKeyDerivation } from "../utils";
 import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
 import { GLOW } from "../lib/brand";
 import EnvBadge from "./EnvBadge";
+import LanguageSwitcher from "./LanguageSwitcher";
 import MothIcon from "./MothIcon";
 import SettingsModal from "./SettingsModal";
 import UpdateDialog from "./UpdateDialog";
 
 const TopMenu = () => {
+  const { t } = useTranslation();
   const userIsAuth = isAuth();
   const { pathname } = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -78,7 +81,7 @@ const TopMenu = () => {
             </Typography>
             <EnvBadge />
             {version && (
-              <Tooltip arrow title="Running version">
+              <Tooltip arrow title={t("topMenu.runningVersion")}>
                 <Typography
                   component="span"
                   sx={{
@@ -98,10 +101,10 @@ const TopMenu = () => {
           {userIsAuth ? (
             <>
               {updateAvailable && (
-                <Tooltip title="A new CipherMoth release is available">
+                <Tooltip title={t("topMenu.updateAvailable")}>
                   <Chip
                     icon={<UpgradeIcon sx={{ fontSize: 18 }} />}
-                    label="Update"
+                    label={t("common.actions.update")}
                     size="small"
                     onClick={() => setUpdateOpen(true)}
                     sx={{
@@ -116,13 +119,14 @@ const TopMenu = () => {
                   />
                 </Tooltip>
               )}
-              <Tooltip title="Settings">
+              <LanguageSwitcher />
+              <Tooltip title={t("topMenu.settings")}>
                 <IconButton color="inherit" onClick={() => setSettingsOpen(true)} sx={{ mr: 0.5 }}>
                   <SettingsIcon />
                 </IconButton>
               </Tooltip>
               <Button color="inherit" onClick={handleLogout}>
-                Log out
+                {t("auth.logOut")}
               </Button>
               <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
               <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} />
@@ -130,7 +134,7 @@ const TopMenu = () => {
           ) : (
             pathname !== "/login" && (
               <Button href="/login" color="inherit">
-                Log in
+                {t("auth.logIn")}
               </Button>
             )
           )}

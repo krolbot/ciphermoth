@@ -2,6 +2,7 @@ import { action, thunk } from "easy-peasy";
 
 import apiClient from "../api/client";
 import { errorDetail } from "../lib/http";
+import i18n from "../i18n";
 import { setKeyDerivation } from "../utils";
 
 const MasterPassword = {
@@ -45,13 +46,13 @@ const MasterPassword = {
         setKeyDerivation(data.key_derivation);
         window.location.replace("/passwords");
       } else {
-        actions.setError("Invalid master password.");
+        actions.setError(i18n.t("errors.invalidMasterPassword"));
       }
     } catch (err) {
       const msg =
         err.response?.status === 429
-          ? "Too many attempts. Please try again in an hour."
-          : await errorDetail(err, "An error occurred.");
+          ? i18n.t("errors.tooManyAttempts")
+          : await errorDetail(err, i18n.t("errors.generic"));
       actions.setError(msg);
     } finally {
       actions.setLoading(false);
@@ -66,7 +67,7 @@ const MasterPassword = {
       setKeyDerivation(data.key_derivation);
       window.location.replace("/passwords");
     } catch (err) {
-      actions.setError(await errorDetail(err, "An error occurred."));
+      actions.setError(await errorDetail(err, i18n.t("errors.generic")));
     } finally {
       actions.setLoading(false);
     }

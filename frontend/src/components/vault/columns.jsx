@@ -14,6 +14,7 @@ import StarBorderIcon from "@mui/icons-material/StarBorder";
 import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import { useTranslation } from "react-i18next";
 
 import TotpCell from "./TotpCell";
 import { getPasswordStrength } from "../../lib/passwordStrength";
@@ -67,6 +68,7 @@ const strengthIconFor = (level) => {
 };
 
 const StrengthIndicator = ({ password }) => {
+  const { t } = useTranslation();
   const strength = getPasswordStrength(password);
   if (!strength) return null;
   const Icon = strengthIconFor(strength.level);
@@ -75,12 +77,12 @@ const StrengthIndicator = ({ password }) => {
       title={
         <Box>
           <Typography variant="caption" sx={{ fontWeight: 700, color: strength.color }}>
-            {strength.label}
+            {t(strength.labelKey)}
           </Typography>
           <Typography variant="caption" sx={{ display: "block" }}>
             {strength.recommend
-              ? "We recommend updating this password."
-              : "This password looks good."}
+              ? t("vault.columns.updateRecommended")
+              : t("vault.columns.looksGood")}
           </Typography>
         </Box>
       }
@@ -93,6 +95,7 @@ const StrengthIndicator = ({ password }) => {
 };
 
 export const createColumns = ({
+  t,
   visibleRows,
   onToggleVisibility,
   onToggleFavorite,
@@ -108,7 +111,9 @@ export const createColumns = ({
     align: "center",
     headerAlign: "center",
     renderCell: (params) => (
-      <Tooltip title={params.value ? "Remove from favorites" : "Mark as favorite"}>
+      <Tooltip
+        title={t(params.value ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
+      >
         <IconButton size="small" onClick={() => onToggleFavorite(params.row)}>
           {params.value ? (
             <StarIcon fontSize="small" sx={{ color: GLOW }} />
@@ -121,13 +126,13 @@ export const createColumns = ({
   },
   {
     field: "password_name",
-    headerName: "Name",
+    headerName: t("common.fields.name"),
     flex: 1,
     minWidth: 130,
     renderCell: (params) => {
       const count = params.row.attachment_count ?? 0;
       const clip = count > 0 && (
-        <Tooltip title={`${count} attachment${count === 1 ? "" : "s"}`}>
+        <Tooltip title={t("vault.columns.attachment", { count })}>
           <Stack direction="row" spacing={0.25} sx={{ alignItems: "center", flexShrink: 0 }}>
             <AttachFileIcon sx={{ fontSize: 15, color: "text.disabled" }} />
             <Typography variant="caption" sx={{ color: "text.disabled" }}>
@@ -139,7 +144,7 @@ export const createColumns = ({
       return (
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
           {params.row.kind === "note" && (
-            <Tooltip title="Secure note">
+            <Tooltip title={t("vault.columns.secureNote")}>
               <StickyNote2OutlinedIcon fontSize="small" sx={{ color: "text.disabled" }} />
             </Tooltip>
           )}
@@ -156,7 +161,7 @@ export const createColumns = ({
   },
   {
     field: "folder",
-    headerName: "Folder",
+    headerName: t("common.fields.folder"),
     flex: 0.7,
     minWidth: 110,
     renderCell: (params) =>
@@ -180,7 +185,7 @@ export const createColumns = ({
   },
   {
     field: "username",
-    headerName: "Username / email",
+    headerName: t("common.fields.usernameEmail"),
     flex: 1,
     minWidth: 150,
     renderCell: (params) => {
@@ -191,7 +196,10 @@ export const createColumns = ({
           color={value ? "text.primary" : "text.disabled"}
           actions={
             value ? (
-              <CellActionButton title="Copy username" onClick={() => onCopy(value)}>
+              <CellActionButton
+                title={t("vault.columns.copyUsername")}
+                onClick={() => onCopy(value)}
+              >
                 <ContentCopyIcon fontSize="small" />
               </CellActionButton>
             ) : null
@@ -202,7 +210,7 @@ export const createColumns = ({
   },
   {
     field: "password_value",
-    headerName: "Password",
+    headerName: t("common.fields.password"),
     flex: 1,
     minWidth: 160,
     sortable: false,
@@ -218,7 +226,7 @@ export const createColumns = ({
           actions={
             <>
               <CellActionButton
-                title={visible ? "Hide password" : "Reveal password"}
+                title={t(visible ? "vault.columns.hidePassword" : "vault.columns.revealPassword")}
                 onClick={() => onToggleVisibility(name)}
               >
                 {visible ? (
@@ -227,7 +235,10 @@ export const createColumns = ({
                   <VisibilityIcon fontSize="small" />
                 )}
               </CellActionButton>
-              <CellActionButton title="Copy password" onClick={() => onCopy(params.value)}>
+              <CellActionButton
+                title={t("vault.columns.copyPassword")}
+                onClick={() => onCopy(params.value)}
+              >
                 <ContentCopyIcon fontSize="small" />
               </CellActionButton>
             </>
@@ -238,7 +249,7 @@ export const createColumns = ({
   },
   {
     field: "tags",
-    headerName: "Tags",
+    headerName: t("common.fields.tags"),
     flex: 1,
     minWidth: 120,
     sortable: false,
@@ -269,7 +280,7 @@ export const createColumns = ({
   },
   {
     field: "totp_secret",
-    headerName: "2FA",
+    headerName: t("vault.columns.twoFactor"),
     width: 118,
     sortable: false,
     renderCell: (params) =>
@@ -283,7 +294,7 @@ export const createColumns = ({
   },
   {
     field: "actions",
-    headerName: "Actions",
+    headerName: t("common.fields.actions"),
     width: 180,
     sortable: false,
     align: "center",
@@ -293,25 +304,29 @@ export const createColumns = ({
       return (
         <Stack direction="row" spacing={0} sx={{ alignItems: "center", height: "100%" }}>
           <Box sx={{ visibility: url ? "visible" : "hidden" }}>
-            <Tooltip title="Open website">
+            <Tooltip title={t("vault.columns.openWebsite")}>
               <IconButton size="small" onClick={() => url && openUrl(url)}>
                 <OpenInNewIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           </Box>
-          <Tooltip title="Edit">
+          <Tooltip title={t("common.actions.edit")}>
             <IconButton size="small" onClick={() => onEdit(params.row)}>
               <EditIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Delete">
+          <Tooltip title={t("common.actions.delete")}>
             <IconButton size="small" color="error" onClick={() => onDelete(password_name)}>
               <DeleteIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1 }} />
           {kind !== "note" && <StrengthIndicator password={password_value} />}
-          <Tooltip title={backed_up ? "Password backed up" : "Password not backed up"}>
+          <Tooltip
+            title={t(
+              backed_up ? "vault.columns.passwordBackedUp" : "vault.columns.passwordNotBackedUp"
+            )}
+          >
             <Box sx={{ display: "flex", alignItems: "center" }}>
               {backed_up ? (
                 <CheckCircleOutlineIcon fontSize="small" sx={{ color: "success.main" }} />

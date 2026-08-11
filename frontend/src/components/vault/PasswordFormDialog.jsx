@@ -31,6 +31,7 @@ import StarBorderIcon from "@mui/icons-material/StarBorder";
 import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import { useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
 import AttachmentsSection from "./AttachmentsSection";
@@ -142,48 +143,51 @@ const FormSection = ({ label, count, preview, open, onToggle, children }) => (
   </Box>
 );
 
-const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => (
-  <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-    <TextField
-      label="Label"
-      size="small"
-      value={field.label}
-      onChange={(e) => onChange({ ...field, label: e.target.value })}
-      sx={{ flex: "0 0 34%" }}
-      placeholder="e.g. PIN"
-    />
-    <TextField
-      label="Value"
-      size="small"
-      type={field.hidden ? "password" : "text"}
-      value={field.value}
-      onChange={(e) => onChange({ ...field, value: e.target.value })}
-      sx={{ flex: 1 }}
-      autoComplete="off"
-      slotProps={{ htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" } }}
-    />
-    <Tooltip
-      title={field.hidden ? "Value hidden - click to reveal in views" : "Hide value in views"}
-    >
-      <IconButton size="small" onClick={onToggleHidden}>
-        {field.hidden ? (
-          <LockOutlinedIcon fontSize="small" />
-        ) : (
-          <LockOpenOutlinedIcon fontSize="small" />
-        )}
-      </IconButton>
-    </Tooltip>
-    <Tooltip title="Remove field">
-      <IconButton size="small" color="error" onClick={onRemove}>
-        <DeleteOutlineIcon fontSize="small" />
-      </IconButton>
-    </Tooltip>
-  </Stack>
-);
+const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
+  const { t } = useTranslation();
+
+  return (
+    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+      <TextField
+        label={t("entry.labels.label")}
+        size="small"
+        value={field.label}
+        onChange={(e) => onChange({ ...field, label: e.target.value })}
+        sx={{ flex: "0 0 34%" }}
+        placeholder={t("entry.placeholders.customLabel")}
+      />
+      <TextField
+        label={t("entry.labels.value")}
+        size="small"
+        type={field.hidden ? "password" : "text"}
+        value={field.value}
+        onChange={(e) => onChange({ ...field, value: e.target.value })}
+        sx={{ flex: 1 }}
+        autoComplete="off"
+        slotProps={{ htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" } }}
+      />
+      <Tooltip title={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}>
+        <IconButton size="small" onClick={onToggleHidden}>
+          {field.hidden ? (
+            <LockOutlinedIcon fontSize="small" />
+          ) : (
+            <LockOpenOutlinedIcon fontSize="small" />
+          )}
+        </IconButton>
+      </Tooltip>
+      <Tooltip title={t("entry.actions.removeField")}>
+        <IconButton size="small" color="error" onClick={onRemove}>
+          <DeleteOutlineIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </Stack>
+  );
+};
 
 const HistoryRow = ({ entry, onCopy }) => {
+  const { t, i18n } = useTranslation();
   const [show, setShow] = useState(false);
-  const when = new Date(entry.changed_at).toLocaleDateString();
+  const when = new Date(entry.changed_at).toLocaleDateString(i18n.resolvedLanguage);
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
       <Typography
@@ -195,12 +199,16 @@ const HistoryRow = ({ entry, onCopy }) => {
       <Typography variant="caption" sx={{ color: "text.disabled" }}>
         {when}
       </Typography>
-      <IconButton size="small" onClick={() => setShow((v) => !v)}>
-        {show ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-      </IconButton>
-      <IconButton size="small" onClick={() => onCopy?.(entry.value)}>
-        <ContentCopyIcon fontSize="small" />
-      </IconButton>
+      <Tooltip title={t(show ? "passwordField.hide" : "passwordField.show")}>
+        <IconButton size="small" onClick={() => setShow((v) => !v)}>
+          {show ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+        </IconButton>
+      </Tooltip>
+      <Tooltip title={t("vault.columns.copyPassword")}>
+        <IconButton size="small" onClick={() => onCopy?.(entry.value)}>
+          <ContentCopyIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
     </Stack>
   );
 };
@@ -213,6 +221,7 @@ const PasswordFormDialog = ({
   onCopy,
   folderOptions = [],
 }) => {
+  const { t } = useTranslation();
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [showValue, setShowValue] = useState(false);
@@ -293,12 +302,14 @@ const PasswordFormDialog = ({
 
   const handleSubmit = async () => {
     if (!form.password_name.trim()) {
-      setFormError("Name is required.");
+      setFormError(t("entry.validation.nameRequired"));
       return;
     }
 
     if (!form.password_value.trim()) {
-      setFormError(isNote ? "Note content is required." : "Password value is required.");
+      setFormError(
+        t(isNote ? "entry.validation.noteRequired" : "entry.validation.passwordRequired")
+      );
       return;
     }
 
@@ -346,19 +357,21 @@ const PasswordFormDialog = ({
     JSON.stringify(normalizeCustomFields(form.custom_fields)) ===
       JSON.stringify(normalizeCustomFields(editTarget.custom_fields));
 
-  const title = editTarget
+  const titleKey = editTarget
     ? isNote
-      ? "Edit Secure Note"
-      : "Edit Password"
+      ? "entry.title.editNote"
+      : "entry.title.editPassword"
     : isNote
-      ? "Add Secure Note"
-      : "Add Password";
+      ? "entry.title.addNote"
+      : "entry.title.addPassword";
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        {title}
-        <Tooltip title={form.favorite ? "Remove from favorites" : "Mark as favorite"}>
+        {t(titleKey)}
+        <Tooltip
+          title={t(form.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
+        >
           <IconButton onClick={() => setForm((p) => ({ ...p, favorite: !p.favorite }))}>
             {form.favorite ? <StarIcon sx={{ color: GLOW }} /> : <StarBorderIcon />}
           </IconButton>
@@ -376,18 +389,18 @@ const PasswordFormDialog = ({
           >
             <ToggleButton value="login">
               <KeyOutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
-              Login
+              {t("entry.kind.login")}
             </ToggleButton>
             <ToggleButton value="note">
               <StickyNote2OutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
-              Secure note
+              {t("entry.kind.note")}
             </ToggleButton>
           </ToggleButtonGroup>
         )}
 
         <Stack spacing={1.5}>
           <TextField
-            label="Name"
+            label={t("common.fields.name")}
             size="small"
             value={form.password_name}
             onChange={setField("password_name")}
@@ -398,16 +411,16 @@ const PasswordFormDialog = ({
             slotProps={{ htmlInput: { maxLength: 255 } }}
             helperText={
               editTarget
-                ? "Name cannot be changed"
+                ? t("entry.help.nameCannotChange")
                 : isNote
-                  ? "e.g. Recovery codes, Wi-Fi, Passport"
-                  : "e.g. GitHub, Gmail, Netflix"
+                  ? t("entry.placeholders.noteName")
+                  : t("entry.placeholders.passwordName")
             }
           />
 
           {isNote ? (
             <TextField
-              label="Note"
+              label={t("entry.labels.note")}
               size="small"
               value={form.password_value}
               onChange={setField("password_value")}
@@ -417,35 +430,35 @@ const PasswordFormDialog = ({
               minRows={6}
               maxRows={6}
               autoComplete="off"
-              placeholder="Anything you want to keep encrypted and safe."
+              placeholder={t("entry.placeholders.note")}
               slotProps={{ htmlInput: { spellCheck: false, style: { overflow: "auto" } } }}
             />
           ) : (
             <>
               <TextField
-                label="Username / email (optional)"
+                label={t("entry.labels.usernameOptional")}
                 size="small"
                 value={form.username}
                 onChange={setField("username")}
                 fullWidth
-                placeholder="e.g. john@example.com"
+                placeholder={t("entry.placeholders.username")}
                 slotProps={{
                   htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" },
                 }}
               />
               <TextField
-                label="Website (optional)"
+                label={t("entry.labels.websiteOptional")}
                 size="small"
                 value={form.url}
                 onChange={setField("url")}
                 fullWidth
-                placeholder="e.g. https://github.com"
+                placeholder={t("entry.placeholders.website")}
                 slotProps={{
                   htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" },
                 }}
               />
               <PasswordField
-                label="Password"
+                label={t("common.fields.password")}
                 size="small"
                 value={form.password_value}
                 onChange={(e) => {
@@ -457,7 +470,13 @@ const PasswordFormDialog = ({
                 show={showValue}
                 onToggleShow={() => setShowValue((v) => !v)}
                 adornment={
-                  <Tooltip title={showGenerator ? "Close generator" : "Generate password"}>
+                  <Tooltip
+                    title={t(
+                      showGenerator
+                        ? "entry.actions.closeGenerator"
+                        : "entry.actions.generatePassword"
+                    )}
+                  >
                     <IconButton
                       onClick={toggleGenerator}
                       size="small"
@@ -491,7 +510,11 @@ const PasswordFormDialog = ({
             setFormError("");
           }}
           renderInput={(params) => (
-            <TextField {...params} label="Folder (optional)" placeholder="e.g. Work, Personal" />
+            <TextField
+              {...params}
+              label={t("entry.labels.folderOptional")}
+              placeholder={t("entry.placeholders.folder")}
+            />
           )}
           sx={{ mt: 1.5 }}
         />
@@ -499,26 +522,22 @@ const PasswordFormDialog = ({
         <Box sx={{ mt: 1.5 }}>
           {!isNote && (
             <FormSection
-              label="Two-factor"
-              preview={form.totp_secret ? "Configured" : ""}
+              label={t("entry.labels.twoFactor")}
+              preview={form.totp_secret ? t("common.labels.configured") : ""}
               open={sections.totp}
               onToggle={toggleSection("totp")}
             >
               <PasswordField
-                label="Two-factor secret (optional)"
+                label={t("entry.labels.twoFactorSecret")}
                 size="small"
                 value={form.totp_secret}
                 onChange={setField("totp_secret")}
                 autoComplete="off"
                 show={showTotp}
                 onToggleShow={() => setShowTotp((v) => !v)}
-                helperText="Paste a base32 secret or an otpauth:// link to show 2FA codes here."
+                helperText={t("entry.help.twoFactor")}
                 adornment={
-                  <Tooltip
-                    arrow
-                    placement="top"
-                    title="This is for the rolling 6-digit code some sites ask for after your password. When you turn on authenticator-app 2FA (Google Authenticator, Authy and similar), the site shows a setup key or QR code. Paste that key here (a base32 secret or an otpauth:// link) and CipherMoth will show the live code in your vault. Leave blank if you keep 2FA on your phone."
-                  >
+                  <Tooltip arrow placement="top" title={t("entry.help.twoFactorTooltip")}>
                     <HelpOutlineIcon
                       fontSize="small"
                       sx={{ color: "text.disabled", cursor: "help", mr: 0.5 }}
@@ -530,7 +549,7 @@ const PasswordFormDialog = ({
           )}
 
           <FormSection
-            label="Tags"
+            label={t("common.fields.tags")}
             count={form.tags.length}
             preview={form.tags.slice(0, 3).join(", ")}
             open={sections.tags}
@@ -549,13 +568,17 @@ const PasswordFormDialog = ({
                 }))
               }
               renderInput={(params) => (
-                <TextField {...params} label="Tags" placeholder="Add a tag and press Enter" />
+                <TextField
+                  {...params}
+                  label={t("common.fields.tags")}
+                  placeholder={t("entry.placeholders.tags")}
+                />
               )}
             />
           </FormSection>
 
           <FormSection
-            label="Custom fields"
+            label={t("entry.labels.customFields")}
             count={customCount}
             preview={normalizeCustomFields(form.custom_fields)
               .map((f) => f.label)
@@ -577,7 +600,7 @@ const PasswordFormDialog = ({
               ))}
               <Box>
                 <Button size="small" startIcon={<AddIcon />} onClick={addCustomField}>
-                  Add field
+                  {t("entry.actions.addField")}
                 </Button>
               </Box>
             </Stack>
@@ -585,27 +608,27 @@ const PasswordFormDialog = ({
 
           {!isNote && (
             <FormSection
-              label="Notes"
+              label={t("entry.labels.notes")}
               preview={form.description}
               open={sections.notes}
               onToggle={toggleSection("notes")}
             >
               <TextField
-                label="Description"
+                label={t("common.fields.description")}
                 size="small"
                 value={form.description}
                 onChange={setField("description")}
                 fullWidth
                 multiline
                 rows={2}
-                placeholder="e.g. Personal account, work email…"
+                placeholder={t("entry.placeholders.description")}
               />
             </FormSection>
           )}
 
           {editTarget && (
             <FormSection
-              label="Attachments"
+              label={t("entry.labels.attachments")}
               count={editTarget.attachment_count ?? 0}
               open={sections.attachments}
               onToggle={toggleSection("attachments")}
@@ -619,7 +642,7 @@ const PasswordFormDialog = ({
 
           {!isNote && editTarget && history.length > 0 && (
             <FormSection
-              label="Password history"
+              label={t("entry.labels.passwordHistory")}
               count={history.length}
               open={sections.history}
               onToggle={toggleSection("history")}
@@ -641,7 +664,7 @@ const PasswordFormDialog = ({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={submitting}>
-          Cancel
+          {t("common.actions.cancel")}
         </Button>
         <Button
           variant="contained"
@@ -649,7 +672,13 @@ const PasswordFormDialog = ({
           loading={submitting}
           disabled={unchanged && !attachmentsDirty}
         >
-          {editTarget ? (unchanged && attachmentsDirty ? "Done" : "Update") : "Create"}
+          {t(
+            editTarget
+              ? unchanged && attachmentsDirty
+                ? "common.actions.done"
+                : "common.actions.update"
+              : "common.actions.create"
+          )}
         </Button>
       </DialogActions>
     </Dialog>

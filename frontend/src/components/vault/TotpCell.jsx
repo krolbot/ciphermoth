@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Box, CircularProgress, Tooltip, Typography, useTheme } from "@mui/material";
+import { useTranslation } from "react-i18next";
 
 import { generateTotp, totpRemaining } from "../../lib/totp";
 import { GLOW, TOTP } from "../../lib/brand";
@@ -7,6 +8,7 @@ import { GLOW, TOTP } from "../../lib/brand";
 const PERIOD = 30;
 
 const TotpCell = ({ secret, onCopy }) => {
+  const { t } = useTranslation();
   const theme = useTheme();
   const [code, setCode] = useState("");
   const [remaining, setRemaining] = useState(PERIOD);
@@ -36,14 +38,14 @@ const TotpCell = ({ secret, onCopy }) => {
   if (invalid) {
     return (
       <Typography variant="caption" sx={{ color: "error.main" }}>
-        invalid
+        {t("totp.invalid")}
       </Typography>
     );
   }
   if (!code) return null;
 
   return (
-    <Tooltip title="Copy 2FA code">
+    <Tooltip title={t("totp.copy")}>
       <Box
         onClick={() => onCopy?.(code)}
         sx={{ display: "flex", alignItems: "center", gap: 0.75, cursor: "pointer" }}

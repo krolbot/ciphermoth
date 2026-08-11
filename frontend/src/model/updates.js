@@ -2,6 +2,7 @@ import { action, thunk } from "easy-peasy";
 
 import apiClient from "../api/client";
 import { errorDetail } from "../lib/http";
+import i18n from "../i18n";
 import { getUpdateStatus } from "../lib/updateCheck";
 
 const Updates = {
@@ -72,7 +73,7 @@ const Updates = {
       actions.setApply(data);
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to start the update."));
+      throw new Error(await errorDetail(err, i18n.t("errors.startUpdate")));
     }
   }),
 };

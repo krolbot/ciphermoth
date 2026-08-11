@@ -5,18 +5,21 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import { useSnackbar } from "notistack";
 import { useStoreActions } from "easy-peasy";
+import { useTranslation } from "react-i18next";
 
 import ConfirmDialog from "../ConfirmDialog";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
-const formatBytes = (bytes) => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+const formatBytes = (bytes, language) => {
+  const formatter = new Intl.NumberFormat(language, { maximumFractionDigits: 1 });
+  if (bytes < 1024) return `${formatter.format(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${formatter.format(bytes / 1024)} KB`;
+  return `${formatter.format(bytes / (1024 * 1024))} MB`;
 };
 
 const AttachmentsSection = ({ passwordName, onChanged }) => {
+  const { t, i18n } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const fetchAttachments = useStoreActions((a) => a.ciphermothModels.passwords.fetchAttachments);
   const uploadAttachment = useStoreActions((a) => a.ciphermothModels.passwords.uploadAttachment);
@@ -47,11 +50,15 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
     try {
       for (const file of files) {
         if (file.size > MAX_ATTACHMENT_BYTES) {
-          enqueueSnackbar(`"${file.name}" is larger than 5 MB.`, { variant: "warning" });
+          enqueueSnackbar(t("attachments.tooLarge", { filename: file.name }), {
+            variant: "warning",
+          });
           continue;
         }
         await uploadAttachment({ passwordName, file });
-        enqueueSnackbar(`Attached "${file.name}".`, { variant: "success" });
+        enqueueSnackbar(t("attachments.attached", { filename: file.name }), {
+          variant: "success",
+        });
         onChanged?.();
       }
       await refresh();
@@ -85,7 +92,9 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
     setPendingDelete(null);
     try {
       await deleteAttachment({ passwordName, attachmentId: att.id });
-      enqueueSnackbar(`Removed "${att.filename}".`, { variant: "success" });
+      enqueueSnackbar(t("attachments.removed", { filename: att.filename }), {
+        variant: "success",
+      });
       onChanged?.();
       await refresh();
     } catch (err) {
@@ -97,7 +106,7 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
     <Stack spacing={1}>
       {attachments.length === 0 ? (
         <Typography variant="body2" sx={{ color: "text.disabled" }}>
-          No files attached yet. Files are encrypted with your vault key.
+          {t("attachments.empty")}
         </Typography>
       ) : (
         attachments.map((att) => (
@@ -116,14 +125,14 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
               {att.filename}
             </Typography>
             <Typography variant="caption" sx={{ color: "text.disabled", flexShrink: 0 }}>
-              {formatBytes(att.size_bytes)}
+              {formatBytes(att.size_bytes, i18n.resolvedLanguage)}
             </Typography>
-            <Tooltip title="Download">
+            <Tooltip title={t("common.actions.download")}>
               <IconButton size="small" onClick={() => onDownload(att)}>
                 <FileDownloadOutlinedIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Tooltip title="Remove file">
+            <Tooltip title={t("attachments.removeFile")}>
               <IconButton size="small" color="error" onClick={() => setPendingDelete(att)}>
                 <DeleteOutlineIcon fontSize="small" />
               </IconButton>
@@ -140,23 +149,22 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
           onClick={() => inputRef.current?.click()}
           loading={busy}
         >
-          Attach file
+          {t("attachments.attachFile")}
         </Button>
         <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>
-          Up to 5 MB each, 25 MB total.
+          {t("attachments.limits")}
         </Typography>
       </Box>
 
       <ConfirmDialog
         open={!!pendingDelete}
-        title="Remove attachment?"
+        title={t("attachments.removeTitle")}
         onClose={() => setPendingDelete(null)}
         onConfirm={confirmDelete}
-        confirmText="Remove"
+        confirmText={t("common.actions.remove")}
         confirmColor="error"
       >
-        Permanently delete &quot;{pendingDelete?.filename}&quot; from this entry? This cannot be
-        undone.
+        {t("attachments.removeMessage", { filename: pendingDelete?.filename })}
       </ConfirmDialog>
     </Stack>
   );

@@ -2,6 +2,7 @@ import { action, thunk } from "easy-peasy";
 
 import apiClient from "../api/client";
 import { errorDetail, triggerDownload } from "../lib/http";
+import i18n from "../i18n";
 
 const Passwords = {
   error: null,
@@ -29,7 +30,7 @@ const Passwords = {
       const { data } = await apiClient.get("/passwords");
       actions.setPasswords(data);
     } catch (err) {
-      actions.setError(await errorDetail(err, "Failed to load passwords."));
+      actions.setError(await errorDetail(err, i18n.t("errors.loadPasswords")));
     } finally {
       actions.setLoading(false);
     }
@@ -40,7 +41,7 @@ const Passwords = {
       await apiClient.post("/passwords/create", payload);
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to create password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.createPassword")));
     }
   }),
 
@@ -49,7 +50,7 @@ const Passwords = {
       await apiClient.patch("/passwords/update", payload);
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to update password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.updatePassword")));
     }
   }),
 
@@ -59,7 +60,7 @@ const Passwords = {
       await actions.get();
       await actions.getTrash();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to delete password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.deletePassword")));
     }
   }),
 
@@ -68,7 +69,7 @@ const Passwords = {
       const { data } = await apiClient.get("/passwords/trash");
       actions.setTrash(data);
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to load trash."));
+      throw new Error(await errorDetail(err, i18n.t("errors.loadTrash")));
     }
   }),
 
@@ -78,7 +79,7 @@ const Passwords = {
       await actions.get();
       await actions.getTrash();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to restore password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.restorePassword")));
     }
   }),
 
@@ -87,7 +88,7 @@ const Passwords = {
       await apiClient.delete(`/passwords/${encodeURIComponent(passwordName)}/purge`);
       await actions.getTrash();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to delete password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.deletePassword")));
     }
   }),
 
@@ -98,7 +99,7 @@ const Passwords = {
       });
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to update favorite."));
+      throw new Error(await errorDetail(err, i18n.t("errors.updateFavorite")));
     }
   }),
 
@@ -109,7 +110,7 @@ const Passwords = {
       );
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to load attachments."));
+      throw new Error(await errorDetail(err, i18n.t("errors.loadAttachments")));
     }
   }),
 
@@ -124,7 +125,7 @@ const Passwords = {
       await actions.get();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to upload attachment."));
+      throw new Error(await errorDetail(err, i18n.t("errors.uploadAttachment")));
     }
   }),
 
@@ -136,7 +137,7 @@ const Passwords = {
       );
       triggerDownload(response.data, filename || "attachment");
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to download attachment."));
+      throw new Error(await errorDetail(err, i18n.t("errors.downloadAttachment")));
     }
   }),
 
@@ -147,7 +148,7 @@ const Passwords = {
       );
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to delete attachment."));
+      throw new Error(await errorDetail(err, i18n.t("errors.deleteAttachment")));
     }
   }),
 
@@ -161,7 +162,7 @@ const Passwords = {
       await actions.get();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Import failed."));
+      throw new Error(await errorDetail(err, i18n.t("errors.importFailed")));
     }
   }),
 
@@ -174,7 +175,7 @@ const Passwords = {
       await actions.get();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Import failed."));
+      throw new Error(await errorDetail(err, i18n.t("errors.importFailed")));
     }
   }),
 
@@ -189,7 +190,7 @@ const Passwords = {
       triggerDownload(response.data, `ciphermoth_backup_${stamp}.zip`);
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Backup failed."));
+      throw new Error(await errorDetail(err, i18n.t("errors.backupFailed")));
     }
   }),
 };

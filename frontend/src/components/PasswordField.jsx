@@ -2,8 +2,10 @@ import { useState } from "react";
 import { IconButton, InputAdornment, TextField, Tooltip } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import { useTranslation } from "react-i18next";
 
 const PasswordField = ({ show: showProp, onToggleShow, adornment = null, slotProps, ...props }) => {
+  const { t } = useTranslation();
   const [showInternal, setShowInternal] = useState(false);
   const controlled = showProp !== undefined;
   const show = controlled ? showProp : showInternal;
@@ -27,7 +29,7 @@ const PasswordField = ({ show: showProp, onToggleShow, adornment = null, slotPro
           endAdornment: (
             <InputAdornment position="end">
               {adornment}
-              <Tooltip title={show ? "Hide" : "Show"}>
+              <Tooltip title={t(show ? "passwordField.hide" : "passwordField.show")}>
                 <IconButton onClick={toggle} edge="end" size="small">
                   {show ? (
                     <VisibilityOffIcon fontSize="small" />

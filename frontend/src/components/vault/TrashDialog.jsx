@@ -13,21 +13,22 @@ import {
 import { DataGrid } from "@mui/x-data-grid";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import RestoreFromTrashIcon from "@mui/icons-material/RestoreFromTrash";
+import { Trans, useTranslation } from "react-i18next";
 
 import ConfirmDialog from "../ConfirmDialog";
 import { gridBaseSx } from "./gridStyles";
 
-const formatDeleted = (iso) => {
+const formatDeleted = (iso, language) => {
   if (!iso) return "-";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString(language);
 };
 
-const buildColumns = ({ onRestore, onPurge }) => [
-  { field: "password_name", headerName: "Name", flex: 1, minWidth: 140 },
+const buildColumns = ({ t, language, onRestore, onPurge }) => [
+  { field: "password_name", headerName: t("common.fields.name"), flex: 1, minWidth: 140 },
   {
     field: "username",
-    headerName: "Username / email",
+    headerName: t("common.fields.usernameEmail"),
     flex: 1,
     minWidth: 150,
     renderCell: (params) => (
@@ -38,25 +39,25 @@ const buildColumns = ({ onRestore, onPurge }) => [
   },
   {
     field: "deleted",
-    headerName: "Deleted",
+    headerName: t("trashDialog.deleted"),
     flex: 1,
     minWidth: 170,
     renderCell: (params) => (
       <Typography variant="body2" sx={{ color: "text.secondary" }}>
-        {formatDeleted(params.value)}
+        {formatDeleted(params.value, language)}
       </Typography>
     ),
   },
   {
     field: "actions",
-    headerName: "Actions",
+    headerName: t("common.fields.actions"),
     width: 110,
     sortable: false,
     align: "center",
     headerAlign: "center",
     renderCell: (params) => (
       <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-        <Tooltip title="Restore">
+        <Tooltip title={t("trashDialog.restore")}>
           <IconButton
             size="small"
             color="primary"
@@ -65,7 +66,7 @@ const buildColumns = ({ onRestore, onPurge }) => [
             <RestoreFromTrashIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Tooltip title="Delete forever">
+        <Tooltip title={t("trashDialog.deleteForever")}>
           <IconButton size="small" color="error" onClick={() => onPurge(params.row.password_name)}>
             <DeleteForeverIcon fontSize="small" />
           </IconButton>
@@ -76,9 +77,15 @@ const buildColumns = ({ onRestore, onPurge }) => [
 ];
 
 const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
+  const { t, i18n } = useTranslation();
   const [purgeTarget, setPurgeTarget] = useState(null);
 
-  const columns = buildColumns({ onRestore, onPurge: setPurgeTarget });
+  const columns = buildColumns({
+    t,
+    language: i18n.resolvedLanguage,
+    onRestore,
+    onPurge: setPurgeTarget,
+  });
 
   const handlePurge = async () => {
     await onPurge(purgeTarget);
@@ -87,11 +94,11 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Trash</DialogTitle>
+      <DialogTitle>{t("vault.trash")}</DialogTitle>
       <DialogContent>
         {trash.length === 0 ? (
           <Typography variant="body2" sx={{ color: "text.secondary", py: 4, textAlign: "center" }}>
-            Trash is empty. Deleted secrets rest here until you restore or purge them.
+            {t("trashDialog.empty")}
           </Typography>
         ) : (
           <DataGrid
@@ -110,18 +117,22 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>{t("common.actions.close")}</Button>
       </DialogActions>
 
       <ConfirmDialog
         open={!!purgeTarget}
-        title="Delete Forever"
-        confirmText="Delete Forever"
+        title={t("trashDialog.deleteForeverTitle")}
+        confirmText={t("trashDialog.deleteForever")}
         confirmColor="error"
         onClose={() => setPurgeTarget(null)}
         onConfirm={handlePurge}
       >
-        Permanently delete <strong>{purgeTarget}</strong>? This cannot be undone.
+        <Trans
+          i18nKey="trashDialog.deleteForeverMessage"
+          values={{ name: purgeTarget }}
+          components={{ strong: <strong /> }}
+        />
       </ConfirmDialog>
     </Dialog>
   );

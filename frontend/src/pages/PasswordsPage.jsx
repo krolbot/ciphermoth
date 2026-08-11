@@ -18,6 +18,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
+import { Trans, useTranslation } from "react-i18next";
 
 import BackupDialog from "../components/vault/BackupDialog";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -30,18 +31,18 @@ import { createColumns } from "../components/vault/columns";
 import { gridBaseSx } from "../components/vault/gridStyles";
 import useClipboard from "../hooks/useClipboard";
 
-const buildSubtitle = (loading, passwords) => {
-  if (loading) return "Loading…";
+const buildSubtitle = (t, loading, passwords) => {
+  if (loading) return t("common.labels.loading");
   const n = passwords.length;
-  if (n === 0) return "Nothing here yet. Your secrets are waiting for the dark.";
-  const word = n === 1 ? "secret" : "secrets";
-  if (passwords.every((p) => p.backed_up))
-    return `${n} ${word} in the dark · backed up and locked tight.`;
-  if (passwords.some((p) => p.backed_up)) return `${n} ${word} in the dark · backup is outdated.`;
-  return `${n} ${word} in the dark · no backup yet.`;
+  if (n === 0) return t("vault.subtitle.empty");
+  const countText = t("vault.subtitle.secretCount", { count: n });
+  if (passwords.every((p) => p.backed_up)) return t("vault.subtitle.backedUp", { countText });
+  if (passwords.some((p) => p.backed_up)) return t("vault.subtitle.outdated", { countText });
+  return t("vault.subtitle.noBackup", { countText });
 };
 
 const PasswordsPage = () => {
+  const { t, i18n } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -123,14 +124,16 @@ const PasswordsPage = () => {
         },
         new_password: entry,
       });
-      enqueueSnackbar(entry.kind === "note" ? "Secure note updated." : "Password updated.", {
-        variant: "success",
-      });
+      enqueueSnackbar(
+        t(entry.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"),
+        { variant: "success" }
+      );
     } else {
       await create(entry);
-      enqueueSnackbar(entry.kind === "note" ? "Secure note created." : "Password created.", {
-        variant: "success",
-      });
+      enqueueSnackbar(
+        t(entry.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"),
+        { variant: "success" }
+      );
     }
     setDialogOpen(false);
   };
@@ -138,7 +141,7 @@ const PasswordsPage = () => {
   const handleDelete = async () => {
     try {
       await remove(deleteTarget);
-      enqueueSnackbar("Moved to trash.", { variant: "success" });
+      enqueueSnackbar(t("vault.messages.movedToTrash"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     } finally {
@@ -149,7 +152,7 @@ const PasswordsPage = () => {
   const handleRestore = async (name) => {
     try {
       await restore(name);
-      enqueueSnackbar("Restored from trash.", { variant: "success" });
+      enqueueSnackbar(t("vault.messages.restored"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
@@ -158,7 +161,7 @@ const PasswordsPage = () => {
   const handlePurge = async (name) => {
     try {
       await purge(name);
-      enqueueSnackbar("Permanently deleted.", { variant: "success" });
+      enqueueSnackbar(t("vault.messages.permanentlyDeleted"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
@@ -166,12 +169,13 @@ const PasswordsPage = () => {
 
   const handleBackup = async (masterPassword) => {
     await backup(masterPassword);
-    enqueueSnackbar("Backup created: keep this file safe.", { variant: "success" });
+    enqueueSnackbar(t("vault.messages.backupCreated"), { variant: "success" });
   };
 
   const columns = useMemo(
     () =>
       createColumns({
+        t,
         visibleRows,
         onToggleVisibility: toggleVisibility,
         onToggleFavorite: handleToggleFavorite,
@@ -179,15 +183,15 @@ const PasswordsPage = () => {
         onEdit: openEdit,
         onDelete: setDeleteTarget,
       }),
-    [visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit]
+    [t, visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit]
   );
 
   const folderOptions = useMemo(
     () =>
       [...new Set(passwords.map((p) => p.folder).filter(Boolean))].sort((a, b) =>
-        a.localeCompare(b)
+        a.localeCompare(b, i18n.resolvedLanguage)
       ),
-    [passwords]
+    [passwords, i18n.resolvedLanguage]
   );
   const activeFolder = folderOptions.includes(folderFilter) ? folderFilter : "";
 
@@ -213,11 +217,12 @@ const PasswordsPage = () => {
 
     return [...matches].sort(
       (a, b) =>
-        Number(b.favorite) - Number(a.favorite) || a.password_name.localeCompare(b.password_name)
+        Number(b.favorite) - Number(a.favorite) ||
+        a.password_name.localeCompare(b.password_name, i18n.resolvedLanguage)
     );
-  }, [passwords, search, activeFolder]);
+  }, [passwords, search, activeFolder, i18n.resolvedLanguage]);
 
-  const subtitle = useMemo(() => buildSubtitle(loading, passwords), [loading, passwords]);
+  const subtitle = useMemo(() => buildSubtitle(t, loading, passwords), [t, loading, passwords]);
   const isEmpty = !loading && passwords.length === 0;
 
   return (
@@ -228,7 +233,7 @@ const PasswordsPage = () => {
       >
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-            The Vault
+            {t("vault.title")}
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
             {subtitle}
@@ -241,7 +246,7 @@ const PasswordsPage = () => {
             onClick={() => setHealthOpen(true)}
             disabled={passwords.length === 0}
           >
-            Health
+            {t("vault.health")}
           </Button>
           <Button
             variant="outlined"
@@ -249,24 +254,24 @@ const PasswordsPage = () => {
             onClick={() => setBackupOpen(true)}
             disabled={passwords.length === 0}
           >
-            Backup
+            {t("vault.backup")}
           </Button>
           <Button
             variant="outlined"
             startIcon={<UploadFileIcon />}
             onClick={() => setImportOpen(true)}
           >
-            Import
+            {t("vault.import")}
           </Button>
           <Button
             variant="outlined"
             startIcon={<DeleteOutlineIcon />}
             onClick={() => setTrashOpen(true)}
           >
-            {trash.length ? `Trash (${trash.length})` : "Trash"}
+            {trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash")}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={openAdd}>
-            Add
+            {t("common.actions.add")}
           </Button>
         </Stack>
       </Stack>
@@ -275,7 +280,7 @@ const PasswordsPage = () => {
         <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: "center" }}>
           <TextField
             size="small"
-            placeholder="Search name, username, website or tag…"
+            placeholder={t("vault.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             sx={{ width: 320 }}
@@ -293,12 +298,12 @@ const PasswordsPage = () => {
             <TextField
               select
               size="small"
-              label="Folder"
+              label={t("common.fields.folder")}
               value={activeFolder}
               onChange={(e) => setFolderFilter(e.target.value)}
               sx={{ width: 200 }}
             >
-              <MenuItem value="">All folders</MenuItem>
+              <MenuItem value="">{t("vault.allFolders")}</MenuItem>
               {folderOptions.map((f) => (
                 <MenuItem key={f} value={f}>
                   {f}
@@ -341,7 +346,7 @@ const PasswordsPage = () => {
                 }}
               >
                 <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  No passwords match &ldquo;{search.trim()}&rdquo;.
+                  {t("vault.noSearchResults", { search: search.trim() })}
                 </Typography>
               </Box>
             ),
@@ -401,13 +406,17 @@ const PasswordsPage = () => {
       />
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Move to Trash"
-        confirmText="Move to Trash"
+        title={t("vault.moveToTrash.title")}
+        confirmText={t("vault.moveToTrash.title")}
         confirmColor="error"
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
       >
-        Move <strong>{deleteTarget}</strong> to Trash? You can restore it later from the Trash.
+        <Trans
+          i18nKey="vault.moveToTrash.message"
+          values={{ name: deleteTarget }}
+          components={{ strong: <strong /> }}
+        />
       </ConfirmDialog>
       <TrashDialog
         open={trashOpen}

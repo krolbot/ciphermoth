@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Box, Button, Checkbox, FormControlLabel, LinearProgress, Typography } from "@mui/material";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
+import { useTranslation } from "react-i18next";
 
+import LanguageSwitcher from "../components/LanguageSwitcher";
 import LoadingScreen from "../components/LoadingScreen";
 import MothIcon from "../components/MothIcon";
 import PasswordField from "../components/PasswordField";
@@ -21,6 +23,7 @@ const unlockButtonSx = {
 };
 
 const LoginPage = () => {
+  const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
 
   const { fetchStatus, check, create, setValue, setConfirm, setError } = useStoreActions(
@@ -32,12 +35,15 @@ const LoginPage = () => {
 
   useEffect(() => {
     fetchStatus();
+  }, [fetchStatus]);
+
+  useEffect(() => {
     const notice = sessionStorage.getItem("logout_notice");
     if (notice) {
       sessionStorage.removeItem("logout_notice");
-      enqueueSnackbar(notice, { variant: "info" });
+      enqueueSnackbar(t(notice), { variant: "info" });
     }
-  }, [fetchStatus, enqueueSnackbar]);
+  }, [enqueueSnackbar, t]);
 
   useEffect(() => {
     if (error) enqueueSnackbar(error, { variant: "error" });
@@ -49,7 +55,7 @@ const LoginPage = () => {
 
   const handleLogin = () => {
     if (!value.trim()) {
-      enqueueSnackbar("Please enter your master password.", { variant: "error" });
+      enqueueSnackbar(t("auth.validation.enterMasterPassword"), { variant: "error" });
       return;
     }
     check({ master_password: value });
@@ -57,19 +63,19 @@ const LoginPage = () => {
 
   const handleCreate = () => {
     if (!value) {
-      setError("Please enter a master password.");
+      setError(t("auth.validation.enterNewMasterPassword"));
       return;
     }
     if (value !== confirm) {
-      setError("Passwords don't match.");
+      setError(t("auth.validation.passwordsDoNotMatch"));
       return;
     }
     if (strength && strength.value < 70) {
-      setError("Password is too weak. Use at least 12 characters with mixed types.");
+      setError(t("auth.validation.weakPassword"));
       return;
     }
     if (!acknowledged) {
-      setError("Please confirm you understand there is no password recovery.");
+      setError(t("auth.validation.confirmNoRecovery"));
       return;
     }
     create({ master_password: value });
@@ -137,24 +143,24 @@ const LoginPage = () => {
                 color: "text.secondary",
               }}
             >
-              Your secrets stay in the dark.
+              {t("auth.tagline")}
             </Typography>
           </>
         ) : (
           <>
             <Typography sx={{ fontSize: 23, fontWeight: 700, color: "text.primary" }}>
-              Set up your vault
+              {t("auth.setupTitle")}
             </Typography>
             <Typography
               sx={{ mt: 1, mb: 3, fontSize: 13, color: "text.secondary", lineHeight: 1.5 }}
             >
-              One master password protects everything. Choose it well. It is the only key.
+              {t("auth.setupDescription")}
             </Typography>
           </>
         )}
 
         <PasswordField
-          label="Master Password"
+          label={t("auth.masterPassword")}
           required
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -178,7 +184,7 @@ const LoginPage = () => {
               color={`${strength.color}.main`}
               sx={{ mt: 0.5, display: "block" }}
             >
-              {strength.label}
+              {t(strength.labelKey)}
             </Typography>
           </Box>
         )}
@@ -186,7 +192,7 @@ const LoginPage = () => {
         {!initialized && (
           <Box sx={{ mt: 2 }}>
             <PasswordField
-              label="Confirm Master Password"
+              label={t("auth.confirmMasterPassword")}
               required
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
@@ -211,8 +217,7 @@ const LoginPage = () => {
                 ⚠
               </Box>
               <Typography variant="caption" sx={{ color: WARN, lineHeight: 1.5 }}>
-                There is no &ldquo;Forgot password&rdquo;. Lose your master password and the vault
-                is gone, permanently. That is the trade for nobody-but-you holding the key.
+                {t("auth.noRecoveryWarning")}
               </Typography>
             </Box>
             <FormControlLabel
@@ -230,7 +235,7 @@ const LoginPage = () => {
               }
               label={
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  I understand my master password cannot be recovered.
+                  {t("auth.noRecoveryAcknowledgement")}
                 </Typography>
               }
             />
@@ -246,13 +251,14 @@ const LoginPage = () => {
           onClick={initialized ? handleLogin : handleCreate}
           sx={{ mt: 3, ...unlockButtonSx }}
         >
-          {initialized ? "Unlock Vault" : "Create Vault"}
+          {t(initialized ? "auth.unlock" : "auth.create")}
         </Button>
 
         <Typography sx={{ mt: 2.75, fontSize: 11, color: "text.disabled" }}>
-          Closing this tab locks your vault. That is by design.
+          {t("auth.closeLocks")}
         </Typography>
       </Box>
+      <LanguageSwitcher placement="floating" />
       <ThemeToggle zIndex={1301} />
     </Box>
   );

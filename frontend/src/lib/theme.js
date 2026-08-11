@@ -1,4 +1,6 @@
 import { createTheme } from "@mui/material/styles";
+import { ruRU as coreRuRU } from "@mui/material/locale";
+import { ruRU as dataGridRuRU } from "@mui/x-data-grid/locales";
 
 import {
   BORDER,
@@ -23,7 +25,7 @@ import {
 const SANS = "'Space Grotesk Variable', system-ui, sans-serif";
 const MONO = "'Space Mono', ui-monospace, monospace";
 
-export const createAppTheme = (mode) => {
+export const createAppTheme = (mode, language) => {
   const dark = mode === "dark";
 
   const palette = dark
@@ -48,79 +50,84 @@ export const createAppTheme = (mode) => {
         divider: BORDER,
       };
 
-  return createTheme({
-    palette: {
-      ...palette,
-      success: { main: OK },
-      warning: { main: WARN },
-      error: { main: WEAK },
-      info: { main: INFO },
-    },
-    shape: { borderRadius: 8 },
-    typography: {
-      fontFamily: SANS,
-      fontFamilyMonospace: MONO,
-      h4: { fontWeight: 700, letterSpacing: "-0.01em" },
-      h5: { fontWeight: 700, letterSpacing: "-0.01em" },
-      h6: { fontWeight: 700 },
-    },
-    components: {
-      MuiTooltip: {
-        defaultProps: { disableInteractive: true, enterDelay: 400, enterNextDelay: 400 },
+  const localeArguments = language === "ru" ? [dataGridRuRU, coreRuRU] : [];
+
+  return createTheme(
+    {
+      palette: {
+        ...palette,
+        success: { main: OK },
+        warning: { main: WARN },
+        error: { main: WEAK },
+        info: { main: INFO },
       },
-      MuiButtonBase: {
-        defaultProps: { disableRipple: true },
+      shape: { borderRadius: 8 },
+      typography: {
+        fontFamily: SANS,
+        fontFamilyMonospace: MONO,
+        h4: { fontWeight: 700, letterSpacing: "-0.01em" },
+        h5: { fontWeight: 700, letterSpacing: "-0.01em" },
+        h6: { fontWeight: 700 },
       },
-      MuiAppBar: {
-        styleOverrides: {
-          root: { backgroundColor: INK, backgroundImage: "none", color: TEXT_ON_DARK },
+      components: {
+        MuiTooltip: {
+          defaultProps: { disableInteractive: true, enterDelay: 400, enterNextDelay: 400 },
         },
-      },
-      MuiButton: {
-        styleOverrides: {
-          root: {
-            borderRadius: 7,
-            fontWeight: 600,
-            letterSpacing: "0.04em",
-            "&.Mui-focusVisible": { outline: `2px solid ${GLOW}`, outlineOffset: "2px" },
-          },
-          outlined: dark
-            ? {
-                backgroundColor: "transparent",
-                borderColor: "rgba(255,255,255,0.22)",
-                color: TEXT_ON_DARK,
-                "&:hover": {
-                  backgroundColor: "rgba(255,255,255,0.05)",
-                  borderColor: TEXT_ON_DARK,
-                },
-              }
-            : {
-                backgroundColor: "#ffffff",
-                borderColor: BORDER_STRONG,
-                color: INK,
-                "&:hover": { backgroundColor: "#ffffff", borderColor: INK },
-              },
-          contained: dark
-            ? {
-                "&:hover": { backgroundColor: GLOW_SOFT },
-                "&.Mui-disabled": {
-                  backgroundColor: "rgba(125,211,192,0.22)",
-                  color: "rgba(11,11,12,0.5)",
-                },
-              }
-            : undefined,
+        MuiButtonBase: {
+          defaultProps: { disableRipple: true },
         },
-      },
-      MuiIconButton: {
-        styleOverrides: {
-          root: {
-            "&.Mui-focusVisible": { outline: `2px solid ${GLOW}`, outlineOffset: "2px" },
+        MuiAppBar: {
+          styleOverrides: {
+            root: { backgroundColor: INK, backgroundImage: "none", color: TEXT_ON_DARK },
           },
         },
-      },
-      MuiDialog: {
-        styleOverrides: { paper: { borderRadius: 14 } },
+        MuiButton: {
+          styleOverrides: {
+            root: {
+              borderRadius: 7,
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              "&.Mui-focusVisible": { outline: `2px solid ${GLOW}`, outlineOffset: "2px" },
+            },
+            outlined: dark
+              ? {
+                  backgroundColor: "transparent",
+                  borderColor: "rgba(255,255,255,0.22)",
+                  color: TEXT_ON_DARK,
+                  "&:hover": {
+                    backgroundColor: "rgba(255,255,255,0.05)",
+                    borderColor: TEXT_ON_DARK,
+                  },
+                }
+              : {
+                  backgroundColor: "#ffffff",
+                  borderColor: BORDER_STRONG,
+                  color: INK,
+                  "&:hover": { backgroundColor: "#ffffff", borderColor: INK },
+                },
+            contained: dark
+              ? {
+                  "&:hover": { backgroundColor: GLOW_SOFT },
+                  "&.Mui-disabled": {
+                    backgroundColor: "rgba(125,211,192,0.22)",
+                    color: "rgba(11,11,12,0.5)",
+                  },
+                }
+              : undefined,
+          },
+        },
+        MuiIconButton: {
+          styleOverrides: {
+            root: {
+              "&.Mui-focusVisible": { outline: `2px solid ${GLOW}`, outlineOffset: "2px" },
+            },
+          },
+        },
+        MuiDialog: {
+          styleOverrides: { paper: { borderRadius: 14 } },
+        },
       },
     },
-  });
+    ...localeArguments
+  );
 };

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ThemeProvider } from "@mui/material/styles";
+import { useTranslation } from "react-i18next";
 
 import { createAppTheme } from "../lib/theme";
 
@@ -17,6 +18,7 @@ const readStoredMode = () => {
 };
 
 export const ColorModeProvider = ({ children }) => {
+  const { i18n } = useTranslation();
   const [mode, setMode] = useState(readStoredMode);
 
   useEffect(() => {
@@ -42,7 +44,8 @@ export const ColorModeProvider = ({ children }) => {
     [mode]
   );
 
-  const theme = useMemo(() => createAppTheme(mode), [mode]);
+  const language = i18n.resolvedLanguage ?? i18n.language;
+  const theme = useMemo(() => createAppTheme(mode, language), [mode, language]);
 
   return (
     <ColorModeContext.Provider value={value}>

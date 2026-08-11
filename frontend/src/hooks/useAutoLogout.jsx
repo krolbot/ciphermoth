@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
+import { useTranslation } from "react-i18next";
 
 import { isAuth, removeKeyDerivation } from "../utils";
 
 const CountdownMessage = ({ seconds }) => {
+  const { t } = useTranslation();
   const [remaining, setRemaining] = useState(seconds);
   useEffect(() => {
     if (remaining <= 0) return;
-    const t = setTimeout(() => setRemaining((s) => s - 1), 1000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setRemaining((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
   }, [remaining]);
-  return `You'll be logged out in ${remaining}s due to inactivity.`;
+  return t("autoLogout.countdown", { seconds: remaining });
 };
 
 const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
@@ -37,7 +39,7 @@ const useAutoLogout = () => {
     clearTimeout(hiddenRef.current);
     if (warnKeyRef.current) closeSnackbar(warnKeyRef.current);
     removeKeyDerivation();
-    sessionStorage.setItem("logout_notice", "Logged out due to inactivity.");
+    sessionStorage.setItem("logout_notice", "autoLogout.loggedOut");
     window.location.replace("/login");
   }, [closeSnackbar]);
 

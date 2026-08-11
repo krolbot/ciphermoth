@@ -16,16 +16,16 @@ import {
   Typography,
 } from "@mui/material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import { Trans, useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
 
-const plural = (n) => (n !== 1 ? "s" : "");
-
 const ImportResult = ({ result }) => {
+  const { t } = useTranslation();
   if (result.total === 0) {
     return (
       <Typography variant="body2" sx={{ color: "text.secondary" }}>
-        No passwords found in the file.
+        {t("importDialog.noPasswords")}
       </Typography>
     );
   }
@@ -33,18 +33,32 @@ const ImportResult = ({ result }) => {
     <>
       {result.imported > 0 && (
         <Typography variant="body2">
-          <strong>{result.imported}</strong> password{plural(result.imported)} added.
+          <Trans
+            i18nKey="importDialog.imported"
+            count={result.imported}
+            values={{ count: result.imported }}
+            components={{ strong: <strong /> }}
+          />
         </Typography>
       )}
       {result.overwritten > 0 && (
         <Typography variant="body2">
-          <strong>{result.overwritten}</strong> password{plural(result.overwritten)} overwritten.
+          <Trans
+            i18nKey="importDialog.overwritten"
+            count={result.overwritten}
+            values={{ count: result.overwritten }}
+            components={{ strong: <strong /> }}
+          />
         </Typography>
       )}
       {result.skipped > 0 && (
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          <strong>{result.skipped}</strong> password{plural(result.skipped)} skipped (already
-          exist).
+          <Trans
+            i18nKey="importDialog.skipped"
+            count={result.skipped}
+            values={{ count: result.skipped }}
+            components={{ strong: <strong /> }}
+          />
         </Typography>
       )}
     </>
@@ -52,6 +66,7 @@ const ImportResult = ({ result }) => {
 };
 
 const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
+  const { t } = useTranslation();
   const [mode, setMode] = useState("ciphermoth");
   const [file, setFile] = useState(null);
   const [password, setPassword] = useState("");
@@ -82,11 +97,11 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
   const handleImport = async () => {
     if (!file) {
-      setError(`Please select a ${isCsv ? "CSV" : "backup"} file.`);
+      setError(t(isCsv ? "importDialog.selectCsv" : "importDialog.selectBackup"));
       return;
     }
     if (!isCsv && !password.trim()) {
-      setError("Master password is required.");
+      setError(t("backup.passwordRequired"));
       return;
     }
     setLoading(true);
@@ -104,7 +119,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
   return (
     <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{result ? "Import Complete" : "Import Passwords"}</DialogTitle>
+      <DialogTitle>{t(result ? "importDialog.completeTitle" : "importDialog.title")}</DialogTitle>
       <DialogContent>
         {result ? (
           <Stack spacing={1} sx={{ mt: 1 }}>
@@ -114,17 +129,15 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
           <Stack spacing={2} sx={{ mt: 1 }}>
             <ToggleButtonGroup value={mode} exclusive onChange={changeMode} size="small" fullWidth>
               <ToggleButton value="ciphermoth" sx={{ textTransform: "none" }}>
-                CipherMoth backup
+                {t("importDialog.backupMode")}
               </ToggleButton>
               <ToggleButton value="csv" sx={{ textTransform: "none" }}>
-                CSV from another app
+                {t("importDialog.csvMode")}
               </ToggleButton>
             </ToggleButtonGroup>
 
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              {isCsv
-                ? "Upload a CSV exported from Chrome, Bitwarden, KeePass, Proton Pass and similar. Columns are matched automatically."
-                : "Upload a CipherMoth backup ZIP and enter your master password to restore passwords."}
+              {t(isCsv ? "importDialog.csvDescription" : "importDialog.backupDescription")}
             </Typography>
 
             <Button
@@ -134,7 +147,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               fullWidth
               sx={{ justifyContent: "flex-start", textTransform: "none" }}
             >
-              {file ? file.name : isCsv ? "Choose CSV file (.csv)" : "Choose backup file (.zip)"}
+              {file ? file.name : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
               <input
                 type="file"
                 hidden
@@ -148,7 +161,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
             {!isCsv && (
               <PasswordField
-                label="Master Password"
+                label={t("auth.masterPassword")}
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
@@ -172,17 +185,17 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
             )}
 
             <FormControl>
-              <FormLabel sx={{ fontSize: "0.875rem" }}>If a password already exists</FormLabel>
+              <FormLabel sx={{ fontSize: "0.875rem" }}>{t("importDialog.existingLabel")}</FormLabel>
               <RadioGroup value={onConflict} onChange={(e) => setOnConflict(e.target.value)}>
                 <FormControlLabel
                   value="skip"
                   control={<Radio size="small" />}
-                  label="Keep existing (skip)"
+                  label={t("importDialog.keepExisting")}
                 />
                 <FormControlLabel
                   value="overwrite"
                   control={<Radio size="small" />}
-                  label="Overwrite with imported value"
+                  label={t("importDialog.overwrite")}
                 />
               </RadioGroup>
             </FormControl>
@@ -192,15 +205,15 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
       <DialogActions>
         {result ? (
           <Button variant="contained" onClick={onClose}>
-            Done
+            {t("common.actions.done")}
           </Button>
         ) : (
           <>
             <Button onClick={onClose} disabled={loading}>
-              Cancel
+              {t("common.actions.cancel")}
             </Button>
             <Button variant="contained" onClick={handleImport} loading={loading}>
-              Import
+              {t("common.actions.import")}
             </Button>
           </>
         )}

@@ -17,44 +17,41 @@ import {
 import HelpOutlineIcon from "@mui/icons-material/HelpOutlined";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
+import { useTranslation } from "react-i18next";
 
 const FIELDS = [
   {
     key: "inactivity_ms",
-    label: "Inactivity timeout",
-    tooltip:
-      "How long the app waits without any user activity before logging you out automatically.",
+    labelKey: "settings.fields.inactivity",
+    tooltipKey: "settings.fields.inactivityHelp",
     min: 30,
     max: 3600,
   },
   {
     key: "warn_before_ms",
-    label: "Warning before logout",
-    tooltip:
-      "How far in advance of the inactivity timeout a warning is shown. Must be less than the inactivity timeout.",
+    labelKey: "settings.fields.warning",
+    tooltipKey: "settings.fields.warningHelp",
     min: 5,
     max: 600,
   },
   {
     key: "hidden_ms",
-    label: "Hidden tab timeout",
-    tooltip:
-      "How long the tab can stay in the background (minimised or switched away) before you are logged out.",
+    labelKey: "settings.fields.hidden",
+    tooltipKey: "settings.fields.hiddenHelp",
     min: 10,
     max: 3600,
   },
   {
     key: "debounce_ms",
-    label: "Activity debounce",
-    tooltip:
-      "Minimum interval between activity detections. Prevents the inactivity timer from being reset too aggressively.",
+    labelKey: "settings.fields.debounce",
+    tooltipKey: "settings.fields.debounceHelp",
     min: 1,
     max: 10,
   },
   {
     key: "clipboard_clear_ms",
-    label: "Clipboard clear delay",
-    tooltip: "How long after copying a password the clipboard is automatically wiped.",
+    labelKey: "settings.fields.clipboard",
+    tooltipKey: "settings.fields.clipboardHelp",
     min: 5,
     max: 600,
   },
@@ -73,6 +70,7 @@ const isDirty = (form, settings) =>
   form.update_check_enabled !== (settings.update_check_enabled ?? true);
 
 const SettingsModal = ({ open, onClose }) => {
+  const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
 
   const { update } = useStoreActions((a) => a.ciphermothModels.settings);
@@ -96,7 +94,7 @@ const SettingsModal = ({ open, onClose }) => {
 
   const handleSave = async () => {
     if (Number(form.warn_before_ms) >= Number(form.inactivity_ms)) {
-      setFormError("Warning before logout must be less than the inactivity timeout.");
+      setFormError(t("settings.warningValidation"));
       return;
     }
     setSaving(true);
@@ -105,7 +103,7 @@ const SettingsModal = ({ open, onClose }) => {
         ...Object.fromEntries(FIELDS.map(({ key }) => [key, toMs(form[key])])),
         update_check_enabled: form.update_check_enabled,
       });
-      enqueueSnackbar("Settings saved.", { variant: "success" });
+      enqueueSnackbar(t("settings.saved"), { variant: "success" });
       onClose();
     } catch (err) {
       setFormError(err.message);
@@ -118,13 +116,13 @@ const SettingsModal = ({ open, onClose }) => {
 
   return (
     <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Settings</DialogTitle>
+      <DialogTitle>{t("settings.title")}</DialogTitle>
       <DialogContent>
         <Stack spacing={1.5} sx={{ mt: 1 }}>
-          {FIELDS.map(({ key, label, tooltip, min, max }) => (
+          {FIELDS.map(({ key, labelKey, tooltipKey, min, max }) => (
             <TextField
               key={key}
-              label={label}
+              label={t(labelKey)}
               type="number"
               size="small"
               value={form[key]}
@@ -136,9 +134,9 @@ const SettingsModal = ({ open, onClose }) => {
                   endAdornment: (
                     <InputAdornment position="end">
                       <Typography variant="caption" sx={{ color: "text.disabled", mr: 0.5 }}>
-                        sec
+                        {t("common.labels.secondsShort")}
                       </Typography>
-                      <Tooltip title={tooltip} arrow placement="top">
+                      <Tooltip title={t(tooltipKey)} arrow placement="top">
                         <HelpOutlineIcon
                           fontSize="small"
                           sx={{ color: "text.disabled", cursor: "help" }}
@@ -167,12 +165,8 @@ const SettingsModal = ({ open, onClose }) => {
             }
             label={
               <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography variant="body2">Check for updates</Typography>
-                <Tooltip
-                  title="Lets your browser ask GitHub whether a newer CipherMoth release exists. Your vault never leaves this machine; turn it off to stay fully third-party-free."
-                  arrow
-                  placement="top"
-                >
+                <Typography variant="body2">{t("settings.fields.updates")}</Typography>
+                <Tooltip title={t("settings.fields.updatesHelp")} arrow placement="top">
                   <HelpOutlineIcon
                     fontSize="small"
                     sx={{ color: "text.disabled", cursor: "help" }}
@@ -190,10 +184,10 @@ const SettingsModal = ({ open, onClose }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={saving}>
-          Cancel
+          {t("common.actions.cancel")}
         </Button>
         <Button variant="contained" onClick={handleSave} loading={saving} disabled={!dirty}>
-          Save
+          {t("common.actions.save")}
         </Button>
       </DialogActions>
     </Dialog>

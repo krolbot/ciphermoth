@@ -17,6 +17,7 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import GppMaybeOutlinedIcon from "@mui/icons-material/GppMaybeOutlined";
 import ScheduleOutlinedIcon from "@mui/icons-material/ScheduleOutlined";
+import { useTranslation } from "react-i18next";
 
 import { analyzeVault } from "../../lib/vaultHealth";
 
@@ -26,13 +27,14 @@ const scoreColor = (score) => {
   return "error";
 };
 
-const scoreLabel = (score) => {
-  if (score >= 80) return "Healthy";
-  if (score >= 50) return "Needs attention";
-  return "At risk";
+const scoreLabelKey = (score) => {
+  if (score >= 80) return "health.healthy";
+  if (score >= 50) return "health.needsAttention";
+  return "health.atRisk";
 };
 
 const ScoreGauge = ({ score }) => {
+  const { t } = useTranslation();
   const color = scoreColor(score);
   return (
     <Stack spacing={1} sx={{ alignItems: "center" }}>
@@ -71,7 +73,7 @@ const ScoreGauge = ({ score }) => {
         </Box>
       </Box>
       <Typography variant="subtitle2" sx={{ fontWeight: 700, color: `${color}.main` }}>
-        {scoreLabel(score)}
+        {t(scoreLabelKey(score))}
       </Typography>
     </Stack>
   );
@@ -141,13 +143,14 @@ const IssueGroup = ({ icon: Icon, title, hint, color, entries, onSelect }) => {
 };
 
 const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
+  const { t } = useTranslation();
   const report = useMemo(() => analyzeVault(passwords), [passwords]);
   const allClear =
     report.weak.length === 0 && report.reused.length === 0 && report.stale.length === 0;
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Vault Health</DialogTitle>
+      <DialogTitle>{t("health.title")}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2.5} sx={{ py: 1 }}>
           <ScoreGauge score={report.score} />
@@ -155,55 +158,55 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
           <Stack direction="row" spacing={1}>
             <StatTile
               icon={GppMaybeOutlinedIcon}
-              label="Weak"
+              label={t("health.weak")}
               count={report.weak.length}
               color="error"
             />
             <StatTile
               icon={ContentCopyOutlinedIcon}
-              label="Reused"
+              label={t("health.reused")}
               count={report.reused.length}
               color="warning"
             />
             <StatTile
               icon={ScheduleOutlinedIcon}
-              label="Old"
+              label={t("health.old")}
               count={report.stale.length}
               color="info"
             />
           </Stack>
 
           <Typography variant="caption" align="center" sx={{ color: "text.secondary" }}>
-            This check runs entirely on your device. Nothing is sent anywhere.
+            {t("health.localOnly")}
           </Typography>
 
           {allClear ? (
             <Stack spacing={1} sx={{ alignItems: "center", py: 1 }}>
               <CheckCircleOutlinedIcon sx={{ color: "success.main", fontSize: 34 }} />
-              <Typography variant="body2">Everything looks healthy. Nice work.</Typography>
+              <Typography variant="body2">{t("health.allClear")}</Typography>
             </Stack>
           ) : (
             <Stack spacing={2}>
               <IssueGroup
                 icon={GppMaybeOutlinedIcon}
-                title="Weak"
-                hint="Short or simple passwords worth strengthening."
+                title={t("health.weak")}
+                hint={t("health.weakHint")}
                 color="error"
                 entries={report.weak}
                 onSelect={onSelect}
               />
               <IssueGroup
                 icon={ContentCopyOutlinedIcon}
-                title="Reused"
-                hint="The same password is used on more than one entry."
+                title={t("health.reused")}
+                hint={t("health.reusedHint")}
                 color="warning"
                 entries={report.reused}
                 onSelect={onSelect}
               />
               <IssueGroup
                 icon={ScheduleOutlinedIcon}
-                title="Old"
-                hint="Not changed in over a year."
+                title={t("health.old")}
+                hint={t("health.oldHint")}
                 color="info"
                 entries={report.stale}
                 onSelect={onSelect}
@@ -214,7 +217,7 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
       </DialogContent>
       <DialogActions>
         <Button variant="contained" onClick={onClose}>
-          Done
+          {t("common.actions.done")}
         </Button>
       </DialogActions>
     </Dialog>

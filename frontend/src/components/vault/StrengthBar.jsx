@@ -1,10 +1,12 @@
 import { Box, Stack, Typography } from "@mui/material";
+import { useTranslation } from "react-i18next";
 
 import { getPasswordStrength } from "../../lib/passwordStrength";
 
 const SEGMENTS = [0, 1, 2, 3, 4];
 
 const StrengthBar = ({ password }) => {
+  const { t } = useTranslation();
   const strength = getPasswordStrength(password);
   if (!strength) return null;
 
@@ -25,8 +27,8 @@ const StrengthBar = ({ password }) => {
         ))}
       </Stack>
       <Typography variant="caption" sx={{ color: strength.color, fontWeight: 600 }}>
-        {strength.label}
-        {strength.recommend && " - consider a longer or more complex password"}
+        {t(strength.labelKey)}
+        {strength.recommend && ` — ${t("strength.recommendation")}`}
       </Typography>
     </Box>
   );

@@ -68,6 +68,7 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 - search, favorites, folders, tags, and password history to keep a growing vault tidy
 - trash for deletions you can restore from or empty for good when you're sure
 - light and dark themes that flip across the whole app, toggled by a moth that flutters off as the colours fade (and remembers your pick)
+- English and Russian interface, detected from the browser and remembered locally after you switch it
 - vault health check that flags weak, reused, and old passwords, entirely on your device
 - cryptographically secure password generator (not the `Math.random()` kind) with a strength indicator on every entry
 - import from Chrome, Bitwarden, KeePass, Proton Pass, and friends via CSV, or restore an encrypted CipherMoth backup
@@ -121,7 +122,7 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 |---|---|
 | Backend | Python 3.13, FastAPI, SQLAlchemy 2.0, asyncpg |
 | Database | PostgreSQL 16 |
-| Frontend | React 19, Vite, MUI v9, easy-peasy |
+| Frontend | React 19, Vite, MUI v9, i18next, easy-peasy |
 | Package manager | uv (backend), npm (frontend) |
 | Infrastructure | Docker, Docker Compose v2 |
 

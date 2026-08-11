@@ -13,19 +13,23 @@
     "@mui/x-data-grid": "^9.8.0",
     "axios": "^1.18.1",
     "easy-peasy": "^6.1.1",
+    "i18next": "^26.3.6",
+    "i18next-browser-languagedetector": "^8.2.1",
     "notistack": "^3.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-i18next": "^17.0.11",
     "react-router-dom": "^7.18.0"
   },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "node --test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"src/**/*.{js,jsx}\"",
-    "format:check": "prettier --check \"src/**/*.{js,jsx}\""
+    "format": "prettier --write \"src/**/*.{js,jsx}\" \"test/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.{js,jsx}\" \"test/**/*.js\""
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
