@@ -13,6 +13,10 @@ const flattenKeys = (value, prefix = "") =>
     return typeof child === "object" && child !== null ? flattenKeys(child, path) : [path];
   });
 
+const valueAt = (catalog, key) => key.split(".").reduce((current, part) => current[part], catalog);
+
+const placeholders = (value) => [...value.matchAll(/{{\s*([^}]+?)\s*}}/g)].map((match) => match[1]);
+
 test("English and Russian catalogs expose the same non-empty keys", () => {
   const english = translationResources.en.translation;
   const russian = translationResources.ru.translation;
@@ -20,19 +24,32 @@ test("English and Russian catalogs expose the same non-empty keys", () => {
   assert.deepEqual(flattenKeys(russian).sort(), flattenKeys(english).sort());
   for (const catalog of [english, russian]) {
     for (const key of flattenKeys(catalog)) {
-      const value = key.split(".").reduce((current, part) => current[part], catalog);
+      const value = valueAt(catalog, key);
       assert.equal(typeof value, "string");
       assert.notEqual(value.trim(), "");
     }
   }
 });
 
+test("Russian translations preserve every interpolation placeholder", () => {
+  const english = translationResources.en.translation;
+  const russian = translationResources.ru.translation;
+
+  for (const key of flattenKeys(english)) {
+    assert.deepEqual(
+      placeholders(valueAt(russian, key)).sort(),
+      placeholders(valueAt(english, key)).sort(),
+      key
+    );
+  }
+});
+
 test("Russian catalog uses all required cardinal plural forms", async () => {
   await i18n.changeLanguage("ru");
 
-  assert.equal(i18n.t("vault.subtitle.secretCount", { count: 1 }), "1 секрет в темноте");
-  assert.equal(i18n.t("vault.subtitle.secretCount", { count: 2 }), "2 секрета в темноте");
-  assert.equal(i18n.t("vault.subtitle.secretCount", { count: 5 }), "5 секретов в темноте");
+  assert.equal(i18n.t("vault.subtitle.secretCount", { count: 1 }), "1 секрет хранится в темноте");
+  assert.equal(i18n.t("vault.subtitle.secretCount", { count: 2 }), "2 секрета хранятся в темноте");
+  assert.equal(i18n.t("vault.subtitle.secretCount", { count: 5 }), "5 секретов хранятся в темноте");
 });
 
 test("Unsupported languages resolve to the English fallback", async () => {
