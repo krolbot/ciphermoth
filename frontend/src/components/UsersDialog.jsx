@@ -87,7 +87,7 @@ const UsersDialog = ({ open, onClose }) => {
                 value={user.role}
                 onChange={(e) => change(user.id, { role: e.target.value })}
                 disabled={user.role === "service"}
-                sx={{ width: 120 }}
+                sx={{ width: 170, flexShrink: 0 }}
               >
                 {(user.role === "service" ? ["service"] : ["admin", "member"]).map((role) => (
                   <MenuItem key={role} value={role}>
