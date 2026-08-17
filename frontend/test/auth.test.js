@@ -23,7 +23,13 @@ globalThis.sessionStorage = {
 };
 
 test("auth sessions retain browser-only vault keys until cleared", () => {
-  const user = { id: 7, username: "moth", role: "member", active: true, must_change_password: false };
+  const user = {
+    id: 7,
+    username: "moth",
+    role: "member",
+    active: true,
+    must_change_password: false,
+  };
 
   setAuthSession({
     token: "session-token",

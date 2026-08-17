@@ -15,7 +15,9 @@ import { useTranslation } from "react-i18next";
 
 const ShareDialog = ({ entry, open, onClose }) => {
   const { t } = useTranslation();
-  const { listShares, setShare, revokeShare } = useStoreActions((a) => a.ciphermothModels.passwords);
+  const { listShares, setShare, revokeShare } = useStoreActions(
+    (a) => a.ciphermothModels.passwords
+  );
   const shareTargets = useStoreActions((a) => a.ciphermothModels.users.shareTargets);
   const [shares, setShares] = useState([]);
   const [targets, setTargets] = useState([]);
@@ -67,7 +69,9 @@ const ShareDialog = ({ entry, open, onClose }) => {
     }
   };
 
-  const available = targets.filter((target) => !shares.some((share) => share.user_id === target.id));
+  const available = targets.filter(
+    (target) => !shares.some((share) => share.user_id === target.id)
+  );
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -78,12 +82,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
             <Typography color="text.secondary">{t("sharing.empty")}</Typography>
           ) : (
             shares.map((share) => (
-              <Stack
-                key={share.user_id}
-                direction="row"
-                spacing={1}
-                sx={{ alignItems: "center" }}
-              >
+              <Stack key={share.user_id} direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <Typography sx={{ flex: 1 }}>{share.username}</Typography>
                 <TextField
                   select

@@ -76,9 +76,7 @@ const MasterPassword = {
           encrypted_private_key: unlocked.encryptedPrivateKey,
           auth_public_key: unlocked.authPublicKey,
           encrypted_auth_private_key: unlocked.encryptedAuthPrivateKey,
-          legacy_migration_token: getState().legacyVault
-            ? getState().migrationToken
-            : undefined,
+          legacy_migration_token: getState().legacyVault ? getState().migrationToken : undefined,
         }));
       } else {
         const { data: challenge } = await apiClient.post("/auth/challenge", { username });

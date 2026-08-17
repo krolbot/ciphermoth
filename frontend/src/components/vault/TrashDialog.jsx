@@ -58,11 +58,7 @@ const buildColumns = ({ t, language, onRestore, onPurge }) => [
     renderCell: (params) => (
       <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
         <Tooltip title={t("trashDialog.restore")}>
-          <IconButton
-            size="small"
-            color="primary"
-            onClick={() => onRestore(params.row.id)}
-          >
+          <IconButton size="small" color="primary" onClick={() => onRestore(params.row.id)}>
             <RestoreFromTrashIcon fontSize="small" />
           </IconButton>
         </Tooltip>

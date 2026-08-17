@@ -104,8 +104,8 @@ export const encryptUpdatedPassword = async (record, password, restoring = false
     result.encrypted_preferences = await encryptJson(entryKey, preferences);
     if (Array.isArray(password.attachments)) {
       result.encrypted_attachments = await Promise.all(
-        password.attachments.map(async (attachment) =>
-          (await encryptAttachmentData(record, attachment)).encrypted_payload
+        password.attachments.map(
+          async (attachment) => (await encryptAttachmentData(record, attachment)).encrypted_payload
         )
       );
     }

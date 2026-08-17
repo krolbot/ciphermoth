@@ -39,10 +39,7 @@ const importEntries = async (entries, existingPasswords, onConflict) => {
       result.overwritten += 1;
       continue;
     }
-    const { data: created } = await apiClient.post(
-      "/passwords",
-      await encryptNewPassword(entry)
-    );
+    const { data: created } = await apiClient.post("/passwords", await encryptNewPassword(entry));
     existing.set(entry.password_name, { ...entry, id: created.id });
     result.imported += 1;
   }
@@ -74,10 +71,7 @@ const Passwords = {
     try {
       const { data: legacy } = await apiClient.get("/passwords/legacy");
       for (const record of legacy) {
-        await apiClient.put(
-          `/passwords/legacy/${record.id}`,
-          await migrateLegacyRecord(record)
-        );
+        await apiClient.put(`/passwords/legacy/${record.id}`, await migrateLegacyRecord(record));
       }
       const { data } = await apiClient.get("/passwords");
       actions.setPasswords(await Promise.all(data.map(decryptPasswordRecord)));

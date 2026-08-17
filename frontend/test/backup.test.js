@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  createBackupArchive,
-  parsePasswordCsv,
-  readBackupArchive,
-} from "../src/lib/backup.js";
+import { createBackupArchive, parsePasswordCsv, readBackupArchive } from "../src/lib/backup.js";
 
 const password = {
   password_name: "Mail",

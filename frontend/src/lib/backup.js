@@ -76,9 +76,7 @@ export const readBackupArchive = async (file, password) => {
       custom_fields: item.custom_fields ?? [],
       folder: item.folder ?? null,
       favorite: item.favorite ?? false,
-      ...(Array.isArray(item.password_history)
-        ? { password_history: item.password_history }
-        : {}),
+      ...(Array.isArray(item.password_history) ? { password_history: item.password_history } : {}),
       ...(Array.isArray(item.attachments) ? { attachments: item.attachments } : {}),
     }));
   } finally {

@@ -57,13 +57,9 @@ export const encryptBytes = async (key, plaintext) => {
     false,
     ["sign"]
   );
-  const encryptionKey = await crypto.subtle.importKey(
-    "raw",
-    rawKey.slice(16),
-    "AES-CBC",
-    false,
-    ["encrypt"]
-  );
+  const encryptionKey = await crypto.subtle.importKey("raw", rawKey.slice(16), "AES-CBC", false, [
+    "encrypt",
+  ]);
   const iv = crypto.getRandomValues(new Uint8Array(16));
   const timestamp = new Uint8Array(8);
   new DataView(timestamp.buffer).setBigUint64(0, BigInt(Math.floor(Date.now() / 1000)));
@@ -95,13 +91,9 @@ export const decryptBytes = async (key, token) => {
     throw new Error("Invalid encrypted value.");
   }
 
-  const encryptionKey = await crypto.subtle.importKey(
-    "raw",
-    rawKey.slice(16),
-    "AES-CBC",
-    false,
-    ["decrypt"]
-  );
+  const encryptionKey = await crypto.subtle.importKey("raw", rawKey.slice(16), "AES-CBC", false, [
+    "decrypt",
+  ]);
   try {
     return new Uint8Array(
       await crypto.subtle.decrypt(
@@ -118,7 +110,10 @@ export const decryptBytes = async (key, token) => {
 const privateKeyPkcs8 = (key) => {
   if (key.length !== 32) return key;
   return concat(
-    Uint8Array.from([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20]),
+    Uint8Array.from([
+      0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04,
+      0x20,
+    ]),
     key
   );
 };
@@ -137,8 +132,7 @@ const wrapKey = async (sharedSecret, context, usages) =>
     usages
   );
 
-export const generateEntryKey = () =>
-  toBase64Url(crypto.getRandomValues(new Uint8Array(32)), true);
+export const generateEntryKey = () => toBase64Url(crypto.getRandomValues(new Uint8Array(32)), true);
 
 export const wrapEntryKey = async (publicKey, entryKey, context = "") => {
   const recipient = await crypto.subtle.importKey(
@@ -168,9 +162,7 @@ export const wrapEntryKey = async (publicKey, entryKey, context = "") => {
       encoder.encode(entryKey)
     )
   );
-  const ephemeralPublic = new Uint8Array(
-    await crypto.subtle.exportKey("raw", ephemeral.publicKey)
-  );
+  const ephemeralPublic = new Uint8Array(await crypto.subtle.exportKey("raw", ephemeral.publicKey));
   return toBase64Url(concat(Uint8Array.of(1), ephemeralPublic, nonce, ciphertext));
 };
 
@@ -182,9 +174,7 @@ export const generateUserKeyMaterial = async (password, salt = null) => {
   const publicKey = toBase64Url(
     new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey))
   );
-  const privateKeyBytes = new Uint8Array(
-    await crypto.subtle.exportKey("pkcs8", pair.privateKey)
-  );
+  const privateKeyBytes = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
   const authPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
   const authPublicKey = toBase64Url(
     new Uint8Array(await crypto.subtle.exportKey("raw", authPair.publicKey))
@@ -206,9 +196,7 @@ export const generateUserKeyMaterial = async (password, salt = null) => {
 
 export const unlockUserKeyMaterial = async (password, session) => {
   const vaultKey = await deriveVaultKey(password, session.salt);
-  const privateKey = toBase64Url(
-    await decryptBytes(vaultKey, session.encrypted_private_key)
-  );
+  const privateKey = toBase64Url(await decryptBytes(vaultKey, session.encrypted_private_key));
   const authPrivateKey = toBase64Url(
     await decryptBytes(vaultKey, session.encrypted_auth_private_key)
   );
@@ -271,10 +259,7 @@ export const rewrapPrivateKeys = async (password, privateKey, authPrivateKey) =>
     salt,
     vaultKey,
     encryptedPrivateKey: await encryptBytes(vaultKey, fromBase64Url(privateKey)),
-    encryptedAuthPrivateKey: await encryptBytes(
-      vaultKey,
-      fromBase64Url(authPrivateKey)
-    ),
+    encryptedAuthPrivateKey: await encryptBytes(vaultKey, fromBase64Url(authPrivateKey)),
   };
 };
 
@@ -286,9 +271,7 @@ const signAuthBytes = async (authPrivateKey, message) => {
     false,
     ["sign"]
   );
-  return toBase64Url(
-    new Uint8Array(await crypto.subtle.sign("Ed25519", key, message))
-  );
+  return toBase64Url(new Uint8Array(await crypto.subtle.sign("Ed25519", key, message)));
 };
 
 export const signAuthChallenge = (authPrivateKey, challenge) =>
@@ -313,8 +296,7 @@ export const signPasswordChange = async (authPrivateKey, token, keyMaterial) => 
   );
 };
 
-export const encryptJson = (key, value) =>
-  encryptBytes(key, encoder.encode(JSON.stringify(value)));
+export const encryptJson = (key, value) => encryptBytes(key, encoder.encode(JSON.stringify(value)));
 
 export const decryptJson = async (key, token) =>
   JSON.parse(new TextDecoder().decode(await decryptBytes(key, token)));

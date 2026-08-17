@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { Box, Button, Checkbox, FormControlLabel, LinearProgress, TextField, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Checkbox,
+  FormControlLabel,
+  LinearProgress,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
@@ -35,16 +43,8 @@ const LoginPage = () => {
     setMigrationToken,
     setError,
   } = useStoreActions((a) => a.ciphermothModels.masterPassword);
-  const {
-    initialized,
-    legacyVault,
-    error,
-    username,
-    value,
-    confirm,
-    migrationToken,
-    loading,
-  } = useStoreState((s) => s.ciphermothModels.masterPassword);
+  const { initialized, legacyVault, error, username, value, confirm, migrationToken, loading } =
+    useStoreState((s) => s.ciphermothModels.masterPassword);
 
   useEffect(() => {
     fetchStatus();
@@ -84,7 +84,13 @@ const LoginPage = () => {
   const handleCreate = () => {
     if (!validateUsername()) return;
     if (!value) {
-      setError(t(creatingVault ? "auth.validation.enterNewMasterPassword" : "auth.validation.enterMasterPassword"));
+      setError(
+        t(
+          creatingVault
+            ? "auth.validation.enterNewMasterPassword"
+            : "auth.validation.enterMasterPassword"
+        )
+      );
       return;
     }
     if (legacyVault && !migrationToken) {

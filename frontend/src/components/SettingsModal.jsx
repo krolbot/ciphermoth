@@ -197,10 +197,7 @@ const SettingsModal = ({ open, onClose }) => {
           {t("common.actions.save")}
         </Button>
       </DialogActions>
-      <PasswordChangeDialog
-        open={passwordOpen}
-        onClose={() => setPasswordOpen(false)}
-      />
+      <PasswordChangeDialog open={passwordOpen} onClose={() => setPasswordOpen(false)} />
     </Dialog>
   );
 };

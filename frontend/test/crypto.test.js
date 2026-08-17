@@ -54,10 +54,7 @@ test("browser-generated user keys wrap and unwrap encrypted JSON", async () => {
   const payload = { password_name: "example", username: "alice", favorite: true };
 
   assert.equal(unwrapped, entryKey);
-  assert.deepEqual(
-    await decryptJson(unwrapped, await encryptJson(entryKey, payload)),
-    payload
-  );
+  assert.deepEqual(await decryptJson(unwrapped, await encryptJson(entryKey, payload)), payload);
 });
 
 test("browser auth key signs a server challenge without exposing the master password", async () => {
@@ -89,9 +86,7 @@ test("pre-c3 user enrolls auth by proving possession of the encrypted X25519 key
   const server = await crypto.subtle.generateKey("X25519", true, ["deriveBits"]);
   const challenge = {
     challenge: "legacy-user-one-time-challenge",
-    nonce: toBase64Url(
-      new Uint8Array(await crypto.subtle.exportKey("raw", server.publicKey))
-    ),
+    nonce: toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", server.publicKey))),
     salt: material.salt,
     encrypted_private_key: material.encryptedPrivateKey,
   };

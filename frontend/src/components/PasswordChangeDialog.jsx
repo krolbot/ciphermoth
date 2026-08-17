@@ -1,13 +1,17 @@
 import { useState } from "react";
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, Typography } from "@mui/material";
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { useTranslation } from "react-i18next";
 
 import apiClient from "../api/client";
-import {
-  deriveVaultKey,
-  rewrapPrivateKeys,
-  signPasswordChange,
-} from "../lib/crypto";
+import { deriveVaultKey, rewrapPrivateKeys, signPasswordChange } from "../lib/crypto";
 import { getMasterPasswordStrength } from "../lib/passwordStrength";
 import {
   getAuthPrivateKey,
@@ -51,11 +55,7 @@ const PasswordChangeDialog = ({ open, onClose, required = false }) => {
       const privateKey = getPrivateKey();
       const authPrivateKey = getAuthPrivateKey();
       const keyMaterial = await rewrapPrivateKeys(newPassword, privateKey, authPrivateKey);
-      const proof = await signPasswordChange(
-        authPrivateKey,
-        getAuthToken(),
-        keyMaterial
-      );
+      const proof = await signPasswordChange(authPrivateKey, getAuthToken(), keyMaterial);
       const { data } = await apiClient.put("/auth/password", {
         new_salt: keyMaterial.salt,
         encrypted_private_key: keyMaterial.encryptedPrivateKey,
