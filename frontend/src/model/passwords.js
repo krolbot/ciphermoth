@@ -15,7 +15,6 @@ import {
   encryptNewPassword,
   encryptPreferences,
   encryptUpdatedPassword,
-  migrateLegacyRecord,
   wrapPasswordForTarget,
 } from "../lib/vault";
 import i18n from "../i18n";
@@ -69,10 +68,6 @@ const Passwords = {
     actions.setLoading(true);
     actions.setError(null);
     try {
-      const { data: legacy } = await apiClient.get("/passwords/legacy");
-      for (const record of legacy) {
-        await apiClient.put(`/passwords/legacy/${record.id}`, await migrateLegacyRecord(record));
-      }
       const { data } = await apiClient.get("/passwords");
       actions.setPasswords(await Promise.all(data.map(decryptPasswordRecord)));
     } catch (err) {

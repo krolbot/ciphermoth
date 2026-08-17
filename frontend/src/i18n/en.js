@@ -69,7 +69,7 @@ const en = {
     setupDescription:
       "One master password protects everything. Choose it well. It is the only key.",
     masterPassword: "Master Password",
-    migrationToken: "Legacy migration token",
+
     confirmMasterPassword: "Confirm Master Password",
     noRecoveryWarning:
       "There is no “Forgot password”. Lose your master password and the vault is gone, permanently. That is the trade for nobody-but-you holding the key.",
@@ -86,10 +86,10 @@ const en = {
     changePassword: "Change password",
     changePasswordTitle: "Change your password",
     changePasswordRequired: "You must change your temporary password before opening the vault.",
-    migrate: "Set up account",
+
     validation: {
       enterMasterPassword: "Please enter your master password.",
-      enterMigrationToken: "Enter the operator migration token.",
+
       enterUsername: "Please enter your username.",
       enterPasswordChange: "Enter both passwords.",
       enterNewMasterPassword: "Please enter a master password.",

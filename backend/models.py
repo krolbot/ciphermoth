@@ -4,12 +4,10 @@ from sqlalchemy import (
     TIMESTAMP,
     Boolean,
     ForeignKey,
-    Index,
     Integer,
     LargeBinary,
     String,
     func,
-    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -36,20 +34,6 @@ class InstanceStateModel(BaseModel):
     bootstrapped_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
 
 
-class MasterPasswordModel(BaseModel):
-    __tablename__ = "master_password"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
-    updated: Mapped[datetime] = mapped_column(
-        TIMESTAMP, server_default=func.now(), onupdate=func.now()
-    )
-    deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
-
-    salt: Mapped[bytes] = mapped_column(LargeBinary)
-    hash_key: Mapped[str] = mapped_column(String)
-
-
 class UserModel(BaseModel):
     __tablename__ = "users"
 
@@ -65,7 +49,7 @@ class UserModel(BaseModel):
         Boolean, default=False, server_default="false"
     )
     salt: Mapped[bytes] = mapped_column(LargeBinary)
-    hash_key: Mapped[str | None] = mapped_column(String, nullable=True)
+
     public_key: Mapped[bytes] = mapped_column(LargeBinary)
     encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary)
     auth_public_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
@@ -103,15 +87,6 @@ class AuthChallengeModel(BaseModel):
 
 class PasswordModel(BaseModel):
     __tablename__ = "passwords"
-    __table_args__ = (
-        Index(
-            "uq_passwords_name_active",
-            "owner_id",
-            "password_name",
-            unique=True,
-            postgresql_where=text("deleted IS NULL"),
-        ),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
@@ -120,30 +95,13 @@ class PasswordModel(BaseModel):
     )
     deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
 
-    owner_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    owner_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     encryption_version: Mapped[int] = mapped_column(
-        Integer, default=1, server_default="1"
+        Integer, default=3, server_default="3"
     )
-    encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
-    password_name: Mapped[str | None] = mapped_column(String)
-    kind: Mapped[str] = mapped_column(String, default="login", server_default="login")
-    username: Mapped[str | None] = mapped_column(String)
-    password_value: Mapped[bytes | None] = mapped_column(LargeBinary)
-    description: Mapped[str | None] = mapped_column(String)
-    url: Mapped[bytes | None] = mapped_column(LargeBinary)
-    totp_secret: Mapped[bytes | None] = mapped_column(LargeBinary)
-    tags: Mapped[bytes | None] = mapped_column(LargeBinary)
-    custom_fields: Mapped[bytes | None] = mapped_column(LargeBinary)
-    folder: Mapped[bytes | None] = mapped_column(LargeBinary)
-    password_history: Mapped[bytes | None] = mapped_column(LargeBinary)
-    favorite: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
-    )
-    backed_up: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
-    )
+    encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary)
 
 
 class PasswordAttachmentModel(BaseModel):
@@ -157,10 +115,7 @@ class PasswordAttachmentModel(BaseModel):
         nullable=False,
         index=True,
     )
-    encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
-    filename: Mapped[bytes | None] = mapped_column(LargeBinary)
-    content: Mapped[bytes | None] = mapped_column(LargeBinary)
-    content_type: Mapped[bytes | None] = mapped_column(LargeBinary)
+    encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary)
     size_bytes: Mapped[int] = mapped_column(Integer)
 
 
@@ -178,9 +133,7 @@ class PasswordAccessModel(BaseModel):
     permission: Mapped[str] = mapped_column(String(16))
     wrapped_key: Mapped[bytes] = mapped_column(LargeBinary)
     encrypted_preferences: Mapped[bytes | None] = mapped_column(LargeBinary)
-    favorite: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
-    )
+
     granted_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

@@ -40,11 +40,12 @@ const LoginPage = () => {
     setUsername,
     setValue,
     setConfirm,
-    setMigrationToken,
+
     setError,
   } = useStoreActions((a) => a.ciphermothModels.masterPassword);
-  const { initialized, legacyVault, error, username, value, confirm, migrationToken, loading } =
-    useStoreState((s) => s.ciphermothModels.masterPassword);
+  const { initialized, error, username, value, confirm, loading } = useStoreState(
+    (s) => s.ciphermothModels.masterPassword
+  );
 
   useEffect(() => {
     fetchStatus();
@@ -63,7 +64,7 @@ const LoginPage = () => {
   }, [error, enqueueSnackbar]);
 
   const [acknowledged, setAcknowledged] = useState(false);
-  const creatingVault = initialized === false && !legacyVault;
+  const creatingVault = initialized === false;
   const strength = creatingVault ? getMasterPasswordStrength(value) : null;
 
   const validateUsername = () => {
@@ -93,10 +94,7 @@ const LoginPage = () => {
       );
       return;
     }
-    if (legacyVault && !migrationToken) {
-      setError(t("auth.validation.enterMigrationToken"));
-      return;
-    }
+
     if (creatingVault && value !== confirm) {
       setError(t("auth.validation.passwordsDoNotMatch"));
       return;
@@ -213,16 +211,6 @@ const LoginPage = () => {
           autoComplete={creatingVault ? "new-password" : "current-password"}
         />
 
-        {legacyVault && (
-          <PasswordField
-            label={t("auth.migrationToken")}
-            required
-            value={migrationToken}
-            onChange={(e) => setMigrationToken(e.target.value)}
-            autoComplete="off"
-          />
-        )}
-
         {creatingVault && value && strength && (
           <Box sx={{ mt: 2, textAlign: "left" }}>
             <LinearProgress
@@ -303,7 +291,7 @@ const LoginPage = () => {
           onClick={initialized ? handleLogin : handleCreate}
           sx={{ mt: 3, ...unlockButtonSx }}
         >
-          {t(initialized ? "auth.unlock" : legacyVault ? "auth.migrate" : "auth.create")}
+          {t(initialized ? "auth.unlock" : "auth.create")}
         </Button>
 
         <Typography sx={{ mt: 2.75, fontSize: 11, color: "text.disabled" }}>

@@ -34,7 +34,6 @@ async def user_context(session: AsyncSession, username: str, role: str) -> AuthC
     user = UserModel(
         username=username,
         role=role,
-        hash_key="unused",
         salt=b"0" * 16,
         public_key=b"1" * 32,
         encrypted_private_key=b"unused",

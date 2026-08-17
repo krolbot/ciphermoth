@@ -22,7 +22,6 @@ def test_multi_user_storage_contract() -> None:
         "active",
         "must_change_password",
         "salt",
-        "hash_key",
         "public_key",
         "encrypted_private_key",
     }
@@ -36,10 +35,11 @@ def test_multi_user_storage_contract() -> None:
         "user_id",
         "permission",
         "wrapped_key",
-        "favorite",
+        "encrypted_preferences",
     }
     assert {column.name for column in inspect(PasswordModel).columns} >= {
         "owner_id",
         "encryption_version",
+        "encrypted_payload",
     }
     assert "user_id" in {column.name for column in inspect(SettingsModel).columns}

@@ -91,14 +91,11 @@ class AuthChallengeResponse(BaseModel):
     salt: str
     public_key: str
     encrypted_private_key: str
-    encrypted_auth_private_key: str | None = None
-    legacy_user: bool = False
+    encrypted_auth_private_key: str
 
 
 class AuthStatus(BaseModel):
     initialized: bool
-    legacy_vault: bool = False
-    legacy_salt: str | None = None
 
 
 class AuthBootstrapPayload(BaseModel):
@@ -108,7 +105,6 @@ class AuthBootstrapPayload(BaseModel):
     encrypted_private_key: str = Field(min_length=1, max_length=4096)
     auth_public_key: str = Field(min_length=43, max_length=44)
     encrypted_auth_private_key: str = Field(min_length=1, max_length=4096)
-    legacy_migration_token: str | None = Field(default=None, max_length=1024)
 
 
 class AuthChallengePayload(BaseModel):
@@ -118,10 +114,6 @@ class AuthChallengePayload(BaseModel):
 class AuthLoginPayload(BaseModel):
     challenge: str = Field(min_length=32, max_length=128)
     signature: str = Field(min_length=43, max_length=88)
-    auth_public_key: str | None = Field(default=None, min_length=43, max_length=44)
-    encrypted_auth_private_key: str | None = Field(
-        default=None, min_length=1, max_length=4096
-    )
 
 
 class PasswordChangePayload(BaseModel):
@@ -290,64 +282,6 @@ class EncryptedAttachmentResponse(BaseModel):
     encrypted_payload: str
     size_bytes: int
     created: datetime
-
-
-class LegacyAttachmentResponse(BaseModel):
-    id: int
-    filename: str
-    content_type: str | None = None
-    content: str
-
-
-class LegacyRecipient(BaseModel):
-    user_id: int
-    public_key: str
-    favorite: bool = False
-
-
-class LegacyPasswordResponse(BaseModel):
-    id: int
-    encryption_version: int
-    wrapped_key: str
-    password_name: str | None = None
-    kind: str
-    username: str | None = None
-    password_value: str | None = None
-    url: str | None = None
-    totp_secret: str | None = None
-    description: str | None = None
-    tags: str | None = None
-    custom_fields: str | None = None
-    folder: str | None = None
-    password_history: str | None = None
-    favorite: bool = False
-    backed_up: bool = False
-    attachments: list[LegacyAttachmentResponse] = Field(default_factory=list)
-    recipients: list[LegacyRecipient] = Field(default_factory=list)
-
-
-class MigratedAttachmentPayload(BaseModel):
-    id: int
-    encrypted_payload: EncryptedAttachmentCiphertext
-
-
-class MigratedWrappedKey(BaseModel):
-    user_id: int
-    wrapped_key: str = Field(min_length=1, max_length=4096)
-
-
-class MigratedPreference(BaseModel):
-    user_id: int
-    encrypted_preferences: str = Field(min_length=1, max_length=16_384)
-
-
-class PasswordMigrationPayload(BaseModel):
-    encrypted_payload: str = Field(min_length=1, max_length=4_194_304)
-    preferences: list[MigratedPreference]
-    attachments: list[MigratedAttachmentPayload] = Field(
-        default_factory=list, max_length=20
-    )
-    wrapped_keys: list[MigratedWrappedKey]
 
 
 class AttachmentResponse(BaseModel):

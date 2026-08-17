@@ -47,7 +47,6 @@ async def bootstrap(
         encrypted_private_key=encrypted_private_key,
         auth_public_key=auth_public_key,
         encrypted_auth_private_key=encrypted_auth_private_key,
-        legacy_migration_token=payload.legacy_migration_token,
     )
 
 
@@ -64,19 +63,9 @@ async def challenge(
 async def login(
     request: Request, payload: AuthLoginPayload, crud: AuthCRUDDep
 ) -> AuthSessionResponse:
-    auth_public_key = encrypted_auth_private_key = None
-    if (
-        payload.auth_public_key is not None
-        or payload.encrypted_auth_private_key is not None
-    ):
-        auth_public_key, encrypted_auth_private_key = decode_auth_key_material(
-            payload.auth_public_key or "", payload.encrypted_auth_private_key or ""
-        )
     return await crud.login(
         payload.challenge,
         decode_signature(payload.signature),
-        auth_public_key=auth_public_key,
-        encrypted_auth_private_key=encrypted_auth_private_key,
     )
 
 

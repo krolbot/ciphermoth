@@ -1,7 +1,6 @@
 import base64
 import binascii
 import csv
-import hmac
 import io
 import json
 import os
@@ -17,10 +16,6 @@ import pyzipper
 import typer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.asymmetric.x25519 import (
-    X25519PrivateKey,
-    X25519PublicKey,
-)
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -135,50 +130,17 @@ def _unlock(client: httpx.Client) -> CliSession:
     _check(resp)
     challenge = resp.json()
     vault_key = generate_key_derivation(_decode(challenge["salt"]), master)
-    login_payload = {"challenge": challenge["challenge"]}
-    if challenge.get("legacy_user"):
-        private_bytes = decrypt_bytes(
-            vault_key, challenge["encrypted_private_key"].encode()
-        )
-        if private_bytes is None:
-            _die("Invalid username or master password.")
-        try:
-            private_key = X25519PrivateKey.from_private_bytes(private_bytes)
-        except ValueError:
-            _die("Invalid vault key.")
-        shared = private_key.exchange(
-            X25519PublicKey.from_public_bytes(_decode(challenge["nonce"]))
-        )
-        auth_private = Ed25519PrivateKey.generate()
-        auth_private_bytes = auth_private.private_bytes(
-            serialization.Encoding.DER,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        login_payload.update(
-            signature=_encode(
-                hmac.digest(shared, challenge["challenge"].encode(), "sha256")
-            ),
-            auth_public_key=_encode(
-                auth_private.public_key().public_bytes(
-                    serialization.Encoding.Raw, serialization.PublicFormat.Raw
-                )
-            ),
-            encrypted_auth_private_key=encrypt(vault_key, auth_private_bytes).decode(),
-        )
-    else:
-        encrypted_auth_private = challenge["encrypted_auth_private_key"].encode()
-        auth_private_bytes = decrypt_bytes(vault_key, encrypted_auth_private)
-        if auth_private_bytes is None:
-            _die("Invalid username or master password.")
-        auth_private = serialization.load_der_private_key(
-            auth_private_bytes, password=None
-        )
-        if not isinstance(auth_private, Ed25519PrivateKey):
-            _die("Invalid authentication key.")
-        login_payload["signature"] = _encode(
-            auth_private.sign(_decode(challenge["nonce"]))
-        )
+    encrypted_auth_private = challenge["encrypted_auth_private_key"].encode()
+    auth_private_bytes = decrypt_bytes(vault_key, encrypted_auth_private)
+    if auth_private_bytes is None:
+        _die("Invalid username or master password.")
+    auth_private = serialization.load_der_private_key(auth_private_bytes, password=None)
+    if not isinstance(auth_private, Ed25519PrivateKey):
+        _die("Invalid authentication key.")
+    login_payload = {
+        "challenge": challenge["challenge"],
+        "signature": _encode(auth_private.sign(_decode(challenge["nonce"]))),
+    }
     resp = client.post("/auth/login", json=login_payload)
     _check(resp)
     data = resp.json()
@@ -197,12 +159,7 @@ def _unlock(client: httpx.Client) -> CliSession:
 
 
 def _entry_key(session: CliSession, record: dict) -> bytes:
-    context = (
-        str(record["id"]).encode() if record.get("encryption_version") == 2 else b""
-    )
-    return unwrap_entry_key(
-        session.private_key, _decode(record["wrapped_key"]), context
-    )
+    return unwrap_entry_key(session.private_key, _decode(record["wrapped_key"]), b"")
 
 
 def _decrypt_record(session: CliSession, record: dict) -> dict:
@@ -311,10 +268,6 @@ def _decrypt_attachment(session: CliSession, record: dict, attachment: dict) -> 
 
 
 def _get_records(client: httpx.Client, session: CliSession, path: str) -> list[dict]:
-    legacy = client.get("/passwords/legacy", headers=session.headers)
-    _check(legacy)
-    if legacy.json():
-        _die("Legacy entries must be migrated once in the web UI before using the CLI.")
     response = client.get(path, headers=session.headers)
     _check(response)
     return response.json()

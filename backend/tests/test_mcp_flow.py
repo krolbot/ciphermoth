@@ -43,7 +43,6 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
         owner_model = UserModel(
             username="owner",
             role="admin",
-            hash_key="unused",
             salt=b"0" * 16,
             public_key=b"1" * 32,
             encrypted_private_key=b"unused",

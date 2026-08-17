@@ -8,8 +8,6 @@ from schemas import (
     EncryptedPasswordResponse,
     EncryptedPasswordUpdatePayload,
     EncryptedPreferencesUpdatePayload,
-    LegacyPasswordResponse,
-    PasswordMigrationPayload,
     ShareGrant,
     ShareUpdatePayload,
     SimpleDetailSchema,
@@ -30,23 +28,6 @@ async def get_trash(
     crud: EncryptedPasswordCRUDDep, context: VaultContextDep
 ) -> list[EncryptedPasswordResponse]:
     return await crud.list_passwords(context, deleted=True)
-
-
-@router.get("/legacy", response_model=list[LegacyPasswordResponse])
-async def list_legacy_passwords(
-    crud: EncryptedPasswordCRUDDep, context: VaultContextDep
-) -> list[LegacyPasswordResponse]:
-    return await crud.list_legacy(context)
-
-
-@router.put("/legacy/{password_id}", response_model=EncryptedPasswordResponse)
-async def migrate_legacy_password(
-    password_id: int,
-    payload: PasswordMigrationPayload,
-    crud: EncryptedPasswordCRUDDep,
-    context: VaultContextDep,
-) -> EncryptedPasswordResponse:
-    return await crud.migrate(context, password_id, payload)
 
 
 @router.post("", response_model=EncryptedPasswordResponse)

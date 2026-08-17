@@ -30,8 +30,7 @@ services:
       CORS_ORIGINS: '["${CIPHERMOTH_FRONTEND_ORIGIN:-http://localhost:3000}"]'
       # Overrides the per-route rate limits (e.g. 200/hour) when set.
       CIPHERMOTH_RATE_LIMIT: ${CIPHERMOTH_RATE_LIMIT:-}
-      # Required only while claiming a pre-account legacy vault.
-      CIPHERMOTH_LEGACY_MIGRATION_TOKEN: ${CIPHERMOTH_LEGACY_MIGRATION_TOKEN:-}
+
     ports:
       - "${CIPHERMOTH_BACKEND_PORT:-8000}:80"
     volumes:

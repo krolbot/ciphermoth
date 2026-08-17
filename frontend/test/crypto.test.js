@@ -5,14 +5,12 @@ import {
   decryptJson,
   decryptBytes,
   deriveVaultKey,
-  enrollLegacyUserAuth,
   encryptJson,
   encryptBytes,
   fromBase64Url,
   generateEntryKey,
   generateUserKeyMaterial,
   signAuthChallenge,
-  toBase64Url,
   unwrapEntryKey,
   wrapEntryKey,
 } from "../src/lib/crypto.js";
@@ -75,48 +73,6 @@ test("browser auth key signs a server challenge without exposing the master pass
       publicKey,
       fromBase64Url(signature),
       fromBase64Url(challenge)
-    ),
-    true
-  );
-});
-
-test("pre-c3 user enrolls auth by proving possession of the encrypted X25519 key", async () => {
-  const password = "Correct-Horse_42!";
-  const material = await generateUserKeyMaterial(password);
-  const server = await crypto.subtle.generateKey("X25519", true, ["deriveBits"]);
-  const challenge = {
-    challenge: "legacy-user-one-time-challenge",
-    nonce: toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", server.publicKey))),
-    salt: material.salt,
-    encrypted_private_key: material.encryptedPrivateKey,
-  };
-
-  const enrolled = await enrollLegacyUserAuth(password, challenge);
-  const userPublic = await crypto.subtle.importKey(
-    "raw",
-    fromBase64Url(material.publicKey),
-    "X25519",
-    false,
-    []
-  );
-  const shared = await crypto.subtle.deriveBits(
-    { name: "X25519", public: userPublic },
-    server.privateKey,
-    256
-  );
-  const proofKey = await crypto.subtle.importKey(
-    "raw",
-    shared,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["verify"]
-  );
-  assert.equal(
-    await crypto.subtle.verify(
-      "HMAC",
-      proofKey,
-      fromBase64Url(enrolled.proof),
-      new TextEncoder().encode(challenge.challenge)
     ),
     true
   );

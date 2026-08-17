@@ -5,7 +5,7 @@ description = "CipherMoth Password Manager API"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.139.0",
-    "bcrypt>=5.0.0",
+
     "cryptography>=49.0.0",
     "asyncpg>=0.31.0",
     "sqlalchemy>=2.0.51",

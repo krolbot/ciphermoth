@@ -2,7 +2,7 @@ import base64
 import binascii
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, true
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.exceptions import Forbidden, NotFound, TypesMismatchError
@@ -17,10 +17,6 @@ from schemas import (
     EncryptedAttachmentResponse,
     EncryptedPasswordResponse,
     EntryPermission,
-    LegacyAttachmentResponse,
-    LegacyPasswordResponse,
-    LegacyRecipient,
-    PasswordMigrationPayload,
     ShareGrant,
     SharePermission,
     UserRole,
@@ -102,7 +98,7 @@ class EncryptedPasswordCRUD:
         context: AuthContext,
         password_id: int,
         *,
-        deleted: bool | None = False,
+        deleted: bool = False,
     ) -> tuple[PasswordModel, PasswordAccessModel]:
         result = await self.session.execute(
             select(PasswordModel, PasswordAccessModel)
@@ -114,10 +110,8 @@ class EncryptedPasswordCRUD:
                 PasswordModel.id == password_id,
                 PasswordAccessModel.user_id == context.user.id,
                 PasswordModel.deleted.is_not(None)
-                if deleted is True
-                else PasswordModel.deleted.is_(None)
-                if deleted is False
-                else true(),
+                if deleted
+                else PasswordModel.deleted.is_(None),
             )
         )
         row = result.one_or_none()
@@ -131,13 +125,10 @@ class EncryptedPasswordCRUD:
         access: PasswordAccessModel,
         owner_username: str | None = None,
     ) -> EncryptedPasswordResponse:
-        if entry.encrypted_payload is None:
-            raise TypesMismatchError("Legacy password must be migrated in the client.")
-        if entry.owner_id is None:
-            raise TypesMismatchError("Password entry has no owner.")
         encrypted_payload = _encode_fernet(entry.encrypted_payload)
         wrapped_key = _encode(access.wrapped_key)
-        assert encrypted_payload is not None and wrapped_key is not None
+        if encrypted_payload is None or wrapped_key is None:
+            raise TypesMismatchError("Invalid encrypted entry.")
         return EncryptedPasswordResponse(
             id=entry.id,
             owner_id=entry.owner_id,
@@ -168,19 +159,6 @@ class EncryptedPasswordCRUD:
             encrypted_payload=_decode_fernet(
                 encrypted_payload, label="encrypted payload"
             ),
-            password_name=None,
-            kind="opaque",
-            username=None,
-            password_value=None,
-            description=None,
-            url=None,
-            totp_secret=None,
-            tags=None,
-            custom_fields=None,
-            folder=None,
-            password_history=None,
-            favorite=False,
-            backed_up=False,
         )
         self.session.add(entry)
         await self.session.flush()
@@ -194,7 +172,6 @@ class EncryptedPasswordCRUD:
                 if encrypted_preferences is not None
                 else None
             ),
-            favorite=False,
             granted_by=context.user.id,
         )
         self.session.add(access)
@@ -202,9 +179,6 @@ class EncryptedPasswordCRUD:
             PasswordAttachmentModel(
                 password_id=entry.id,
                 encrypted_payload=payload,
-                filename=None,
-                content=None,
-                content_type=None,
                 size_bytes=len(payload),
             )
             for payload in attachment_payloads
@@ -242,194 +216,6 @@ class EncryptedPasswordCRUD:
             for entry, access, owner_username in await self.session.execute(statement)
         ]
 
-    async def list_legacy(self, context: AuthContext) -> list[LegacyPasswordResponse]:
-        rows = (
-            await self.session.execute(
-                select(PasswordModel, PasswordAccessModel)
-                .join(
-                    PasswordAccessModel,
-                    PasswordAccessModel.password_id == PasswordModel.id,
-                )
-                .where(
-                    PasswordAccessModel.user_id == context.user.id,
-                    PasswordAccessModel.permission == "owner",
-                    PasswordModel.encryption_version < 3,
-                )
-                .order_by(PasswordModel.id)
-            )
-        ).all()
-        result: list[LegacyPasswordResponse] = []
-        for entry, owner_access in rows:
-            attachments = (
-                await self.session.execute(
-                    select(PasswordAttachmentModel).where(
-                        PasswordAttachmentModel.password_id == entry.id
-                    )
-                )
-            ).scalars()
-            legacy_attachments = []
-            for attachment in attachments:
-                if attachment.filename is None or attachment.content is None:
-                    raise TypesMismatchError("Legacy attachment data is incomplete.")
-                filename = _encode_fernet(attachment.filename)
-                content = _encode_fernet(attachment.content)
-                assert filename is not None and content is not None
-                legacy_attachments.append(
-                    LegacyAttachmentResponse(
-                        id=attachment.id,
-                        filename=filename,
-                        content_type=_encode_fernet(attachment.content_type),
-                        content=content,
-                    )
-                )
-            recipients = (
-                await self.session.execute(
-                    select(
-                        PasswordAccessModel.user_id,
-                        UserModel.public_key,
-                        PasswordAccessModel.favorite,
-                    )
-                    .join(UserModel, UserModel.id == PasswordAccessModel.user_id)
-                    .where(PasswordAccessModel.password_id == entry.id)
-                )
-            ).all()
-            wrapped_key = _encode(owner_access.wrapped_key)
-            assert wrapped_key is not None
-            result.append(
-                LegacyPasswordResponse(
-                    id=entry.id,
-                    encryption_version=entry.encryption_version,
-                    wrapped_key=wrapped_key,
-                    password_name=entry.password_name,
-                    kind=entry.kind,
-                    username=entry.username,
-                    password_value=_encode_fernet(entry.password_value),
-                    url=_encode_fernet(entry.url),
-                    totp_secret=_encode_fernet(entry.totp_secret),
-                    description=entry.description,
-                    tags=_encode_fernet(entry.tags),
-                    custom_fields=_encode_fernet(entry.custom_fields),
-                    folder=_encode_fernet(entry.folder),
-                    password_history=_encode_fernet(entry.password_history),
-                    favorite=owner_access.favorite,
-                    backed_up=entry.backed_up,
-                    attachments=legacy_attachments,
-                    recipients=[
-                        self._legacy_recipient(*recipient) for recipient in recipients
-                    ],
-                )
-            )
-        return result
-
-    @staticmethod
-    def _legacy_recipient(
-        user_id: int, public_key: bytes, favorite: bool
-    ) -> LegacyRecipient:
-        encoded = _encode(public_key)
-        assert encoded is not None
-        return LegacyRecipient(user_id=user_id, public_key=encoded, favorite=favorite)
-
-    async def migrate(
-        self,
-        context: AuthContext,
-        password_id: int,
-        payload: PasswordMigrationPayload,
-    ) -> EncryptedPasswordResponse:
-        entry, owner_access = await self._entry_and_access(
-            context, password_id, deleted=None
-        )
-        if owner_access.permission != "owner":
-            raise Forbidden("Owner access is required.")
-        if entry.encryption_version >= 3:
-            return self._response(entry, owner_access)
-
-        accesses = (
-            (
-                await self.session.execute(
-                    select(PasswordAccessModel).where(
-                        PasswordAccessModel.password_id == password_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        wrapped_keys = {
-            item.user_id: _decode_wrapped_key(item.wrapped_key)
-            for item in payload.wrapped_keys
-        }
-        if set(wrapped_keys) != {access.user_id for access in accesses}:
-            raise TypesMismatchError(
-                "Wrapped keys must cover every existing recipient."
-            )
-        preferences = {
-            item.user_id: _decode_fernet(
-                item.encrypted_preferences, label="encrypted preferences"
-            )
-            for item in payload.preferences
-        }
-        if set(preferences) != {access.user_id for access in accesses}:
-            raise TypesMismatchError(
-                "Encrypted preferences must cover every existing recipient."
-            )
-
-        attachments = (
-            (
-                await self.session.execute(
-                    select(PasswordAttachmentModel).where(
-                        PasswordAttachmentModel.password_id == password_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        decoded_attachments = _decode_attachment_payloads(
-            [item.encrypted_payload for item in payload.attachments]
-        )
-        migrated_attachments = {
-            item.id: decoded
-            for item, decoded in zip(
-                payload.attachments, decoded_attachments, strict=True
-            )
-        }
-        if set(migrated_attachments) != {attachment.id for attachment in attachments}:
-            raise TypesMismatchError(
-                "Migrated attachments must cover every legacy attachment."
-            )
-
-        entry.encrypted_payload = _decode_fernet(
-            payload.encrypted_payload, label="encrypted payload"
-        )
-        entry.encryption_version = 3
-        entry.password_name = None
-        entry.password_value = None
-        entry.kind = "opaque"
-        entry.username = None
-        entry.url = None
-        entry.totp_secret = None
-        entry.description = None
-        entry.tags = None
-        entry.custom_fields = None
-        entry.folder = None
-        entry.password_history = None
-        entry.favorite = False
-        entry.backed_up = False
-        for access in accesses:
-            access.wrapped_key = wrapped_keys[access.user_id]
-            access.favorite = False
-            access.encrypted_preferences = preferences[access.user_id]
-        for attachment in attachments:
-            encrypted_attachment = migrated_attachments[attachment.id]
-            attachment.encrypted_payload = encrypted_attachment
-            attachment.filename = None
-            attachment.content_type = None
-            attachment.content = None
-            attachment.size_bytes = len(encrypted_attachment)
-        await self.session.flush()
-        await self.session.refresh(entry)
-        return self._response(entry, owner_access)
-
     async def update(
         self,
         context: AuthContext,
@@ -442,8 +228,7 @@ class EncryptedPasswordCRUD:
         entry, access = await self._entry_and_access(context, password_id)
         if access.permission not in (EntryPermission.owner, SharePermission.write):
             raise Forbidden("Write access is required.")
-        if entry.encryption_version != 3:
-            raise TypesMismatchError("Legacy password must be migrated in the client.")
+
         payload = _decode_fernet(encrypted_payload, label="encrypted payload")
         preferences = (
             _decode_fernet(encrypted_preferences, label="encrypted preferences")
@@ -457,7 +242,7 @@ class EncryptedPasswordCRUD:
         entry.encrypted_payload = payload
         if preferences is not None:
             access.encrypted_preferences = preferences
-            access.favorite = False
+
         entry.updated = datetime.now(UTC).replace(tzinfo=None)
         await self.session.flush()
         return self._response(entry, access)
@@ -518,7 +303,6 @@ class EncryptedPasswordCRUD:
                 user_id=user_id,
                 permission=permission,
                 wrapped_key=_decode_wrapped_key(wrapped_key),
-                favorite=False,
                 granted_by=context.user.id,
             )
             self.session.add(access)
@@ -574,12 +358,9 @@ class EncryptedPasswordCRUD:
     def _attachment_response(
         attachment: PasswordAttachmentModel,
     ) -> EncryptedAttachmentResponse:
-        if attachment.encrypted_payload is None:
-            raise TypesMismatchError(
-                "Legacy attachment must be migrated in the client."
-            )
         payload = _encode_fernet(attachment.encrypted_payload)
-        assert payload is not None
+        if payload is None:
+            raise TypesMismatchError("Invalid encrypted attachment.")
         return EncryptedAttachmentResponse(
             id=attachment.id,
             password_id=attachment.password_id,
@@ -597,7 +378,6 @@ class EncryptedPasswordCRUD:
                 select(PasswordAttachmentModel)
                 .where(
                     PasswordAttachmentModel.password_id == password_id,
-                    PasswordAttachmentModel.encrypted_payload.is_not(None),
                 )
                 .order_by(PasswordAttachmentModel.created)
             )
@@ -632,9 +412,6 @@ class EncryptedPasswordCRUD:
         attachment = PasswordAttachmentModel(
             password_id=password_id,
             encrypted_payload=payload,
-            filename=None,
-            content=None,
-            content_type=None,
             size_bytes=len(payload),
         )
         self.session.add(attachment)
@@ -662,9 +439,6 @@ class EncryptedPasswordCRUD:
             PasswordAttachmentModel(
                 password_id=password_id,
                 encrypted_payload=payload,
-                filename=None,
-                content=None,
-                content_type=None,
                 size_bytes=len(payload),
             )
             for payload in payloads

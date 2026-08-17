@@ -1,5 +1,4 @@
 import {
-  decryptBytes,
   decryptJson,
   encryptJson,
   fromBase64Url,
@@ -8,14 +7,9 @@ import {
   unwrapEntryKey,
   wrapEntryKey,
 } from "./crypto.js";
-import { getPrivateKey, getPublicKey, getVaultKey } from "../utils.js";
+import { getPrivateKey, getPublicKey } from "../utils.js";
 
-const decoder = new TextDecoder();
-
-const keyContext = (record) => (record.encryption_version === 2 ? String(record.id) : "");
-
-export const entryKeyFor = (record) =>
-  unwrapEntryKey(getPrivateKey(), record.wrapped_key, keyContext(record));
+export const entryKeyFor = (record) => unwrapEntryKey(getPrivateKey(), record.wrapped_key, "");
 
 export const decryptPasswordRecord = async (record) => {
   const entryKey = await entryKeyFor(record);
@@ -151,71 +145,5 @@ export const decryptAttachment = async (record, attachment) => {
     blob: new Blob([data], {
       type: payload.content_type || "application/octet-stream",
     }),
-  };
-};
-
-const decryptLegacyText = async (key, token) =>
-  token ? decoder.decode(await decryptBytes(key, token)) : null;
-
-const decryptLegacyJson = async (key, token, fallback = []) => {
-  const value = await decryptLegacyText(key, token);
-  return value ? JSON.parse(value) : fallback;
-};
-
-export const migrateLegacyRecord = async (record) => {
-  const legacyKey =
-    record.encryption_version === 1
-      ? getVaultKey()
-      : await unwrapEntryKey(getPrivateKey(), record.wrapped_key, String(record.id));
-  const entryKey = record.encryption_version === 1 ? generateEntryKey() : legacyKey;
-  const passwordValue = await decryptLegacyText(legacyKey, record.password_value);
-  if (passwordValue === null) throw new Error("Legacy password value is missing.");
-
-  const payload = {
-    password_name: record.password_name || "Untitled",
-    kind: record.kind || "login",
-    username: record.username,
-    password_value: passwordValue,
-    url: await decryptLegacyText(legacyKey, record.url),
-    totp_secret: await decryptLegacyText(legacyKey, record.totp_secret),
-    description: record.description,
-    tags: await decryptLegacyJson(legacyKey, record.tags),
-    custom_fields: await decryptLegacyJson(legacyKey, record.custom_fields),
-    folder: await decryptLegacyText(legacyKey, record.folder),
-    password_history: await decryptLegacyJson(legacyKey, record.password_history),
-    backed_up: record.backed_up ?? false,
-  };
-  const attachments = await Promise.all(
-    record.attachments.map(async (attachment) => {
-      const filename = await decryptLegacyText(legacyKey, attachment.filename);
-      const contentType = await decryptLegacyText(legacyKey, attachment.content_type);
-      const data = await decryptBytes(legacyKey, attachment.content);
-      return {
-        id: attachment.id,
-        encrypted_payload: await encryptJson(entryKey, {
-          filename: filename || "attachment",
-          content_type: contentType,
-          data: toBase64Url(data),
-        }),
-      };
-    })
-  );
-  return {
-    encrypted_payload: await encryptJson(entryKey, payload),
-    preferences: await Promise.all(
-      record.recipients.map(async (recipient) => ({
-        user_id: recipient.user_id,
-        encrypted_preferences: await encryptJson(entryKey, {
-          favorite: recipient.favorite ?? false,
-        }),
-      }))
-    ),
-    attachments,
-    wrapped_keys: await Promise.all(
-      record.recipients.map(async (recipient) => ({
-        user_id: recipient.user_id,
-        wrapped_key: await wrapEntryKey(recipient.public_key, entryKey),
-      }))
-    ),
   };
 };

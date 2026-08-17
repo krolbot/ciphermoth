@@ -203,55 +203,6 @@ export const unlockUserKeyMaterial = async (password, session) => {
   return { vaultKey, privateKey, authPrivateKey };
 };
 
-export const enrollLegacyUserAuth = async (password, challenge) => {
-  const vaultKey = await deriveVaultKey(password, challenge.salt);
-  const privateKeyBytes = await decryptBytes(vaultKey, challenge.encrypted_private_key);
-  const privateKey = await crypto.subtle.importKey(
-    "pkcs8",
-    privateKeyPkcs8(privateKeyBytes),
-    "X25519",
-    false,
-    ["deriveBits"]
-  );
-  const serverPublicKey = await crypto.subtle.importKey(
-    "raw",
-    fromBase64Url(challenge.nonce),
-    "X25519",
-    false,
-    []
-  );
-  const shared = await crypto.subtle.deriveBits(
-    { name: "X25519", public: serverPublicKey },
-    privateKey,
-    256
-  );
-  const proofKey = await crypto.subtle.importKey(
-    "raw",
-    shared,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const authPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-  const authPrivateKeyBytes = new Uint8Array(
-    await crypto.subtle.exportKey("pkcs8", authPair.privateKey)
-  );
-  return {
-    vaultKey,
-    privateKey: toBase64Url(privateKeyBytes),
-    authPrivateKey: toBase64Url(authPrivateKeyBytes),
-    authPublicKey: toBase64Url(
-      new Uint8Array(await crypto.subtle.exportKey("raw", authPair.publicKey))
-    ),
-    encryptedAuthPrivateKey: await encryptBytes(vaultKey, authPrivateKeyBytes),
-    proof: toBase64Url(
-      new Uint8Array(
-        await crypto.subtle.sign("HMAC", proofKey, encoder.encode(challenge.challenge))
-      )
-    ),
-  };
-};
-
 export const rewrapPrivateKeys = async (password, privateKey, authPrivateKey) => {
   const salt = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
   const vaultKey = await deriveVaultKey(password, salt);

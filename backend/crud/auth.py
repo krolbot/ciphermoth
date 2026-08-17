@@ -1,24 +1,17 @@
 import base64
 import binascii
 import hashlib
-import hmac
 import os
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from cryptography.hazmat.primitives.asymmetric.x25519 import (
-    X25519PrivateKey,
-    X25519PublicKey,
-)
 from sqlalchemy import delete, func, select
 
 from api.exceptions import Forbidden, NotFound, TypesMismatchError, Unauthorized
 from crud.base import BaseCRUD
-from crud.master_password import fetch_master_password
 from helpers import (
     create_user_keypair,
     decrypt_user_private_key,
@@ -27,10 +20,7 @@ from helpers import (
 from models import (
     AuthChallengeModel,
     InstanceStateModel,
-    PasswordAccessModel,
-    PasswordModel,
     SessionModel,
-    SettingsModel,
     UserModel,
 )
 from schemas import (
@@ -42,7 +32,6 @@ from schemas import (
     UserCreateResponse,
     UserRole,
 )
-from settings import get_api_settings
 
 _SESSION_LIFETIME = timedelta(hours=12)
 _CHALLENGE_LIFETIME = timedelta(minutes=5)
@@ -160,16 +149,7 @@ class AuthCRUD(BaseCRUD):
         user_count = await self.session.scalar(
             select(func.count()).select_from(UserModel)
         )
-        legacy = await fetch_master_password(self.session)
-        return AuthStatus(
-            initialized=bool(user_count),
-            legacy_vault=legacy is not None and not user_count,
-            legacy_salt=(
-                base64.urlsafe_b64encode(legacy.salt).decode().rstrip("=")
-                if legacy is not None and not user_count
-                else None
-            ),
-        )
+        return AuthStatus(initialized=bool(user_count))
 
     async def _new_session(self, user: UserModel) -> AuthSessionResponse:
         if user.encrypted_auth_private_key is None:
@@ -195,31 +175,6 @@ class AuthCRUD(BaseCRUD):
             encrypted_auth_private_key=user.encrypted_auth_private_key.decode(),
         )
 
-    async def _claim_legacy_vault(self, user: UserModel) -> None:
-        passwords = (
-            await self.session.execute(select(PasswordModel).order_by(PasswordModel.id))
-        ).scalars()
-        for password in passwords:
-            password.owner_id = user.id
-            self.session.add(
-                PasswordAccessModel(
-                    password_id=password.id,
-                    user_id=user.id,
-                    permission="owner",
-                    wrapped_key=b"\x00",
-                    favorite=password.favorite,
-                    granted_by=user.id,
-                )
-            )
-
-        settings = (
-            await self.session.execute(
-                select(SettingsModel).where(SettingsModel.user_id.is_(None))
-            )
-        ).scalars()
-        for model in settings:
-            model.user_id = user.id
-
     async def bootstrap(
         self,
         username: str,
@@ -229,7 +184,6 @@ class AuthCRUD(BaseCRUD):
         encrypted_private_key: bytes,
         auth_public_key: bytes,
         encrypted_auth_private_key: bytes,
-        legacy_migration_token: str | None = None,
     ) -> AuthSessionResponse:
         state = (
             await self.session.execute(
@@ -247,21 +201,6 @@ class AuthCRUD(BaseCRUD):
             raise Forbidden("CipherMoth is already initialized.")
 
         username = username.strip().lower()
-        legacy = await fetch_master_password(self.session)
-        if legacy is not None:
-            expected = get_api_settings().ciphermoth_legacy_migration_token
-            if not expected:
-                raise Forbidden(
-                    "Set CIPHERMOTH_LEGACY_MIGRATION_TOKEN before migrating."
-                )
-            if not legacy_migration_token or not secrets.compare_digest(
-                legacy_migration_token, expected
-            ):
-                raise Unauthorized("Invalid legacy migration token.")
-            if salt != legacy.salt:
-                raise TypesMismatchError(
-                    "Client key salt does not match the legacy vault."
-                )
 
         user = UserModel(
             username=username,
@@ -269,7 +208,6 @@ class AuthCRUD(BaseCRUD):
             active=True,
             must_change_password=False,
             salt=salt,
-            hash_key=None,
             public_key=public_key,
             encrypted_private_key=encrypted_private_key,
             auth_public_key=auth_public_key,
@@ -277,10 +215,6 @@ class AuthCRUD(BaseCRUD):
         )
         self.session.add(user)
         await self.session.flush()
-
-        if legacy is not None:
-            await self._claim_legacy_vault(user)
-            await self.session.delete(legacy)
 
         state.bootstrapped_at = _now()
         await self.session.flush()
@@ -296,23 +230,9 @@ class AuthCRUD(BaseCRUD):
         )
         if user is None or not user.active or user.role == UserRole.service:
             raise Unauthorized("Invalid interactive account.")
-        if (user.auth_public_key is None) != (user.encrypted_auth_private_key is None):
+        if user.auth_public_key is None or user.encrypted_auth_private_key is None:
             raise Unauthorized("Invalid interactive account.")
-
-        legacy_user = user.auth_public_key is None
-        if legacy_user:
-            ephemeral = X25519PrivateKey.generate()
-            stored_nonce = ephemeral.private_bytes(
-                serialization.Encoding.Raw,
-                serialization.PrivateFormat.Raw,
-                serialization.NoEncryption(),
-            )
-            response_nonce = ephemeral.public_key().public_bytes(
-                serialization.Encoding.Raw,
-                serialization.PublicFormat.Raw,
-            )
-        else:
-            stored_nonce = response_nonce = os.urandom(32)
+        nonce = os.urandom(32)
 
         challenge = secrets.token_urlsafe(32)
         await self.session.execute(
@@ -322,32 +242,24 @@ class AuthCRUD(BaseCRUD):
             AuthChallengeModel(
                 token_hash=_token_hash(challenge),
                 user_id=user.id,
-                nonce=stored_nonce,
+                nonce=nonce,
                 expires_at=now + _CHALLENGE_LIFETIME,
             )
         )
         await self.session.flush()
         return AuthChallengeResponse(
             challenge=challenge,
-            nonce=base64.urlsafe_b64encode(response_nonce).decode().rstrip("="),
+            nonce=base64.urlsafe_b64encode(nonce).decode().rstrip("="),
             salt=base64.urlsafe_b64encode(user.salt).decode().rstrip("="),
             public_key=base64.urlsafe_b64encode(user.public_key).decode().rstrip("="),
             encrypted_private_key=user.encrypted_private_key.decode(),
-            encrypted_auth_private_key=(
-                user.encrypted_auth_private_key.decode()
-                if user.encrypted_auth_private_key is not None
-                else None
-            ),
-            legacy_user=legacy_user,
+            encrypted_auth_private_key=user.encrypted_auth_private_key.decode(),
         )
 
     async def login(
         self,
         challenge: str,
         signature: bytes,
-        *,
-        auth_public_key: bytes | None = None,
-        encrypted_auth_private_key: bytes | None = None,
     ) -> AuthSessionResponse:
         consumed = (
             await self.session.execute(
@@ -366,28 +278,14 @@ class AuthCRUD(BaseCRUD):
         if user is None or not user.active:
             raise Unauthorized("Invalid or expired challenge.")
 
-        if user.auth_public_key is None:
-            if auth_public_key is None or encrypted_auth_private_key is None:
-                raise Unauthorized("Interactive authentication enrollment is required.")
-            try:
-                shared = X25519PrivateKey.from_private_bytes(nonce).exchange(
-                    X25519PublicKey.from_public_bytes(user.public_key)
-                )
-            except ValueError as exc:
-                raise Unauthorized("Invalid interactive account.") from exc
-            expected = hmac.digest(shared, challenge.encode(), "sha256")
-            if not hmac.compare_digest(signature, expected):
-                raise Unauthorized("Invalid challenge proof.")
-            user.auth_public_key = auth_public_key
-            user.encrypted_auth_private_key = encrypted_auth_private_key
-            user.hash_key = None
-        else:
-            try:
-                Ed25519PublicKey.from_public_bytes(user.auth_public_key).verify(
-                    signature, nonce
-                )
-            except (InvalidSignature, ValueError) as exc:
-                raise Unauthorized("Invalid challenge signature.") from exc
+        if user.auth_public_key is None or user.encrypted_auth_private_key is None:
+            raise Unauthorized("Invalid interactive account.")
+        try:
+            Ed25519PublicKey.from_public_bytes(user.auth_public_key).verify(
+                signature, nonce
+            )
+        except (InvalidSignature, ValueError) as exc:
+            raise Unauthorized("Invalid challenge signature.") from exc
         await self.session.flush()
         return await self._new_session(user)
 
@@ -414,7 +312,8 @@ class AuthCRUD(BaseCRUD):
 
         credential = secrets.token_urlsafe(32) if role == UserRole.service else None
         if role == UserRole.service:
-            assert credential is not None
+            if credential is None:
+                raise TypesMismatchError("Unable to create service credential.")
             salt = os.urandom(16)
             key_derivation = generate_key_derivation(salt, credential)
             public_key, encrypted_private_key = create_user_keypair(key_derivation)
@@ -431,18 +330,16 @@ class AuthCRUD(BaseCRUD):
             raise TypesMismatchError(
                 "Client key material is required for a human user."
             )
-        assert (
-            salt is not None
-            and public_key is not None
-            and encrypted_private_key is not None
-        )
+        if salt is None or public_key is None or encrypted_private_key is None:
+            raise TypesMismatchError(
+                "Human users require client-generated key material."
+            )
         user = UserModel(
             username=username,
             role=role,
             active=True,
             must_change_password=role != UserRole.service,
             salt=salt,
-            hash_key=None,
             public_key=public_key,
             encrypted_private_key=encrypted_private_key,
             auth_public_key=auth_public_key,
@@ -522,7 +419,7 @@ class AuthCRUD(BaseCRUD):
         except (InvalidSignature, ValueError) as exc:
             raise Unauthorized("Invalid rekey proof.") from exc
         user.salt = new_salt
-        user.hash_key = None
+
         user.encrypted_private_key = encrypted_private_key
         user.encrypted_auth_private_key = encrypted_auth_private_key
         user.must_change_password = False

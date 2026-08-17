@@ -2,7 +2,7 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,16 +30,6 @@ class APISettings(BaseSettings):
     disable_docs: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
     mcp_max_request_bytes: int = Field(default=1_048_576, ge=1_024, le=4_194_304)
-    ciphermoth_legacy_migration_token: str | None = None
-
-    @field_validator("ciphermoth_legacy_migration_token", mode="before")
-    @classmethod
-    def _validate_legacy_token(cls, value: object) -> object:
-        if value in (None, ""):
-            return None
-        if not isinstance(value, str) or not 32 <= len(value) <= 1024:
-            raise ValueError("legacy migration token must be 32-1024 characters")
-        return value
 
     @property
     def fastapi_kwargs(self) -> dict[str, Any]:

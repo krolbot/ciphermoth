@@ -8,7 +8,6 @@ import struct
 import time
 from datetime import UTC, datetime
 
-import bcrypt
 import pyzipper
 from cryptography.exceptions import InvalidTag
 from cryptography.fernet import Fernet, InvalidToken
@@ -27,19 +26,6 @@ _ARGON2_LANES = 4
 _ARGON2_LENGTH = 32
 _ENTRY_KEY_WRAP_INFO = b"ciphermoth-entry-key-v1"
 _ENTRY_KEY_WRAP_VERSION = 1
-
-
-def _bcrypt_input(master_password: str) -> bytes:
-    digest = hashlib.sha256(master_password.encode()).digest()
-    return base64.b64encode(digest)
-
-
-def hash_master_password(master_password: str) -> str:
-    return bcrypt.hashpw(_bcrypt_input(master_password), bcrypt.gensalt()).decode()
-
-
-def verify_master_password(master_password: str, hash_key: str) -> bool:
-    return bcrypt.checkpw(_bcrypt_input(master_password), hash_key.encode())
 
 
 def generate_key_derivation(salt: bytes, master_password: str) -> bytes:
