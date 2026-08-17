@@ -4,7 +4,7 @@ import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import typer
@@ -80,29 +80,30 @@ def _warn_plaintext_transport() -> None:
     )
 
 
-def _unlock(client: httpx.Client) -> tuple[str, str]:
+def _unlock(client: httpx.Client) -> tuple[str, dict[str, str]]:
     _warn_plaintext_transport()
+    username = os.environ.get("CIPHERMOTH_USERNAME") or typer.prompt("Username")
     master = typer.prompt("Master password", hide_input=True)
     try:
-        resp = client.post("/master_password/check", json={"master_password": master})
+        resp = client.post(
+            "/auth/login",
+            json={"username": username, "master_password": master},
+        )
     except httpx.ConnectError:
         _die(f"Cannot reach the API at {_api_url()!r}. Is the service running?")
 
     _check(resp)
     data = resp.json()
-    if not data.get("valid"):
-        _die("Invalid master password.")
-
-    key: str = data["key_derivation"]
-    return master, key
-
-
-def _hdr(key: str) -> dict[str, str]:
-    return {"x-ciphermoth-key-derivation": key}
+    if data["user"].get("must_change_password"):
+        _die("Change the temporary master password in the web UI first.")
+    return master, {
+        "authorization": f"Bearer {data['token']}",
+        "x-ciphermoth-key-derivation": data["key_derivation"],
+    }
 
 
-def _entry_path(name: str, suffix: str = "") -> str:
-    return f"/passwords/{quote(name, safe='')}{suffix}"
+def _entry_path(password_id: int, suffix: str = "") -> str:
+    return f"/passwords/{password_id}{suffix}"
 
 
 def _optional(label: str, current: str | None = None) -> str | None:
@@ -180,8 +181,8 @@ def pw_list() -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        resp = client.get("/passwords", headers=_hdr(key))
+        _, headers = _unlock(client)
+        resp = client.get("/passwords", headers=headers)
 
     _check(resp)
 
@@ -191,13 +192,19 @@ def pw_list() -> None:
         return
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0))
+    table.add_column("ID", justify="right", style="dim")
     table.add_column("Name", style="cyan")
+    table.add_column("Owner", style="dim")
+    table.add_column("Access", style="dim")
     table.add_column("Description", style="dim")
     table.add_column("Backed up", justify="center")
 
     for item in items:
         table.add_row(
+            str(item["id"]),
             escape(item["password_name"]),
+            escape(item["owner_username"]),
+            escape(item["access"]),
             escape(item.get("description") or "-"),
             "[green]✓[/green]" if item["backed_up"] else "[dim]–[/dim]",
         )
@@ -206,12 +213,12 @@ def pw_list() -> None:
 
 
 @pw_app.command("get", help="Reveal one entry, including its live 2FA code.")
-def pw_get(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+def pw_get(password_id: Annotated[int, typer.Argument(help="Entry ID.")]) -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        resp = client.get(_entry_path(name), headers=_hdr(key))
+        _, headers = _unlock(client)
+        resp = client.get(_entry_path(password_id), headers=headers)
 
     _check(resp)
 
@@ -235,11 +242,7 @@ def pw_create(
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        headers = _hdr(key)
-
-        if client.get(_entry_path(name), headers=headers).is_success:
-            _die(f"An entry named '{name}' already exists.")
+        _, headers = _unlock(client)
 
         value = _prompt_secret("Note body" if is_note else "Password value")
         username = None if is_note else _optional("Username / email")
@@ -248,7 +251,7 @@ def pw_create(
         description = _optional("Description")
         folder = _optional("Folder")
         resp = client.post(
-            "/passwords/create",
+            "/passwords",
             json={
                 "password_name": name,
                 "kind": kind,
@@ -271,14 +274,15 @@ def pw_create(
     "update",
     help="Edit an entry. Leave a prompt blank to keep the current value.",
 )
-def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+def pw_update(
+    password_id: Annotated[int, typer.Argument(help="Entry ID.")],
+) -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        headers = _hdr(key)
+        _, headers = _unlock(client)
 
-        current_resp = client.get(_entry_path(name), headers=headers)
+        current_resp = client.get(_entry_path(password_id), headers=headers)
 
         _check(current_resp)
 
@@ -301,45 +305,34 @@ def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
         new_folder = _optional("Folder", current.get("folder"))
 
         shared = {
-            "password_name": name,
+            "password_name": current["password_name"],
             "kind": current.get("kind", "login"),
             "tags": current.get("tags", []),
             "custom_fields": current.get("custom_fields", []),
             "favorite": current.get("favorite", False),
         }
-        resp = client.patch(
-            "/passwords/update",
+        resp = client.put(
+            _entry_path(password_id),
             json={
-                "password": {
-                    **shared,
-                    "username": current.get("username"),
-                    "password_value": current["password_value"],
-                    "url": current.get("url"),
-                    "totp_secret": current.get("totp_secret"),
-                    "description": current.get("description"),
-                    "folder": current.get("folder"),
-                },
-                "new_password": {
-                    **shared,
-                    "username": new_username,
-                    "password_value": new_value,
-                    "url": new_url,
-                    "totp_secret": new_totp,
-                    "description": new_description,
-                    "folder": new_folder,
-                },
+                **shared,
+                "username": new_username,
+                "password_value": new_value,
+                "url": new_url,
+                "totp_secret": new_totp,
+                "description": new_description,
+                "folder": new_folder,
             },
             headers=headers,
         )
 
     _check(resp)
 
-    _ok(f"Updated [cyan]{escape(name)}[/cyan]")
+    _ok(f"Updated entry [cyan]#{password_id}[/cyan]")
 
 
 @pw_app.command("delete", help="Move an entry to the trash. It can be restored later.")
 def pw_delete(
-    name: Annotated[str, typer.Argument(help="Entry name.")],
+    password_id: Annotated[int, typer.Argument(help="Entry ID.")],
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
@@ -347,21 +340,16 @@ def pw_delete(
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        headers = _hdr(key)
-
-        exists = client.get(_entry_path(name), headers=headers)
-        if not exists.is_success:
-            _check(exists)
+        _, headers = _unlock(client)
 
         if not yes:
-            typer.confirm(f"Move '{name}' to trash?", abort=True)
+            typer.confirm(f"Move entry #{password_id} to trash?", abort=True)
 
-        resp = client.delete(_entry_path(name), headers=headers)
+        resp = client.delete(_entry_path(password_id), headers=headers)
 
     _check(resp)
 
-    _ok(f"Moved [cyan]{escape(name)}[/cyan] to trash")
+    _ok(f"Moved entry [cyan]#{password_id}[/cyan] to trash")
 
 
 @pw_app.command("trash", help="List the entries waiting in the trash.")
@@ -369,8 +357,8 @@ def pw_trash() -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        resp = client.get("/passwords/trash", headers=_hdr(key))
+        _, headers = _unlock(client)
+        resp = client.get("/passwords/trash", headers=headers)
 
     _check(resp)
 
@@ -380,12 +368,14 @@ def pw_trash() -> None:
         return
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0))
+    table.add_column("ID", justify="right", style="dim")
     table.add_column("Name", style="cyan")
     table.add_column("Description", style="dim")
     table.add_column("Deleted", style="dim")
 
     for item in items:
         table.add_row(
+            str(item["id"]),
             escape(item["password_name"]),
             escape(item.get("description") or "-"),
             (item.get("deleted") or "-")[:19].replace("T", " "),
@@ -397,39 +387,39 @@ def pw_trash() -> None:
 @pw_app.command(
     "restore", help="Move an entry out of the trash and back into the vault."
 )
-def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+def pw_restore(password_id: Annotated[int, typer.Argument(help="Entry ID.")]) -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        resp = client.post(_entry_path(name, "/restore"), headers=_hdr(key))
+        _, headers = _unlock(client)
+        resp = client.post(_entry_path(password_id, "/restore"), headers=headers)
 
     _check(resp)
 
-    _ok(f"Restored [cyan]{escape(name)}[/cyan]")
+    _ok(f"Restored entry [cyan]#{password_id}[/cyan]")
 
 
 @pw_app.command(
     "purge", help="Permanently delete a trashed entry. This cannot be undone."
 )
 def pw_purge(
-    name: Annotated[str, typer.Argument(help="Entry name.")],
+    password_id: Annotated[int, typer.Argument(help="Entry ID.")],
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
 ) -> None:
     if not yes:
-        typer.confirm(f"Permanently delete '{name}' from trash?", abort=True)
+        typer.confirm(f"Permanently delete entry #{password_id}?", abort=True)
 
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
-        resp = client.delete(_entry_path(name, "/purge"), headers=_hdr(key))
+        _, headers = _unlock(client)
+        resp = client.delete(_entry_path(password_id, "/purge"), headers=headers)
 
     _check(resp)
 
-    _ok(f"Permanently deleted [cyan]{escape(name)}[/cyan]")
+    _ok(f"Permanently deleted entry [cyan]#{password_id}[/cyan]")
 
 
 @app.command(
@@ -443,11 +433,11 @@ def cmd_backup(
     with httpx.Client(
         base_url=_api_url(), timeout=60, follow_redirects=False
     ) as client:
-        master, key = _unlock(client)
+        master, headers = _unlock(client)
         resp = client.post(
             "/passwords/backup",
             json={"master_password": master},
-            headers=_hdr(key),
+            headers=headers,
         )
 
     _check(resp)
@@ -496,12 +486,12 @@ def cmd_import(
     with httpx.Client(
         base_url=_api_url(), timeout=60, follow_redirects=False
     ) as client:
-        master, key = _unlock(client)
+        master, headers = _unlock(client)
         resp = client.post(
             "/passwords/import",
             data={"master_password": master, "on_conflict": on_conflict},
             files={"file": (file.name, file_bytes, "application/zip")},
-            headers=_hdr(key),
+            headers=headers,
         )
 
     _check(resp)
@@ -529,12 +519,12 @@ def cmd_import_csv(
     with httpx.Client(
         base_url=_api_url(), timeout=60, follow_redirects=False
     ) as client:
-        _, key = _unlock(client)
+        _, headers = _unlock(client)
         resp = client.post(
             "/passwords/import/csv",
             data={"on_conflict": on_conflict},
             files={"file": (file.name, file_bytes, "text/csv")},
-            headers=_hdr(key),
+            headers=headers,
         )
 
     _check(resp)

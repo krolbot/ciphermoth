@@ -11,6 +11,7 @@ import HighlightOffIcon from "@mui/icons-material/HighlightOff";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
+import ShareIcon from "@mui/icons-material/Share";
 import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
@@ -102,6 +103,7 @@ export const createColumns = ({
   onCopy,
   onEdit,
   onDelete,
+  onShare,
 }) => [
   {
     field: "favorite",
@@ -114,13 +116,19 @@ export const createColumns = ({
       <Tooltip
         title={t(params.value ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
       >
-        <IconButton size="small" onClick={() => onToggleFavorite(params.row)}>
-          {params.value ? (
-            <StarIcon fontSize="small" sx={{ color: GLOW }} />
-          ) : (
-            <StarBorderIcon fontSize="small" sx={{ color: "text.disabled" }} />
-          )}
-        </IconButton>
+        <span>
+          <IconButton
+            size="small"
+            disabled={params.row.access === "read"}
+            onClick={() => onToggleFavorite(params.row)}
+          >
+            {params.value ? (
+              <StarIcon fontSize="small" sx={{ color: GLOW }} />
+            ) : (
+              <StarBorderIcon fontSize="small" sx={{ color: "text.disabled" }} />
+            )}
+          </IconButton>
+        </span>
       </Tooltip>
     ),
   },
@@ -215,8 +223,8 @@ export const createColumns = ({
     minWidth: 160,
     sortable: false,
     renderCell: (params) => {
-      const name = params.row.password_name;
-      const visible = visibleRows.has(name);
+      const id = params.row.id;
+      const visible = visibleRows.has(id);
       return (
         <ValueCell
           mono
@@ -227,7 +235,7 @@ export const createColumns = ({
             <>
               <CellActionButton
                 title={t(visible ? "vault.columns.hidePassword" : "vault.columns.revealPassword")}
-                onClick={() => onToggleVisibility(name)}
+                onClick={() => onToggleVisibility(id)}
               >
                 {visible ? (
                   <VisibilityOffIcon fontSize="small" />
@@ -293,6 +301,16 @@ export const createColumns = ({
       ),
   },
   {
+    field: "owner_username",
+    headerName: t("sharing.access"),
+    width: 140,
+    renderCell: (params) => (
+      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+        {params.value} · {t(`sharing.${params.row.access}`)}
+      </Typography>
+    ),
+  },
+  {
     field: "actions",
     headerName: t("common.fields.actions"),
     width: 180,
@@ -300,7 +318,9 @@ export const createColumns = ({
     align: "center",
     headerAlign: "center",
     renderCell: (params) => {
-      const { password_name, password_value, url, backed_up, kind } = params.row;
+      const { password_value, url, backed_up, kind, access } = params.row;
+      const canWrite = access !== "read";
+      const owner = access === "owner";
       return (
         <Stack direction="row" spacing={0} sx={{ alignItems: "center", height: "100%" }}>
           <Box sx={{ visibility: url ? "visible" : "hidden" }}>
@@ -310,16 +330,27 @@ export const createColumns = ({
               </IconButton>
             </Tooltip>
           </Box>
-          <Tooltip title={t("common.actions.edit")}>
-            <IconButton size="small" onClick={() => onEdit(params.row)}>
-              <EditIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={t("common.actions.delete")}>
-            <IconButton size="small" color="error" onClick={() => onDelete(password_name)}>
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          {canWrite && (
+            <Tooltip title={t("common.actions.edit")}>
+              <IconButton size="small" onClick={() => onEdit(params.row)}>
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          {owner && (
+            <Tooltip title={t("sharing.manage")}>
+              <IconButton size="small" onClick={() => onShare(params.row)}>
+                <ShareIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          {owner && (
+            <Tooltip title={t("common.actions.delete")}>
+              <IconButton size="small" color="error" onClick={() => onDelete(params.row)}>
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1 }} />
           {kind !== "note" && <StrengthIndicator password={password_value} />}
           <Tooltip

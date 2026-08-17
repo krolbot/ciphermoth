@@ -3,12 +3,13 @@ import { BrowserRouter as Router, Navigate, Route, Routes } from "react-router-d
 import { Box, Container, CssBaseline, GlobalStyles, Toolbar } from "@mui/material";
 import { useStoreActions } from "easy-peasy";
 
+import PasswordChangeDialog from "./components/PasswordChangeDialog";
 import ThemeToggle from "./components/ThemeToggle";
 import TopMenu from "./components/TopMenu";
 import { ColorModeProvider } from "./hooks/useColorMode";
 import useAutoLogout from "./hooks/useAutoLogout";
 import routes from "./routes";
-import { isAuth } from "./utils";
+import { getCurrentUser, isAuth } from "./utils";
 import { GLOW, INFO, PAPER_DARK, TEXT_ON_DARK, WARN, WEAK } from "./lib/brand";
 
 const SANS = "'Space Grotesk Variable', system-ui, sans-serif";
@@ -17,10 +18,11 @@ const AppContent = () => {
   useAutoLogout();
 
   const authed = isAuth();
+  const mustChangePassword = getCurrentUser()?.must_change_password;
   const getSettings = useStoreActions((a) => a.ciphermothModels.settings.get);
   useEffect(() => {
-    if (authed) getSettings();
-  }, [authed, getSettings]);
+    if (authed && !mustChangePassword) getSettings();
+  }, [authed, mustChangePassword, getSettings]);
 
   const appRoutes = (
     <Routes>
@@ -36,6 +38,15 @@ const AppContent = () => {
       <>
         <CssBaseline />
         {appRoutes}
+      </>
+    );
+  }
+
+  if (mustChangePassword) {
+    return (
+      <>
+        <CssBaseline />
+        <PasswordChangeDialog open required />
       </>
     );
   }

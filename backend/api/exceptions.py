@@ -13,6 +13,10 @@ class Forbidden(Exception):
     pass
 
 
+class Unauthorized(Exception):
+    pass
+
+
 class NotFound(Exception):
     pass
 
@@ -31,6 +35,14 @@ def _detail_handler(status_code: int):
 forbidden_handler = _detail_handler(status.HTTP_403_FORBIDDEN)
 not_found_handler = _detail_handler(status.HTTP_404_NOT_FOUND)
 mismatch_handler = _detail_handler(status.HTTP_400_BAD_REQUEST)
+
+
+async def unauthorized_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": str(exc)},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 async def internal_error_handler(request: Request, exc: Exception) -> JSONResponse:

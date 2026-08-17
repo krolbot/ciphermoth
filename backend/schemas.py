@@ -19,6 +19,17 @@ _MAX_FIELD_LABEL = 100
 _MAX_FIELD_VALUE = 4096
 _MAX_FOLDER_LENGTH = 200
 
+Username = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        to_lower=True,
+        min_length=2,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9._@-]*$",
+    ),
+]
+
 
 class SimpleDetailSchema(BaseModel):
     detail: str
@@ -28,49 +39,88 @@ class MetaResponse(BaseModel):
     version: str
 
 
+class UserRole(StrEnum):
+    admin = "admin"
+    member = "member"
+    service = "service"
+
+
+class SharePermission(StrEnum):
+    read = "read"
+    write = "write"
+
+
+class EntryPermission(StrEnum):
+    owner = "owner"
+    read = "read"
+    write = "write"
+
+
+class AuthUser(BaseModel):
+    id: int
+    username: str
+    role: UserRole
+    active: bool
+    must_change_password: bool
+
+
+class ShareTarget(BaseModel):
+    id: int
+    username: str
+    role: UserRole
+
+
+class AuthSessionResponse(BaseModel):
+    user: AuthUser
+    token: str
+    key_derivation: str
+
+
+class AuthStatus(BaseModel):
+    initialized: bool
+    legacy_vault: bool
+
+
+class AuthBootstrapPayload(BaseModel):
+    username: Username
+    master_password: str = Field(min_length=1, max_length=1024)
+
+
+class AuthLoginPayload(BaseModel):
+    username: Username
+    master_password: str = Field(min_length=1, max_length=1024)
+
+
+class PasswordChangePayload(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("new_password")
+    @classmethod
+    def _strong(cls, value: str) -> str:
+        return validate_master_password_strength(value)
+
+
+class UserCreatePayload(BaseModel):
+    username: Username
+    temporary_password: str = Field(min_length=1, max_length=1024)
+    role: UserRole = UserRole.member
+
+    @field_validator("temporary_password")
+    @classmethod
+    def _strong(cls, value: str) -> str:
+        return validate_master_password_strength(value)
+
+
+class UserUpdatePayload(BaseModel):
+    role: UserRole | None = None
+    active: bool | None = None
+
+
 class MasterPassword(BaseModel):
     master_password: str = Field(min_length=1, max_length=1024)
 
     model_config = ConfigDict(str_strip_whitespace=True)
-
-
-class MasterPasswordCreatePayload(MasterPassword):
-    @field_validator("master_password")
-    @classmethod
-    def _strong(cls, value: str) -> str:
-        return validate_master_password_strength(value)
-
-
-class MasterPasswordCheck(BaseModel):
-    valid: bool
-    key_derivation: str | None = None
-
-
-class MasterPasswordCreate(BaseModel):
-    created: bool
-    detail: str
-    key_derivation: str
-
-
-class MasterPasswordUpdate(BaseModel):
-    updated: bool
-    detail: str
-
-
-class MasterPasswordUpdatePayload(BaseModel):
-    master_password: str = Field(min_length=1, max_length=1024)
-    new_master_password: str = Field(min_length=1, max_length=1024)
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    @field_validator("new_master_password")
-    @classmethod
-    def _strong(cls, value: str) -> str:
-        return validate_master_password_strength(value)
-
-
-class MasterPasswordStatus(BaseModel):
-    initialized: bool
 
 
 class CustomField(BaseModel):
@@ -137,6 +187,10 @@ class PasswordHistoryEntry(BaseModel):
 
 
 class PasswordResponse(Password):
+    id: int
+    owner_id: int
+    owner_username: str
+    access: EntryPermission
     backed_up: bool
     updated: datetime
     deleted: datetime | None = None
@@ -157,8 +211,20 @@ class FavoriteUpdatePayload(BaseModel):
 
 
 class PasswordCreate(BaseModel):
+    id: int
     created: bool
     detail: str
+
+
+class ShareUpdatePayload(BaseModel):
+    permission: SharePermission
+
+
+class ShareGrant(BaseModel):
+    user_id: int
+    username: str
+    role: UserRole
+    permission: SharePermission
 
 
 class PasswordUpdate(BaseModel):
@@ -169,11 +235,6 @@ class PasswordUpdate(BaseModel):
 class PasswordDelete(BaseModel):
     deleted: bool
     detail: str
-
-
-class PasswordUpdatePayload(BaseModel):
-    password: Password
-    new_password: Password
 
 
 class SettingsResponse(BaseModel):

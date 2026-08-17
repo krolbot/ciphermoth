@@ -3,17 +3,25 @@ import { action, thunk } from "easy-peasy";
 import apiClient from "../api/client";
 import { errorDetail } from "../lib/http";
 import i18n from "../i18n";
-import { setKeyDerivation } from "../utils";
+import { setAuthSession } from "../utils";
 
 const MasterPassword = {
   initialized: null,
+  legacyVault: false,
   error: null,
   loading: false,
+  username: "",
   value: "",
   confirm: "",
 
   setInitialized: action((state, val) => {
     state.initialized = val;
+  }),
+  setLegacyVault: action((state, value) => {
+    state.legacyVault = value;
+  }),
+  setUsername: action((state, value) => {
+    state.username = value;
   }),
   setValue: action((state, value) => {
     state.value = value;
@@ -30,44 +38,27 @@ const MasterPassword = {
 
   fetchStatus: thunk(async (actions) => {
     try {
-      const { data } = await apiClient.get("/master_password/status");
+      const { data } = await apiClient.get("/auth/status");
       actions.setInitialized(data.initialized);
+      actions.setLegacyVault(data.legacy_vault);
     } catch {
       actions.setInitialized(true);
     }
   }),
 
-  check: thunk(async (actions, masterPasswordPayload) => {
+  authenticate: thunk(async (actions, { endpoint, username, master_password }) => {
     actions.setError(null);
     actions.setLoading(true);
     try {
-      const { data } = await apiClient.post("/master_password/check", masterPasswordPayload);
-      if (data.valid && data.key_derivation) {
-        setKeyDerivation(data.key_derivation);
-        window.location.replace("/passwords");
-      } else {
-        actions.setError(i18n.t("errors.invalidMasterPassword"));
-      }
+      const { data } = await apiClient.post(endpoint, { username, master_password });
+      setAuthSession(data);
+      window.location.replace("/passwords");
     } catch (err) {
       const msg =
         err.response?.status === 429
           ? i18n.t("errors.tooManyAttempts")
           : await errorDetail(err, i18n.t("errors.generic"));
       actions.setError(msg);
-    } finally {
-      actions.setLoading(false);
-    }
-  }),
-
-  create: thunk(async (actions, masterPasswordPayload) => {
-    actions.setError(null);
-    actions.setLoading(true);
-    try {
-      const { data } = await apiClient.post("/master_password/create", masterPasswordPayload);
-      setKeyDerivation(data.key_derivation);
-      window.location.replace("/passwords");
-    } catch (err) {
-      actions.setError(await errorDetail(err, i18n.t("errors.generic")));
     } finally {
       actions.setLoading(false);
     }

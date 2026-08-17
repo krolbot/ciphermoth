@@ -26,6 +26,7 @@ import EmptyVault from "../components/vault/EmptyVault";
 import HealthDialog from "../components/vault/HealthDialog";
 import ImportDialog from "../components/vault/ImportDialog";
 import PasswordFormDialog from "../components/vault/PasswordFormDialog";
+import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
 import { createColumns } from "../components/vault/columns";
 import { gridBaseSx } from "../components/vault/gridStyles";
@@ -66,6 +67,7 @@ const PasswordsPage = () => {
   const [visibleRows, setVisibleRows] = useState(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [shareTarget, setShareTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [backupOpen, setBackupOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -98,6 +100,7 @@ const PasswordsPage = () => {
   };
 
   const openEdit = useCallback((row) => {
+    if (row.access === "read") return;
     setEditTarget(row);
     setDialogOpen(true);
   }, []);
@@ -105,7 +108,7 @@ const PasswordsPage = () => {
   const handleToggleFavorite = useCallback(
     async (row) => {
       try {
-        await toggleFavorite({ passwordName: row.password_name, favorite: !row.favorite });
+        await toggleFavorite({ passwordId: row.id, favorite: !row.favorite });
       } catch (err) {
         enqueueSnackbar(err.message, { variant: "error" });
       }
@@ -116,13 +119,8 @@ const PasswordsPage = () => {
   const handleSubmit = async (entry) => {
     if (editTarget) {
       await update({
-        password: {
-          password_name: editTarget.password_name,
-          username: editTarget.username ?? null,
-          password_value: editTarget.password_value,
-          description: editTarget.description ?? null,
-        },
-        new_password: entry,
+        passwordId: editTarget.id,
+        password: entry,
       });
       enqueueSnackbar(
         t(entry.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"),
@@ -140,7 +138,7 @@ const PasswordsPage = () => {
 
   const handleDelete = async () => {
     try {
-      await remove(deleteTarget);
+      await remove(deleteTarget.id);
       enqueueSnackbar(t("vault.messages.movedToTrash"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
@@ -182,6 +180,7 @@ const PasswordsPage = () => {
         onCopy: copy,
         onEdit: openEdit,
         onDelete: setDeleteTarget,
+        onShare: setShareTarget,
       }),
     [t, visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit]
   );
@@ -326,7 +325,7 @@ const PasswordsPage = () => {
         <DataGrid
           rows={filteredPasswords}
           columns={columns}
-          getRowId={(row) => row.password_name}
+          getRowId={(row) => row.id}
           disableRowSelectionOnClick
           density="compact"
           rowHeight={44}
@@ -383,6 +382,7 @@ const PasswordsPage = () => {
         onClose={() => setDialogOpen(false)}
         onSubmit={handleSubmit}
         onCopy={copy}
+        canWrite={editTarget?.access !== "read"}
       />
       <BackupDialog
         open={backupOpen}
@@ -414,10 +414,11 @@ const PasswordsPage = () => {
       >
         <Trans
           i18nKey="vault.moveToTrash.message"
-          values={{ name: deleteTarget }}
+          values={{ name: deleteTarget?.password_name }}
           components={{ strong: <strong /> }}
         />
       </ConfirmDialog>
+      <ShareDialog open={!!shareTarget} entry={shareTarget} onClose={() => setShareTarget(null)} />
       <TrashDialog
         open={trashOpen}
         trash={trash}

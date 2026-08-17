@@ -3,6 +3,7 @@ import { useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
 
+import apiClient from "../api/client";
 import { isAuth, removeKeyDerivation } from "../utils";
 
 const CountdownMessage = ({ seconds }) => {
@@ -33,14 +34,20 @@ const useAutoLogout = () => {
   const warnKeyRef = useRef(null);
   const lastResetRef = useRef(0);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     clearTimeout(inactivityRef.current);
     clearTimeout(warnRef.current);
     clearTimeout(hiddenRef.current);
     if (warnKeyRef.current) closeSnackbar(warnKeyRef.current);
-    removeKeyDerivation();
-    sessionStorage.setItem("logout_notice", "autoLogout.loggedOut");
-    window.location.replace("/login");
+    try {
+      await apiClient.post("/auth/logout", null, { timeout: 2000 });
+    } catch {
+      // Local key removal must not depend on network availability.
+    } finally {
+      removeKeyDerivation();
+      sessionStorage.setItem("logout_notice", "autoLogout.loggedOut");
+      window.location.replace("/login");
+    }
   }, [closeSnackbar]);
 
   const reset = useCallback(() => {

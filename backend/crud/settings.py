@@ -6,10 +6,12 @@ from schemas import SettingsResponse, SettingsUpdate
 
 
 class SettingsCRUD(BaseCRUD):
-    async def _get_or_create(self) -> SettingsModel:
-        model = (await self.session.execute(select(SettingsModel).limit(1))).scalar()
+    async def _get_or_create(self, user_id: int) -> SettingsModel:
+        model = await self.session.scalar(
+            select(SettingsModel).where(SettingsModel.user_id == user_id)
+        )
         if model is None:
-            model = SettingsModel(**SETTINGS_DEFAULTS)
+            model = SettingsModel(user_id=user_id, **SETTINGS_DEFAULTS)
             self.session.add(model)
             await self.session.flush()
         return model
@@ -25,11 +27,13 @@ class SettingsCRUD(BaseCRUD):
             update_check_enabled=model.update_check_enabled,
         )
 
-    async def get_settings(self) -> SettingsResponse:
-        return self._to_response(await self._get_or_create())
+    async def get_settings(self, user_id: int) -> SettingsResponse:
+        return self._to_response(await self._get_or_create(user_id))
 
-    async def update_settings(self, data: SettingsUpdate) -> SettingsResponse:
-        model = await self._get_or_create()
+    async def update_settings(
+        self, user_id: int, data: SettingsUpdate
+    ) -> SettingsResponse:
+        model = await self._get_or_create(user_id)
         for field, value in data.model_dump().items():
             setattr(model, field, value)
         self.session.add(model)

@@ -220,6 +220,7 @@ const PasswordFormDialog = ({
   onSubmit,
   onCopy,
   folderOptions = [],
+  canWrite = true,
 }) => {
   const { t } = useTranslation();
   const [form, setForm] = useState(EMPTY_FORM);
@@ -634,7 +635,8 @@ const PasswordFormDialog = ({
               onToggle={toggleSection("attachments")}
             >
               <AttachmentsSection
-                passwordName={editTarget.password_name}
+                passwordId={editTarget.id}
+                canWrite={canWrite}
                 onChanged={() => setAttachmentsDirty(true)}
               />
             </FormSection>

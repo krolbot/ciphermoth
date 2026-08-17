@@ -11,12 +11,14 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import PeopleIcon from "@mui/icons-material/People";
 import SettingsIcon from "@mui/icons-material/Settings";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
-import { isAuth, removeKeyDerivation } from "../utils";
+import apiClient from "../api/client";
+import { getCurrentUser, isAuth, removeKeyDerivation } from "../utils";
 import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
 import { GLOW } from "../lib/brand";
 import EnvBadge from "./EnvBadge";
@@ -24,12 +26,15 @@ import LanguageSwitcher from "./LanguageSwitcher";
 import MothIcon from "./MothIcon";
 import SettingsModal from "./SettingsModal";
 import UpdateDialog from "./UpdateDialog";
+import UsersDialog from "./UsersDialog";
 
 const TopMenu = () => {
   const { t } = useTranslation();
   const userIsAuth = isAuth();
   const { pathname } = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [usersOpen, setUsersOpen] = useState(false);
+  const user = getCurrentUser();
   const [updateOpen, setUpdateOpen] = useState(false);
 
   const updateCheckEnabled = useStoreState(
@@ -45,12 +50,16 @@ const TopMenu = () => {
   }, [userIsAuth, fetchVersion]);
 
   useEffect(() => {
-    if (userIsAuth && updateCheckEnabled) checkForUpdates();
-  }, [userIsAuth, updateCheckEnabled, checkForUpdates]);
+    if (userIsAuth && user?.role === "admin" && updateCheckEnabled) checkForUpdates();
+  }, [userIsAuth, user?.role, updateCheckEnabled, checkForUpdates]);
 
-  const handleLogout = () => {
-    removeKeyDerivation();
-    window.location.replace("/login");
+  const handleLogout = async () => {
+    try {
+      await apiClient.post("/auth/logout");
+    } finally {
+      removeKeyDerivation();
+      window.location.replace("/login");
+    }
   };
 
   return (
@@ -100,7 +109,7 @@ const TopMenu = () => {
 
           {userIsAuth ? (
             <>
-              {updateAvailable && (
+              {user?.role === "admin" && updateAvailable && (
                 <Tooltip title={t("topMenu.updateAvailable")}>
                   <Chip
                     icon={<UpgradeIcon sx={{ fontSize: 18 }} />}
@@ -120,6 +129,13 @@ const TopMenu = () => {
                 </Tooltip>
               )}
               <LanguageSwitcher />
+              {user?.role === "admin" && (
+                <Tooltip title={t("users.title")}>
+                  <IconButton color="inherit" onClick={() => setUsersOpen(true)} sx={{ mr: 0.5 }}>
+                    <PeopleIcon />
+                  </IconButton>
+                </Tooltip>
+              )}
               <Tooltip title={t("topMenu.settings")}>
                 <IconButton color="inherit" onClick={() => setSettingsOpen(true)} sx={{ mr: 0.5 }}>
                   <SettingsIcon />
@@ -129,6 +145,7 @@ const TopMenu = () => {
                 {t("auth.logOut")}
               </Button>
               <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+              <UsersDialog open={usersOpen} onClose={() => setUsersOpen(false)} />
               <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} />
             </>
           ) : (

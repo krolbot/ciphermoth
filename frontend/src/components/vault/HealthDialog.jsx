@@ -122,7 +122,7 @@ const IssueGroup = ({ icon: Icon, title, hint, color, entries, onSelect }) => {
       <Stack spacing={0.5}>
         {entries.map((entry) => (
           <ListItemButton
-            key={entry.password_name}
+            key={entry.id}
             onClick={() => onSelect(entry)}
             sx={{ borderRadius: 1.5, border: "1px solid", borderColor: "divider", py: 0.75 }}
           >

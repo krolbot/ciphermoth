@@ -38,25 +38,25 @@ const Passwords = {
 
   create: thunk(async (actions, payload) => {
     try {
-      await apiClient.post("/passwords/create", payload);
+      await apiClient.post("/passwords", payload);
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.createPassword")));
     }
   }),
 
-  update: thunk(async (actions, payload) => {
+  update: thunk(async (actions, { passwordId, password }) => {
     try {
-      await apiClient.patch("/passwords/update", payload);
+      await apiClient.put(`/passwords/${passwordId}`, password);
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.updatePassword")));
     }
   }),
 
-  remove: thunk(async (actions, passwordName) => {
+  remove: thunk(async (actions, passwordId) => {
     try {
-      await apiClient.delete(`/passwords/${encodeURIComponent(passwordName)}`);
+      await apiClient.delete(`/passwords/${passwordId}`);
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -73,9 +73,9 @@ const Passwords = {
     }
   }),
 
-  restore: thunk(async (actions, passwordName) => {
+  restore: thunk(async (actions, passwordId) => {
     try {
-      await apiClient.post(`/passwords/${encodeURIComponent(passwordName)}/restore`);
+      await apiClient.post(`/passwords/${passwordId}/restore`);
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -83,18 +83,18 @@ const Passwords = {
     }
   }),
 
-  purge: thunk(async (actions, passwordName) => {
+  purge: thunk(async (actions, passwordId) => {
     try {
-      await apiClient.delete(`/passwords/${encodeURIComponent(passwordName)}/purge`);
+      await apiClient.delete(`/passwords/${passwordId}/purge`);
       await actions.getTrash();
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.deletePassword")));
     }
   }),
 
-  toggleFavorite: thunk(async (actions, { passwordName, favorite }) => {
+  toggleFavorite: thunk(async (actions, { passwordId, favorite }) => {
     try {
-      await apiClient.patch(`/passwords/${encodeURIComponent(passwordName)}/favorite`, {
+      await apiClient.patch(`/passwords/${passwordId}/favorite`, {
         favorite,
       });
       await actions.get();
@@ -103,25 +103,20 @@ const Passwords = {
     }
   }),
 
-  fetchAttachments: thunk(async (actions, passwordName) => {
+  fetchAttachments: thunk(async (actions, passwordId) => {
     try {
-      const { data } = await apiClient.get(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments`
-      );
+      const { data } = await apiClient.get(`/passwords/${passwordId}/attachments`);
       return data;
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.loadAttachments")));
     }
   }),
 
-  uploadAttachment: thunk(async (actions, { passwordName, file }) => {
+  uploadAttachment: thunk(async (actions, { passwordId, file }) => {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const { data } = await apiClient.post(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments`,
-        formData
-      );
+      const { data } = await apiClient.post(`/passwords/${passwordId}/attachments`, formData);
       await actions.get();
       return data;
     } catch (err) {
@@ -129,11 +124,9 @@ const Passwords = {
     }
   }),
 
-  downloadAttachment: thunk(async (actions, { passwordName, attachmentId, filename }) => {
+  downloadAttachment: thunk(async (actions, { passwordId, attachmentId, filename }) => {
     try {
-      const response = await apiClient.get(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments/${attachmentId}`,
-        { responseType: "blob" }
+      const response = await apiClient.get(`/passwords/${passwordId}/attachments/${attachmentId}`, { responseType: "blob" }
       );
       triggerDownload(response.data, filename || "attachment");
     } catch (err) {
@@ -141,14 +134,37 @@ const Passwords = {
     }
   }),
 
-  deleteAttachment: thunk(async (actions, { passwordName, attachmentId }) => {
+  deleteAttachment: thunk(async (actions, { passwordId, attachmentId }) => {
     try {
-      await apiClient.delete(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments/${attachmentId}`
-      );
+      await apiClient.delete(`/passwords/${passwordId}/attachments/${attachmentId}`);
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.deleteAttachment")));
+    }
+  }),
+
+  listShares: thunk(async (actions, passwordId) => {
+    try {
+      const { data } = await apiClient.get(`/passwords/${passwordId}/shares`);
+      return data;
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.loadShares")));
+    }
+  }),
+
+  setShare: thunk(async (actions, { passwordId, userId, permission }) => {
+    try {
+      await apiClient.put(`/passwords/${passwordId}/shares/${userId}`, { permission });
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.saveShare")));
+    }
+  }),
+
+  revokeShare: thunk(async (actions, { passwordId, userId }) => {
+    try {
+      await apiClient.delete(`/passwords/${passwordId}/shares/${userId}`);
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.revokeShare")));
     }
   }),
 

@@ -61,13 +61,13 @@ const buildColumns = ({ t, language, onRestore, onPurge }) => [
           <IconButton
             size="small"
             color="primary"
-            onClick={() => onRestore(params.row.password_name)}
+            onClick={() => onRestore(params.row.id)}
           >
             <RestoreFromTrashIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title={t("trashDialog.deleteForever")}>
-          <IconButton size="small" color="error" onClick={() => onPurge(params.row.password_name)}>
+          <IconButton size="small" color="error" onClick={() => onPurge(params.row)}>
             <DeleteForeverIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -88,7 +88,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
   });
 
   const handlePurge = async () => {
-    await onPurge(purgeTarget);
+    await onPurge(purgeTarget.id);
     setPurgeTarget(null);
   };
 
@@ -104,7 +104,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
           <DataGrid
             rows={trash}
             columns={columns}
-            getRowId={(row) => row.password_name}
+            getRowId={(row) => row.id}
             disableRowSelectionOnClick
             density="compact"
             rowHeight={44}
@@ -130,7 +130,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
       >
         <Trans
           i18nKey="trashDialog.deleteForeverMessage"
-          values={{ name: purgeTarget }}
+          values={{ name: purgeTarget?.password_name }}
           components={{ strong: <strong /> }}
         />
       </ConfirmDialog>

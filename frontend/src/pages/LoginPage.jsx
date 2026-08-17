@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, Button, Checkbox, FormControlLabel, LinearProgress, Typography } from "@mui/material";
+import { Box, Button, Checkbox, FormControlLabel, LinearProgress, TextField, Typography } from "@mui/material";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
@@ -26,10 +26,10 @@ const LoginPage = () => {
   const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
 
-  const { fetchStatus, check, create, setValue, setConfirm, setError } = useStoreActions(
+  const { fetchStatus, authenticate, setUsername, setValue, setConfirm, setError } = useStoreActions(
     (a) => a.ciphermothModels.masterPassword
   );
-  const { initialized, error, value, confirm, loading } = useStoreState(
+  const { initialized, legacyVault, error, username, value, confirm, loading } = useStoreState(
     (s) => s.ciphermothModels.masterPassword
   );
 
@@ -50,35 +50,43 @@ const LoginPage = () => {
   }, [error, enqueueSnackbar]);
 
   const [acknowledged, setAcknowledged] = useState(false);
+  const creatingVault = initialized === false && !legacyVault;
+  const strength = creatingVault ? getMasterPasswordStrength(value) : null;
 
-  const strength = initialized === false ? getMasterPasswordStrength(value) : null;
+  const validateUsername = () => {
+    if (username.trim()) return true;
+    setError(t("auth.validation.enterUsername"));
+    return false;
+  };
 
   const handleLogin = () => {
+    if (!validateUsername()) return;
     if (!value.trim()) {
       enqueueSnackbar(t("auth.validation.enterMasterPassword"), { variant: "error" });
       return;
     }
-    check({ master_password: value });
+    authenticate({ endpoint: "/auth/login", username, master_password: value });
   };
 
   const handleCreate = () => {
+    if (!validateUsername()) return;
     if (!value) {
-      setError(t("auth.validation.enterNewMasterPassword"));
+      setError(t(creatingVault ? "auth.validation.enterNewMasterPassword" : "auth.validation.enterMasterPassword"));
       return;
     }
-    if (value !== confirm) {
+    if (creatingVault && value !== confirm) {
       setError(t("auth.validation.passwordsDoNotMatch"));
       return;
     }
-    if (strength && strength.value < 70) {
+    if (creatingVault && strength && strength.value < 70) {
       setError(t("auth.validation.weakPassword"));
       return;
     }
-    if (!acknowledged) {
+    if (creatingVault && !acknowledged) {
       setError(t("auth.validation.confirmNoRecovery"));
       return;
     }
-    create({ master_password: value });
+    authenticate({ endpoint: "/auth/bootstrap", username, master_password: value });
   };
 
   if (initialized === null) {
@@ -159,19 +167,30 @@ const LoginPage = () => {
           </>
         )}
 
+        <TextField
+          label={t("auth.username")}
+          required
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoComplete="username"
+          autoFocus
+          fullWidth
+          sx={{ mb: 1.5 }}
+          slotProps={{ htmlInput: { autoCapitalize: "none", spellCheck: false } }}
+        />
         <PasswordField
           label={t("auth.masterPassword")}
           required
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && initialized) handleLogin();
+            if (e.key === "Enter") (initialized ? handleLogin : handleCreate)();
           }}
-          autoFocus
-          autoComplete={initialized ? "current-password" : "new-password"}
+          autoFocus={false}
+          autoComplete={creatingVault ? "new-password" : "current-password"}
         />
 
-        {!initialized && value && strength && (
+        {creatingVault && value && strength && (
           <Box sx={{ mt: 2, textAlign: "left" }}>
             <LinearProgress
               variant="determinate"
@@ -189,7 +208,7 @@ const LoginPage = () => {
           </Box>
         )}
 
-        {!initialized && (
+        {creatingVault && (
           <Box sx={{ mt: 2 }}>
             <PasswordField
               label={t("auth.confirmMasterPassword")}
@@ -247,11 +266,11 @@ const LoginPage = () => {
           size="large"
           variant="contained"
           loading={loading}
-          disabled={!initialized && !acknowledged}
+          disabled={creatingVault && !acknowledged}
           onClick={initialized ? handleLogin : handleCreate}
           sx={{ mt: 3, ...unlockButtonSx }}
         >
-          {t(initialized ? "auth.unlock" : "auth.create")}
+          {t(initialized ? "auth.unlock" : legacyVault ? "auth.migrate" : "auth.create")}
         </Button>
 
         <Typography sx={{ mt: 2.75, fontSize: 11, color: "text.disabled" }}>

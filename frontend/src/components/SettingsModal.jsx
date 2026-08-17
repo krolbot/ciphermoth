@@ -19,6 +19,8 @@ import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
 
+import PasswordChangeDialog from "./PasswordChangeDialog";
+
 const FIELDS = [
   {
     key: "inactivity_ms",
@@ -79,6 +81,7 @@ const SettingsModal = ({ open, onClose }) => {
   const [form, setForm] = useState(() => toForm(settings));
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -149,6 +152,10 @@ const SettingsModal = ({ open, onClose }) => {
             />
           ))}
           <Divider sx={{ my: 0.5 }} />
+          <Button variant="outlined" onClick={() => setPasswordOpen(true)}>
+            {t("auth.changePassword")}
+          </Button>
+          <Divider sx={{ my: 0.5 }} />
           <FormControlLabel
             sx={{ ml: 0, justifyContent: "space-between" }}
             labelPlacement="start"
@@ -190,6 +197,10 @@ const SettingsModal = ({ open, onClose }) => {
           {t("common.actions.save")}
         </Button>
       </DialogActions>
+      <PasswordChangeDialog
+        open={passwordOpen}
+        onClose={() => setPasswordOpen(false)}
+      />
     </Dialog>
   );
 };

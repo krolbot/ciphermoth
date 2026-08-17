@@ -18,7 +18,7 @@ const formatBytes = (bytes, language) => {
   return `${formatter.format(bytes / (1024 * 1024))} MB`;
 };
 
-const AttachmentsSection = ({ passwordName, onChanged }) => {
+const AttachmentsSection = ({ passwordId, canWrite, onChanged }) => {
   const { t, i18n } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const fetchAttachments = useStoreActions((a) => a.ciphermothModels.passwords.fetchAttachments);
@@ -35,17 +35,18 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
 
   const refresh = useCallback(async () => {
     try {
-      setAttachments(await fetchAttachments(passwordName));
+      setAttachments(await fetchAttachments(passwordId));
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
-  }, [fetchAttachments, passwordName, enqueueSnackbar]);
+  }, [fetchAttachments, passwordId, enqueueSnackbar]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   const handleFiles = async (files) => {
+    if (!canWrite) return;
     setBusy(true);
     try {
       for (const file of files) {
@@ -55,7 +56,7 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
           });
           continue;
         }
-        await uploadAttachment({ passwordName, file });
+        await uploadAttachment({ passwordId, file });
         enqueueSnackbar(t("attachments.attached", { filename: file.name }), {
           variant: "success",
         });
@@ -78,7 +79,7 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
   const onDownload = async (att) => {
     try {
       await downloadAttachment({
-        passwordName,
+        passwordId,
         attachmentId: att.id,
         filename: att.filename,
       });
@@ -88,10 +89,11 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
   };
 
   const confirmDelete = async () => {
+    if (!canWrite) return;
     const att = pendingDelete;
     setPendingDelete(null);
     try {
-      await deleteAttachment({ passwordName, attachmentId: att.id });
+      await deleteAttachment({ passwordId, attachmentId: att.id });
       enqueueSnackbar(t("attachments.removed", { filename: att.filename }), {
         variant: "success",
       });
@@ -132,29 +134,33 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
                 <FileDownloadOutlinedIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Tooltip title={t("attachments.removeFile")}>
-              <IconButton size="small" color="error" onClick={() => setPendingDelete(att)}>
-                <DeleteOutlineIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+            {canWrite && (
+              <Tooltip title={t("attachments.removeFile")}>
+                <IconButton size="small" color="error" onClick={() => setPendingDelete(att)}>
+                  <DeleteOutlineIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
           </Stack>
         ))
       )}
 
-      <Box>
-        <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
-        <Button
-          size="small"
-          startIcon={<AttachFileIcon />}
-          onClick={() => inputRef.current?.click()}
-          loading={busy}
-        >
-          {t("attachments.attachFile")}
-        </Button>
-        <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>
-          {t("attachments.limits")}
-        </Typography>
-      </Box>
+      {canWrite && (
+        <Box>
+          <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
+          <Button
+            size="small"
+            startIcon={<AttachFileIcon />}
+            onClick={() => inputRef.current?.click()}
+            loading={busy}
+          >
+            {t("attachments.attachFile")}
+          </Button>
+          <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>
+            {t("attachments.limits")}
+          </Typography>
+        </Box>
+      )}
 
       <ConfirmDialog
         open={!!pendingDelete}

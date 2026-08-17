@@ -2,26 +2,12 @@ import io
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    Form,
-    Request,
-    UploadFile,
-    status,
-)
+from fastapi import APIRouter, Form, Request, UploadFile
 from starlette.responses import StreamingResponse
 
-from api.endpoints.deps import (
-    AttachmentCRUDDep,
-    KeyDerivationDep,
-    PasswordCRUDDep,
-    get_key_derivation,
-    require_master_password,
-)
+from api.endpoints.deps import AttachmentCRUDDep, PasswordCRUDDep, VaultContextDep
 from api.exceptions import TypesMismatchError
 from api.rate_limit import limiter, rate
-from api.responses import inject_responses
 from schemas import (
     AttachmentResponse,
     FavoriteUpdatePayload,
@@ -33,14 +19,15 @@ from schemas import (
     PasswordImportResult,
     PasswordResponse,
     PasswordUpdate,
-    PasswordUpdatePayload,
+    ShareGrant,
+    ShareUpdatePayload,
     SimpleDetailSchema,
 )
 
 router = APIRouter(tags=["passwords"])
 
-_MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
-_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024  # 5 MB
+_MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
+_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
 
 async def _read_capped(file: UploadFile, max_bytes: int, message: str) -> bytes:
@@ -60,250 +47,191 @@ def _safe_content_disposition(filename: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"
 
 
-@router.get(
-    "",
-    name="passwords:get",
-    response_model=list[PasswordResponse],
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses({status.HTTP_403_FORBIDDEN: SimpleDetailSchema}),
-)
+@router.get("", response_model=list[PasswordResponse])
 async def get_passwords(
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
+    crud: PasswordCRUDDep, context: VaultContextDep
 ) -> list[PasswordResponse]:
-    return await crud.get_passwords(key_derivation)
+    return await crud.get_passwords(context)
 
 
-@router.get(
-    "/trash",
-    name="passwords:trash",
-    response_model=list[PasswordResponse],
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses({status.HTTP_403_FORBIDDEN: SimpleDetailSchema}),
-)
+@router.get("/trash", response_model=list[PasswordResponse])
 async def get_trash(
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
+    crud: PasswordCRUDDep, context: VaultContextDep
 ) -> list[PasswordResponse]:
-    return await crud.get_trash(key_derivation)
+    return await crud.get_trash(context)
 
 
-@router.get(
-    "/{password_name}",
-    name="passwords:get_by_name",
-    response_model=PasswordResponse,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
-)
-async def get_password(
-    password_name: str,
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
-) -> PasswordResponse:
-    return await crud.get_password(password_name, key_derivation)
-
-
-@router.post(
-    "/create",
-    name="password:create",
-    response_model=PasswordCreate,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_400_BAD_REQUEST: SimpleDetailSchema,
-        }
-    ),
-)
+@router.post("", response_model=PasswordCreate)
 async def create_password(
-    password: Password,
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
+    password: Password, crud: PasswordCRUDDep, context: VaultContextDep
 ) -> PasswordCreate:
-    return await crud.create_password(password, key_derivation)
+    return await crud.create_password(password, context)
 
 
-@router.patch(
-    "/update",
-    name="passwords:update",
-    response_model=PasswordUpdate,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_400_BAD_REQUEST: SimpleDetailSchema,
-        }
-    ),
-)
-async def update_password(
-    body: PasswordUpdatePayload,
+@router.post("/import", response_model=PasswordImportResult)
+@limiter.limit(rate("5/hour"))
+async def import_passwords(
+    request: Request,
+    file: UploadFile,
     crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
-) -> PasswordUpdate:
-    return await crud.update_password(
-        password=body.password,
-        new_password=body.new_password,
-        key_derivation=key_derivation,
+    context: VaultContextDep,
+    master_password: str = Form(...),
+    on_conflict: OnConflict = Form(OnConflict.skip),
+) -> PasswordImportResult:
+    file_bytes = await _read_capped(
+        file, _MAX_IMPORT_FILE_BYTES, "File too large. Maximum allowed size is 10 MB."
+    )
+    return await crud.import_passwords(
+        file_bytes, master_password, context, on_conflict
     )
 
 
-@router.patch(
-    "/{password_name}/favorite",
-    name="passwords:favorite",
-    response_model=PasswordUpdate,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
-)
+@router.post("/import/csv", response_model=PasswordImportResult)
+@limiter.limit(rate("5/hour"))
+async def import_passwords_csv(
+    request: Request,
+    file: UploadFile,
+    crud: PasswordCRUDDep,
+    context: VaultContextDep,
+    on_conflict: OnConflict = Form(OnConflict.skip),
+) -> PasswordImportResult:
+    file_bytes = await _read_capped(
+        file, _MAX_IMPORT_FILE_BYTES, "File too large. Maximum allowed size is 10 MB."
+    )
+    return await crud.import_passwords_csv(file_bytes, context, on_conflict)
+
+
+@router.post("/backup")
+@limiter.limit(rate("3/hour"))
+async def backup_passwords(
+    request: Request,
+    body: MasterPassword,
+    crud: PasswordCRUDDep,
+    context: VaultContextDep,
+) -> StreamingResponse:
+    data = await crud.create_backup(body.master_password, context)
+    filename = f"ciphermoth_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.zip"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{password_id}", response_model=PasswordResponse)
+async def get_password(
+    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
+) -> PasswordResponse:
+    return await crud.get_password(password_id, context)
+
+
+@router.put("/{password_id}", response_model=PasswordUpdate)
+async def update_password(
+    password_id: int,
+    password: Password,
+    crud: PasswordCRUDDep,
+    context: VaultContextDep,
+) -> PasswordUpdate:
+    return await crud.update_password(password_id, password, context)
+
+
+@router.patch("/{password_id}/favorite", response_model=PasswordUpdate)
 async def set_favorite(
-    password_name: str,
+    password_id: int,
     body: FavoriteUpdatePayload,
     crud: PasswordCRUDDep,
+    context: VaultContextDep,
 ) -> PasswordUpdate:
-    return await crud.set_favorite(password_name, body.favorite)
+    return await crud.set_favorite(password_id, body.favorite, context)
 
 
-@router.delete(
-    "/{password_name}",
-    name="passwords:delete",
-    response_model=PasswordDelete,
-    dependencies=[Depends(require_master_password), Depends(get_key_derivation)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
-)
+@router.delete("/{password_id}", response_model=PasswordDelete)
 async def delete_password(
-    password_name: str,
-    crud: PasswordCRUDDep,
+    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
 ) -> PasswordDelete:
-    return await crud.delete_password(password_name)
+    return await crud.delete_password(password_id, context)
 
 
-@router.post(
-    "/{password_name}/restore",
-    name="passwords:restore",
-    response_model=PasswordUpdate,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_400_BAD_REQUEST: SimpleDetailSchema,
-        }
-    ),
-)
+@router.post("/{password_id}/restore", response_model=PasswordUpdate)
 async def restore_password(
-    password_name: str,
-    crud: PasswordCRUDDep,
+    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
 ) -> PasswordUpdate:
-    return await crud.restore_password(password_name)
+    return await crud.restore_password(password_id, context)
 
 
-@router.delete(
-    "/{password_name}/purge",
-    name="passwords:purge",
-    response_model=PasswordDelete,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
-)
+@router.delete("/{password_id}/purge", response_model=PasswordDelete)
 async def purge_password(
-    password_name: str,
-    crud: PasswordCRUDDep,
+    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
 ) -> PasswordDelete:
-    return await crud.purge_password(password_name)
+    return await crud.purge_password(password_id, context)
 
 
-@router.get(
-    "/{password_name}/attachments",
-    name="attachments:list",
-    response_model=list[AttachmentResponse],
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
-)
+@router.get("/{password_id}/shares", response_model=list[ShareGrant])
+async def list_shares(
+    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
+) -> list[ShareGrant]:
+    return await crud.list_shares(password_id, context)
+
+
+@router.put("/{password_id}/shares/{user_id}", response_model=ShareGrant)
+async def set_share(
+    password_id: int,
+    user_id: int,
+    body: ShareUpdatePayload,
+    crud: PasswordCRUDDep,
+    context: VaultContextDep,
+) -> ShareGrant:
+    return await crud.set_share(password_id, user_id, body.permission, context)
+
+
+@router.delete("/{password_id}/shares/{user_id}", response_model=SimpleDetailSchema)
+async def revoke_share(
+    password_id: int,
+    user_id: int,
+    crud: PasswordCRUDDep,
+    context: VaultContextDep,
+) -> SimpleDetailSchema:
+    await crud.revoke_share(password_id, user_id, context)
+    return SimpleDetailSchema(detail="Access revoked.")
+
+
+@router.get("/{password_id}/attachments", response_model=list[AttachmentResponse])
 async def list_attachments(
-    password_name: str,
-    crud: AttachmentCRUDDep,
-    key_derivation: KeyDerivationDep,
+    password_id: int, crud: AttachmentCRUDDep, context: VaultContextDep
 ) -> list[AttachmentResponse]:
-    return await crud.list_attachments(password_name, key_derivation)
+    return await crud.list_attachments(password_id, context)
 
 
-@router.post(
-    "/{password_name}/attachments",
-    name="attachments:add",
-    response_model=AttachmentResponse,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_400_BAD_REQUEST: SimpleDetailSchema,
-            status.HTTP_429_TOO_MANY_REQUESTS: SimpleDetailSchema,
-        }
-    ),
-)
+@router.post("/{password_id}/attachments", response_model=AttachmentResponse)
 @limiter.limit(rate("60/hour"))
 async def add_attachment(
     request: Request,
-    password_name: str,
+    password_id: int,
     file: UploadFile,
     crud: AttachmentCRUDDep,
-    key_derivation: KeyDerivationDep,
+    context: VaultContextDep,
 ) -> AttachmentResponse:
     data = await _read_capped(
         file, _MAX_ATTACHMENT_BYTES, "Attachment too large. Maximum size is 5 MB."
     )
     return await crud.add_attachment(
-        password_name=password_name,
-        filename=file.filename or "attachment",
-        content_type=file.content_type,
-        data=data,
-        key_derivation=key_derivation,
+        password_id,
+        file.filename or "attachment",
+        file.content_type,
+        data,
+        context,
     )
 
 
-@router.get(
-    "/{password_name}/attachments/{attachment_id}",
-    name="attachments:download",
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
-)
+@router.get("/{password_id}/attachments/{attachment_id}")
 async def download_attachment(
-    password_name: str,
+    password_id: int,
     attachment_id: int,
     crud: AttachmentCRUDDep,
-    key_derivation: KeyDerivationDep,
+    context: VaultContextDep,
 ) -> StreamingResponse:
     filename, content_type, data = await crud.get_attachment_data(
-        password_name, attachment_id, key_derivation
+        password_id, attachment_id, context
     )
     return StreamingResponse(
         io.BytesIO(data),
@@ -313,112 +241,13 @@ async def download_attachment(
 
 
 @router.delete(
-    "/{password_name}/attachments/{attachment_id}",
-    name="attachments:delete",
-    response_model=PasswordDelete,
-    dependencies=[Depends(require_master_password), Depends(get_key_derivation)],
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-        }
-    ),
+    "/{password_id}/attachments/{attachment_id}", response_model=PasswordDelete
 )
 async def delete_attachment(
-    password_name: str,
+    password_id: int,
     attachment_id: int,
     crud: AttachmentCRUDDep,
+    context: VaultContextDep,
 ) -> PasswordDelete:
-    await crud.delete_attachment(password_name, attachment_id)
+    await crud.delete_attachment(password_id, attachment_id, context)
     return PasswordDelete(deleted=True, detail="Attachment deleted.")
-
-
-@router.post(
-    "/import",
-    name="passwords:import",
-    response_model=PasswordImportResult,
-    responses=inject_responses(
-        {
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_400_BAD_REQUEST: SimpleDetailSchema,
-            status.HTTP_429_TOO_MANY_REQUESTS: SimpleDetailSchema,
-        }
-    ),
-)
-@limiter.limit(rate("5/hour"))
-async def import_passwords(
-    request: Request,
-    file: UploadFile,
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
-    master_password: str = Form(...),
-    on_conflict: OnConflict = Form(OnConflict.skip),
-) -> PasswordImportResult:
-    file_bytes = await _read_capped(
-        file, _MAX_IMPORT_FILE_BYTES, "File too large. Maximum allowed size is 10 MB."
-    )
-    return await crud.import_passwords(
-        file_bytes=file_bytes,
-        master_password=master_password,
-        key_derivation=key_derivation,
-        on_conflict=on_conflict,
-    )
-
-
-@router.post(
-    "/import/csv",
-    name="passwords:import_csv",
-    response_model=PasswordImportResult,
-    dependencies=[Depends(require_master_password)],
-    responses=inject_responses(
-        {
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_400_BAD_REQUEST: SimpleDetailSchema,
-            status.HTTP_429_TOO_MANY_REQUESTS: SimpleDetailSchema,
-        }
-    ),
-)
-@limiter.limit(rate("5/hour"))
-async def import_passwords_csv(
-    request: Request,
-    file: UploadFile,
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
-    on_conflict: OnConflict = Form(OnConflict.skip),
-) -> PasswordImportResult:
-    file_bytes = await _read_capped(
-        file, _MAX_IMPORT_FILE_BYTES, "File too large. Maximum allowed size is 10 MB."
-    )
-    return await crud.import_passwords_csv(
-        file_bytes=file_bytes,
-        key_derivation=key_derivation,
-        on_conflict=on_conflict,
-    )
-
-
-@router.post(
-    "/backup",
-    name="passwords:backup",
-    responses=inject_responses(
-        {
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_429_TOO_MANY_REQUESTS: SimpleDetailSchema,
-        }
-    ),
-)
-@limiter.limit(rate("3/hour"))
-async def backup_passwords(
-    request: Request,
-    body: MasterPassword,
-    crud: PasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
-) -> StreamingResponse:
-    data = await crud.create_backup(body.master_password, key_derivation)
-    filename = f"ciphermoth_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.zip"
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
