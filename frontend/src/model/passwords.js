@@ -8,6 +8,7 @@ import {
   verifyCurrentVaultPassword,
 } from "../lib/backup";
 import { errorDetail, triggerDownload } from "../lib/http";
+import { planServiceAccessChanges } from "../lib/sharing";
 import {
   decryptAttachment,
   decryptPasswordRecord,
@@ -79,8 +80,9 @@ const Passwords = {
 
   create: thunk(async (actions, payload) => {
     try {
-      await apiClient.post("/passwords", await encryptNewPassword(payload));
+      const { data } = await apiClient.post("/passwords", await encryptNewPassword(payload));
       await actions.get();
+      return data;
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.createPassword")));
     }
@@ -227,6 +229,23 @@ const Passwords = {
       await apiClient.delete(`/passwords/${passwordId}/shares/${userId}`);
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.revokeShare")));
+    }
+  }),
+
+  syncServiceAccess: thunk(async (actions, { passwordId, desired }) => {
+    const current = (await actions.listShares(passwordId)).filter(
+      (share) => share.role === "service"
+    );
+    for (const grant of planServiceAccessChanges(current, desired)) {
+      if (grant.type === "revoke") {
+        await actions.revokeShare({ passwordId, userId: grant.user_id });
+      } else {
+        await actions.setShare({
+          passwordId,
+          userId: grant.user_id,
+          permission: grant.permission,
+        });
+      }
     }
   }),
 

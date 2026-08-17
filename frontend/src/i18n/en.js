@@ -359,6 +359,9 @@ const en = {
     copied: "Copied! Clipboard clears in {{duration}}.",
   },
   sharing: {
+    agentAccess: "Agent access",
+    noAgents: "No service agents are available.",
+    none: "No access",
     title: "Share {{name}}",
     manage: "Manage sharing",
     access: "Owner / access",

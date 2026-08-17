@@ -59,6 +59,7 @@ const PasswordsPage = () => {
     getTrash,
     restore,
     purge,
+    syncServiceAccess,
   } = useStoreActions((actions) => actions.ciphermothModels.passwords);
   const { error, loading, passwords, trash } = useStoreState(
     (state) => state.ciphermothModels.passwords
@@ -117,21 +118,30 @@ const PasswordsPage = () => {
   );
 
   const handleSubmit = async (entry) => {
+    const { service_access: serviceAccess, ...password } = entry;
+    let passwordId;
     if (editTarget) {
       await update({
         passwordId: editTarget.id,
-        password: entry,
+        password,
       });
+      passwordId = editTarget.id;
       enqueueSnackbar(
         t(entry.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"),
         { variant: "success" }
       );
     } else {
-      await create(entry);
+      const created = await create(password);
+      passwordId = created.id;
       enqueueSnackbar(
         t(entry.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"),
         { variant: "success" }
       );
+    }
+    try {
+      await syncServiceAccess({ passwordId, desired: serviceAccess });
+    } catch (err) {
+      enqueueSnackbar(err.message, { variant: "error" });
     }
     setDialogOpen(false);
   };
