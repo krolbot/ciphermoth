@@ -14,15 +14,18 @@ import {
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
+import useClipboard from "../hooks/useClipboard";
 import PasswordField from "./PasswordField";
 
 const UsersDialog = ({ open, onClose }) => {
   const { t } = useTranslation();
+  const copy = useClipboard();
   const { get, create, update } = useStoreActions((a) => a.ciphermothModels.users);
   const users = useStoreState((s) => s.ciphermothModels.users.users);
   const [form, setForm] = useState({ username: "", temporary_password: "", role: "member" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [serviceToken, setServiceToken] = useState("");
 
   useEffect(() => {
     if (open) get().catch((err) => setError(err.message));
@@ -32,13 +35,20 @@ const UsersDialog = ({ open, onClose }) => {
     setSaving(true);
     setError("");
     try {
-      await create(form);
+      const payload = form.role === "service" ? { username: form.username, role: form.role } : form;
+      const created = await create(payload);
+      setServiceToken(created.service_token || "");
       setForm({ username: "", temporary_password: "", role: "member" });
     } catch (err) {
       setError(err.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const close = () => {
+    setServiceToken("");
+    onClose();
   };
 
   const change = async (userId, patch) => {
@@ -50,7 +60,7 @@ const UsersDialog = ({ open, onClose }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={close} maxWidth="sm" fullWidth>
       <DialogTitle>{t("users.title")}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1.5}>
@@ -87,12 +97,16 @@ const UsersDialog = ({ open, onClose }) => {
             onChange={(e) => setForm((current) => ({ ...current, username: e.target.value }))}
             autoComplete="username"
           />
-          <PasswordField
-            label={t("users.temporaryPassword")}
-            value={form.temporary_password}
-            onChange={(e) => setForm((current) => ({ ...current, temporary_password: e.target.value }))}
-            autoComplete="new-password"
-          />
+          {form.role !== "service" && (
+            <PasswordField
+              label={t("users.temporaryPassword")}
+              value={form.temporary_password}
+              onChange={(e) =>
+                setForm((current) => ({ ...current, temporary_password: e.target.value }))
+              }
+              autoComplete="new-password"
+            />
+          )}
           <TextField
             select
             label={t("users.role")}
@@ -105,16 +119,27 @@ const UsersDialog = ({ open, onClose }) => {
               </MenuItem>
             ))}
           </TextField>
+          {serviceToken && (
+            <Stack spacing={1}>
+              <Typography color="warning.main">{t("users.serviceTokenOnce")}</Typography>
+              <TextField
+                label={t("users.serviceToken")}
+                value={serviceToken}
+                slotProps={{ input: { readOnly: true } }}
+              />
+              <Button onClick={() => copy(serviceToken)}>{t("users.copyToken")}</Button>
+            </Stack>
+          )}
           {error && <Typography color="error">{error}</Typography>}
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>{t("common.actions.close")}</Button>
+        <Button onClick={close}>{t("common.actions.close")}</Button>
         <Button
           variant="contained"
           loading={saving}
           onClick={add}
-          disabled={!form.username.trim() || !form.temporary_password}
+          disabled={!form.username.trim() || (form.role !== "service" && !form.temporary_password)}
         >
           {t("common.actions.create")}
         </Button>

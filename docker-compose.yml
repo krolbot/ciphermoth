@@ -31,6 +31,7 @@ services:
       - ./backend/.db.env
     environment:
       CORS_ORIGINS: '["http://localhost:3000"]'
+      MCP_PUBLIC_URL: http://localhost:8000/mcp
     volumes:
       - ./backend:/app/src
     restart: unless-stopped

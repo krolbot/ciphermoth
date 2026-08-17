@@ -1,7 +1,13 @@
 from fastapi import APIRouter
 
 from api.endpoints.deps import AdminContextDep, AuthCRUDDep, VaultContextDep
-from schemas import AuthUser, ShareTarget, UserCreatePayload, UserUpdatePayload
+from schemas import (
+    AuthUser,
+    ShareTarget,
+    UserCreatePayload,
+    UserCreateResponse,
+    UserUpdatePayload,
+)
 
 router = APIRouter(tags=["users"])
 
@@ -18,12 +24,12 @@ async def list_users(context: AdminContextDep, crud: AuthCRUDDep) -> list[AuthUs
     return await crud.list_users(context.user)
 
 
-@router.post("", response_model=AuthUser)
+@router.post("", response_model=UserCreateResponse)
 async def create_user(
     payload: UserCreatePayload,
     context: AdminContextDep,
     crud: AuthCRUDDep,
-) -> AuthUser:
+) -> UserCreateResponse:
     return await crud.create_user(
         context.user,
         username=payload.username,

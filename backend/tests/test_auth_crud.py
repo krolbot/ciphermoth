@@ -1,3 +1,4 @@
+import hashlib
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -96,23 +97,32 @@ async def test_admin_created_human_must_change_password_and_service_cannot_login
     service = await crud.create_user(
         owner,
         username="future-ai",
-        temporary_password="temporary service secret 123!",
+        temporary_password=None,
         role=UserRole.service,
     )
 
     assert member.must_change_password is True
     assert service.role == UserRole.service
+    assert service.service_token is not None
     member_login = await crud.login("member", "temporary member password 123!")
     assert member_login.user.must_change_password is True
 
     with pytest.raises(Forbidden, match="interactive"):
-        await crud.login("future-ai", "temporary service secret 123!")
-    service = await session.scalar(
+        await crud.login("future-ai", service.service_token)
+    service_model = await session.scalar(
         select(UserModel).where(UserModel.username == "future-ai")
     )
-    assert service is not None
+    assert service_model is not None
+    assert (
+        service_model.service_token_hash
+        == hashlib.sha256(service.service_token.encode()).hexdigest()
+    )
+    service_context = await crud.resolve_service_token(service.service_token)
+    assert service_context.user.id == service_model.id
+    with pytest.raises(Unauthorized):
+        await crud.resolve_service_token("wrong-token")
     with pytest.raises(Forbidden, match="Service user type"):
-        await crud.update_user(owner, service.id, role=UserRole.member)
+        await crud.update_user(owner, service_model.id, role=UserRole.member)
 
 
 @pytest.mark.asyncio

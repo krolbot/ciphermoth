@@ -1,4 +1,9 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
+
 from fastapi import FastAPI, Request
+from mcp.server.transport_security import TransportSecuritySettings
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
@@ -6,7 +11,9 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
-from settings import get_api_settings
+from crud.session import AsyncSessionLocal
+from mcp_server import SessionFactory, build_mcp_server
+from settings import APISettings, get_api_settings
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -33,9 +40,21 @@ def rate_limit_exceeded(request: Request, exc: Exception) -> Response:
     )
 
 
-def get_application() -> FastAPI:
-    settings = get_api_settings()
-    server = FastAPI(**settings.fastapi_kwargs)
+def get_application(
+    *,
+    api_settings: APISettings | None = None,
+    session_factory: SessionFactory = AsyncSessionLocal,
+) -> FastAPI:
+    settings = api_settings or get_api_settings()
+    public_url = str(settings.mcp_public_url)
+    mcp = build_mcp_server(session_factory, public_url=public_url)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        async with mcp.session_manager.run():
+            yield
+
+    server = FastAPI(**settings.fastapi_kwargs, lifespan=lifespan)
 
     server.state.limiter = limiter
     server.add_exception_handler(RateLimitExceeded, rate_limit_exceeded)
@@ -64,6 +83,19 @@ def get_application() -> FastAPI:
 
     server.include_router(make_api_router(), prefix="/api")
     make_api_exceptions(server)
+
+    parsed_url = urlsplit(public_url)
+    mcp_app = mcp.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        max_request_body_size=settings.mcp_max_request_bytes,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=sorted({parsed_url.hostname or "", parsed_url.netloc}),
+            allowed_origins=[f"{parsed_url.scheme}://{parsed_url.netloc}"],
+        ),
+    )
+    server.mount("/", mcp_app)
+    server.state.mcp_server = mcp
 
     return server
 

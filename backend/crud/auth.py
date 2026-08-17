@@ -31,7 +31,14 @@ from models import (
     SettingsModel,
     UserModel,
 )
-from schemas import AuthSessionResponse, AuthStatus, AuthUser, ShareTarget, UserRole
+from schemas import (
+    AuthSessionResponse,
+    AuthStatus,
+    AuthUser,
+    ShareTarget,
+    UserCreateResponse,
+    UserRole,
+)
 from validators import validate_master_password_strength
 
 _SESSION_LIFETIME = timedelta(hours=12)
@@ -255,9 +262,9 @@ class AuthCRUD(BaseCRUD):
         actor: UserModel,
         *,
         username: str,
-        temporary_password: str,
+        temporary_password: str | None,
         role: UserRole,
-    ) -> AuthUser:
+    ) -> UserCreateResponse:
         if not actor.active or actor.role != UserRole.admin:
             raise Forbidden("Administrator access is required.")
         username = username.strip().lower()
@@ -267,8 +274,15 @@ class AuthCRUD(BaseCRUD):
         if existing is not None:
             raise TypesMismatchError("A user with that username already exists.")
 
+        credential = (
+            secrets.token_urlsafe(32)
+            if role == UserRole.service
+            else temporary_password
+        )
+        if credential is None:
+            raise TypesMismatchError("A temporary password is required.")
         salt = os.urandom(16)
-        key_derivation = generate_key_derivation(salt, temporary_password)
+        key_derivation = generate_key_derivation(salt, credential)
         public_key, encrypted_private_key = create_user_keypair(key_derivation)
         user = UserModel(
             username=username,
@@ -276,13 +290,39 @@ class AuthCRUD(BaseCRUD):
             active=True,
             must_change_password=role != UserRole.service,
             salt=salt,
-            hash_key=hash_master_password(temporary_password),
+            hash_key=hash_master_password(credential),
             public_key=public_key,
             encrypted_private_key=encrypted_private_key,
+            service_token_hash=(
+                _token_hash(credential) if role == UserRole.service else None
+            ),
         )
         self.session.add(user)
         await self.session.flush()
-        return self._to_user(user)
+        return UserCreateResponse(
+            **self._to_user(user).model_dump(),
+            service_token=credential if role == UserRole.service else None,
+        )
+
+    async def resolve_service_token(self, token: str) -> AuthContext:
+        token_hash = _token_hash(token)
+        user = await self.session.scalar(
+            select(UserModel).where(
+                UserModel.service_token_hash == token_hash,
+                UserModel.role == UserRole.service,
+                UserModel.active.is_(True),
+            )
+        )
+        if user is None:
+            raise Unauthorized("Invalid service token.")
+        key_derivation = generate_key_derivation(user.salt, token)
+        try:
+            private_key = decrypt_user_private_key(
+                key_derivation, user.encrypted_private_key
+            )
+        except ValueError as exc:
+            raise Unauthorized("Invalid service token.") from exc
+        return AuthContext(user=user, private_key=private_key, token_hash=token_hash)
 
     async def resolve_session(self, token: str, key_derivation: str) -> AuthContext:
         token_hash = _token_hash(token)

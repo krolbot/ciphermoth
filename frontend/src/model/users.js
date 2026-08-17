@@ -9,6 +9,9 @@ const Users = {
   setUsers: action((state, users) => {
     state.users = users;
   }),
+  addUser: action((state, user) => {
+    state.users.push(user);
+  }),
   get: thunk(async (actions) => {
     try {
       const { data } = await apiClient.get("/users");
@@ -19,8 +22,11 @@ const Users = {
   }),
   create: thunk(async (actions, payload) => {
     try {
-      await apiClient.post("/users", payload);
-      await actions.get();
+      const { data } = await apiClient.post("/users", payload);
+      const user = { ...data };
+      delete user.service_token;
+      actions.addUser(user);
+      return data;
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.createUser")));
     }

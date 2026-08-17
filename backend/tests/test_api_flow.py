@@ -59,6 +59,18 @@ async def test_multi_user_sharing_http_flow() -> None:
                 "x-ciphermoth-key-derivation": owner_auth["key_derivation"],
             }
 
+            service = await client.post(
+                "/api/users",
+                headers=owner_headers,
+                json={"username": "future-ai", "role": "service"},
+            )
+            assert service.status_code == 200
+            service_token = service.json()["service_token"]
+            assert service_token
+            users = await client.get("/api/users", headers=owner_headers)
+            assert users.status_code == 200
+            assert "service_token" not in users.text
+
             member = await client.post(
                 "/api/users",
                 headers=owner_headers,

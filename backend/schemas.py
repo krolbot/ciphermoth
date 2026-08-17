@@ -8,6 +8,7 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 from validators import normalize_totp_secret, validate_master_password_strength
@@ -64,6 +65,10 @@ class AuthUser(BaseModel):
     must_change_password: bool
 
 
+class UserCreateResponse(AuthUser):
+    service_token: str | None = None
+
+
 class ShareTarget(BaseModel):
     id: int
     username: str
@@ -103,13 +108,19 @@ class PasswordChangePayload(BaseModel):
 
 class UserCreatePayload(BaseModel):
     username: Username
-    temporary_password: str = Field(min_length=1, max_length=1024)
+    temporary_password: str | None = Field(default=None, min_length=1, max_length=1024)
     role: UserRole = UserRole.member
 
     @field_validator("temporary_password")
     @classmethod
-    def _strong(cls, value: str) -> str:
-        return validate_master_password_strength(value)
+    def _strong(cls, value: str | None) -> str | None:
+        return validate_master_password_strength(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def _human_password_required(self) -> "UserCreatePayload":
+        if self.role != UserRole.service and self.temporary_password is None:
+            raise ValueError("A temporary password is required.")
+        return self
 
 
 class UserUpdatePayload(BaseModel):

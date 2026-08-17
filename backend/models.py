@@ -68,6 +68,9 @@ class UserModel(BaseModel):
     hash_key: Mapped[str] = mapped_column(String)
     public_key: Mapped[bytes] = mapped_column(LargeBinary)
     encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary)
+    service_token_hash: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
 
 
 class SessionModel(BaseModel):
