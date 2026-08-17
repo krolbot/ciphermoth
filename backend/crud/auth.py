@@ -1,9 +1,19 @@
+import base64
+import binascii
 import hashlib
+import hmac
 import os
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
 from sqlalchemy import delete, func, select
 
 from api.exceptions import Forbidden, NotFound, TypesMismatchError, Unauthorized
@@ -11,27 +21,20 @@ from crud.base import BaseCRUD
 from crud.master_password import fetch_master_password
 from helpers import (
     create_user_keypair,
-    decrypt,
-    decrypt_bytes,
     decrypt_user_private_key,
-    encrypt,
-    encrypt_user_private_key,
-    generate_entry_key,
     generate_key_derivation,
-    hash_master_password,
-    verify_master_password,
-    wrap_entry_key,
 )
 from models import (
+    AuthChallengeModel,
     InstanceStateModel,
     PasswordAccessModel,
-    PasswordAttachmentModel,
     PasswordModel,
     SessionModel,
     SettingsModel,
     UserModel,
 )
 from schemas import (
+    AuthChallengeResponse,
     AuthSessionResponse,
     AuthStatus,
     AuthUser,
@@ -39,9 +42,10 @@ from schemas import (
     UserCreateResponse,
     UserRole,
 )
-from validators import validate_master_password_strength
+from settings import get_api_settings
 
 _SESSION_LIFETIME = timedelta(hours=12)
+_CHALLENGE_LIFETIME = timedelta(minutes=5)
 _OPTIONAL_ENCRYPTED_FIELDS = (
     "url",
     "totp_secret",
@@ -60,10 +64,84 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def decode_client_key_material(
+    salt: str, public_key: str, encrypted_private_key: str
+) -> tuple[bytes, bytes, bytes]:
+    try:
+
+        def decode(value: str) -> bytes:
+            return base64.b64decode(
+                value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+            )
+
+        salt_bytes = decode(salt)
+        public_key_bytes = decode(public_key)
+        encrypted_token = decode(encrypted_private_key)
+    except (ValueError, binascii.Error) as exc:
+        raise TypesMismatchError("Invalid client key material.") from exc
+    if (
+        len(salt_bytes) != 16
+        or len(public_key_bytes) != 32
+        or len(encrypted_token) < 73
+        or encrypted_token[0] != 0x80
+    ):
+        raise TypesMismatchError("Invalid client key material.")
+    return salt_bytes, public_key_bytes, encrypted_private_key.encode()
+
+
+def decode_auth_key_material(
+    public_key: str, encrypted_private_key: str
+) -> tuple[bytes, bytes]:
+    try:
+        public = base64.b64decode(
+            public_key + "=" * (-len(public_key) % 4), altchars=b"-_", validate=True
+        )
+        encrypted = base64.b64decode(
+            encrypted_private_key + "=" * (-len(encrypted_private_key) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise TypesMismatchError("Invalid authentication key material.") from exc
+    if len(public) != 32 or len(encrypted) < 73 or encrypted[0] != 0x80:
+        raise TypesMismatchError("Invalid authentication key material.")
+    return public, encrypted_private_key.encode()
+
+
+def decode_signature(value: str) -> bytes:
+    try:
+        signature = base64.b64decode(
+            value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise TypesMismatchError("Invalid authentication proof.") from exc
+    if len(signature) not in (32, 64):
+        raise TypesMismatchError("Invalid authentication proof.")
+    return signature
+
+
+def _rekey_message(
+    token_hash: str,
+    new_salt: bytes,
+    encrypted_private_key: bytes,
+    encrypted_auth_private_key: bytes,
+) -> bytes:
+    encoded_salt = base64.urlsafe_b64encode(new_salt).rstrip(b"=")
+    return b"\n".join(
+        (
+            b"ciphermoth-rekey-v1",
+            token_hash.encode(),
+            encoded_salt,
+            encrypted_private_key,
+            encrypted_auth_private_key,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class AuthContext:
     user: UserModel
-    private_key: bytes
+    private_key: bytes | None
     token_hash: str
 
 
@@ -82,14 +160,20 @@ class AuthCRUD(BaseCRUD):
         user_count = await self.session.scalar(
             select(func.count()).select_from(UserModel)
         )
-        legacy = await fetch_master_password(self.session) is not None
+        legacy = await fetch_master_password(self.session)
         return AuthStatus(
-            initialized=bool(user_count), legacy_vault=legacy and not user_count
+            initialized=bool(user_count),
+            legacy_vault=legacy is not None and not user_count,
+            legacy_salt=(
+                base64.urlsafe_b64encode(legacy.salt).decode().rstrip("=")
+                if legacy is not None and not user_count
+                else None
+            ),
         )
 
-    async def _new_session(
-        self, user: UserModel, key_derivation: bytes
-    ) -> AuthSessionResponse:
+    async def _new_session(self, user: UserModel) -> AuthSessionResponse:
+        if user.encrypted_auth_private_key is None:
+            raise Forbidden("Interactive authentication is not enrolled.")
         await self.session.execute(
             delete(SessionModel).where(SessionModel.expires_at <= _now())
         )
@@ -105,69 +189,24 @@ class AuthCRUD(BaseCRUD):
         return AuthSessionResponse(
             user=self._to_user(user),
             token=token,
-            key_derivation=key_derivation.decode(),
+            salt=base64.urlsafe_b64encode(user.salt).decode().rstrip("="),
+            public_key=base64.urlsafe_b64encode(user.public_key).decode().rstrip("="),
+            encrypted_private_key=user.encrypted_private_key.decode(),
+            encrypted_auth_private_key=user.encrypted_auth_private_key.decode(),
         )
 
-    async def _migrate_legacy_vault(self, user: UserModel, legacy_key: bytes) -> None:
+    async def _claim_legacy_vault(self, user: UserModel) -> None:
         passwords = (
             await self.session.execute(select(PasswordModel).order_by(PasswordModel.id))
         ).scalars()
         for password in passwords:
-            entry_key = generate_entry_key()
-            value = decrypt(legacy_key, password.password_value)
-            if value is None:
-                raise TypesMismatchError(
-                    f"Could not decrypt legacy entry '{password.password_name}'."
-                )
-            password.password_value = encrypt(entry_key, value.encode())
-            for field in _OPTIONAL_ENCRYPTED_FIELDS:
-                token = getattr(password, field)
-                if token is None:
-                    continue
-                plaintext = decrypt(legacy_key, token)
-                if plaintext is None:
-                    raise TypesMismatchError(
-                        f"Could not decrypt legacy entry '{password.password_name}'."
-                    )
-                setattr(password, field, encrypt(entry_key, plaintext.encode()))
-
-            attachments = (
-                await self.session.execute(
-                    select(PasswordAttachmentModel).where(
-                        PasswordAttachmentModel.password_id == password.id
-                    )
-                )
-            ).scalars()
-            for attachment in attachments:
-                filename = decrypt_bytes(legacy_key, attachment.filename)
-                content = decrypt_bytes(legacy_key, attachment.content)
-                content_type = (
-                    decrypt_bytes(legacy_key, attachment.content_type)
-                    if attachment.content_type is not None
-                    else None
-                )
-                if filename is None or content is None:
-                    raise TypesMismatchError(
-                        f"Could not decrypt attachment for '{password.password_name}'."
-                    )
-                attachment.filename = encrypt(entry_key, filename)
-                attachment.content = encrypt(entry_key, content)
-                attachment.content_type = (
-                    encrypt(entry_key, content_type)
-                    if content_type is not None
-                    else None
-                )
-
             password.owner_id = user.id
-            password.encryption_version = 2
             self.session.add(
                 PasswordAccessModel(
                     password_id=password.id,
                     user_id=user.id,
                     permission="owner",
-                    wrapped_key=wrap_entry_key(
-                        user.public_key, entry_key, str(password.id).encode()
-                    ),
+                    wrapped_key=b"\x00",
                     favorite=password.favorite,
                     granted_by=user.id,
                 )
@@ -182,7 +221,15 @@ class AuthCRUD(BaseCRUD):
             model.user_id = user.id
 
     async def bootstrap(
-        self, username: str, master_password: str
+        self,
+        username: str,
+        *,
+        salt: bytes,
+        public_key: bytes,
+        encrypted_private_key: bytes,
+        auth_public_key: bytes,
+        encrypted_auth_private_key: bytes,
+        legacy_migration_token: str | None = None,
     ) -> AuthSessionResponse:
         state = (
             await self.session.execute(
@@ -202,68 +249,159 @@ class AuthCRUD(BaseCRUD):
         username = username.strip().lower()
         legacy = await fetch_master_password(self.session)
         if legacy is not None:
-            if not verify_master_password(master_password, legacy.hash_key):
-                raise Forbidden("Current master password is incorrect.")
-            salt = legacy.salt
-            password_hash = legacy.hash_key
-        else:
-            try:
-                validate_master_password_strength(master_password)
-            except ValueError as exc:
-                raise TypesMismatchError(str(exc)) from exc
-            salt = os.urandom(16)
-            password_hash = hash_master_password(master_password)
+            expected = get_api_settings().ciphermoth_legacy_migration_token
+            if not expected:
+                raise Forbidden(
+                    "Set CIPHERMOTH_LEGACY_MIGRATION_TOKEN before migrating."
+                )
+            if not legacy_migration_token or not secrets.compare_digest(
+                legacy_migration_token, expected
+            ):
+                raise Unauthorized("Invalid legacy migration token.")
+            if salt != legacy.salt:
+                raise TypesMismatchError(
+                    "Client key salt does not match the legacy vault."
+                )
 
-        key_derivation = generate_key_derivation(salt, master_password)
-        public_key, encrypted_private_key = create_user_keypair(key_derivation)
         user = UserModel(
             username=username,
             role=UserRole.admin,
             active=True,
             must_change_password=False,
             salt=salt,
-            hash_key=password_hash,
+            hash_key=None,
             public_key=public_key,
             encrypted_private_key=encrypted_private_key,
+            auth_public_key=auth_public_key,
+            encrypted_auth_private_key=encrypted_auth_private_key,
         )
         self.session.add(user)
         await self.session.flush()
 
         if legacy is not None:
-            await self._migrate_legacy_vault(user, key_derivation)
+            await self._claim_legacy_vault(user)
             await self.session.delete(legacy)
 
         state.bootstrapped_at = _now()
         await self.session.flush()
-        return await self._new_session(user, key_derivation)
+        return await self._new_session(user)
 
-    async def login(self, username: str, master_password: str) -> AuthSessionResponse:
-        user = (
-            await self.session.execute(
-                select(UserModel).where(UserModel.username == username.strip().lower())
+    async def create_challenge(self, username: str) -> AuthChallengeResponse:
+        now = _now()
+        await self.session.execute(
+            delete(AuthChallengeModel).where(AuthChallengeModel.expires_at <= now)
+        )
+        user = await self.session.scalar(
+            select(UserModel).where(UserModel.username == username.strip().lower())
+        )
+        if user is None or not user.active or user.role == UserRole.service:
+            raise Unauthorized("Invalid interactive account.")
+        if (user.auth_public_key is None) != (user.encrypted_auth_private_key is None):
+            raise Unauthorized("Invalid interactive account.")
+
+        legacy_user = user.auth_public_key is None
+        if legacy_user:
+            ephemeral = X25519PrivateKey.generate()
+            stored_nonce = ephemeral.private_bytes(
+                serialization.Encoding.Raw,
+                serialization.PrivateFormat.Raw,
+                serialization.NoEncryption(),
             )
-        ).scalar_one_or_none()
-        if user is None or not verify_master_password(master_password, user.hash_key):
-            raise Unauthorized("Invalid username or master password.")
-        if not user.active:
-            raise Unauthorized("User is disabled.")
-        if user.role == UserRole.service:
-            raise Forbidden("Service users cannot use interactive login.")
+            response_nonce = ephemeral.public_key().public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            )
+        else:
+            stored_nonce = response_nonce = os.urandom(32)
 
-        key_derivation = generate_key_derivation(user.salt, master_password)
-        try:
-            decrypt_user_private_key(key_derivation, user.encrypted_private_key)
-        except ValueError as exc:
-            raise Unauthorized("Invalid username or master password.") from exc
-        return await self._new_session(user, key_derivation)
+        challenge = secrets.token_urlsafe(32)
+        await self.session.execute(
+            delete(AuthChallengeModel).where(AuthChallengeModel.user_id == user.id)
+        )
+        self.session.add(
+            AuthChallengeModel(
+                token_hash=_token_hash(challenge),
+                user_id=user.id,
+                nonce=stored_nonce,
+                expires_at=now + _CHALLENGE_LIFETIME,
+            )
+        )
+        await self.session.flush()
+        return AuthChallengeResponse(
+            challenge=challenge,
+            nonce=base64.urlsafe_b64encode(response_nonce).decode().rstrip("="),
+            salt=base64.urlsafe_b64encode(user.salt).decode().rstrip("="),
+            public_key=base64.urlsafe_b64encode(user.public_key).decode().rstrip("="),
+            encrypted_private_key=user.encrypted_private_key.decode(),
+            encrypted_auth_private_key=(
+                user.encrypted_auth_private_key.decode()
+                if user.encrypted_auth_private_key is not None
+                else None
+            ),
+            legacy_user=legacy_user,
+        )
+
+    async def login(
+        self,
+        challenge: str,
+        signature: bytes,
+        *,
+        auth_public_key: bytes | None = None,
+        encrypted_auth_private_key: bytes | None = None,
+    ) -> AuthSessionResponse:
+        consumed = (
+            await self.session.execute(
+                delete(AuthChallengeModel)
+                .where(
+                    AuthChallengeModel.token_hash == _token_hash(challenge),
+                    AuthChallengeModel.expires_at > _now(),
+                )
+                .returning(AuthChallengeModel.user_id, AuthChallengeModel.nonce)
+            )
+        ).one_or_none()
+        if consumed is None:
+            raise Unauthorized("Invalid or expired challenge.")
+        user_id, nonce = consumed
+        user = await self.session.get(UserModel, user_id)
+        if user is None or not user.active:
+            raise Unauthorized("Invalid or expired challenge.")
+
+        if user.auth_public_key is None:
+            if auth_public_key is None or encrypted_auth_private_key is None:
+                raise Unauthorized("Interactive authentication enrollment is required.")
+            try:
+                shared = X25519PrivateKey.from_private_bytes(nonce).exchange(
+                    X25519PublicKey.from_public_bytes(user.public_key)
+                )
+            except ValueError as exc:
+                raise Unauthorized("Invalid interactive account.") from exc
+            expected = hmac.digest(shared, challenge.encode(), "sha256")
+            if not hmac.compare_digest(signature, expected):
+                raise Unauthorized("Invalid challenge proof.")
+            user.auth_public_key = auth_public_key
+            user.encrypted_auth_private_key = encrypted_auth_private_key
+            user.hash_key = None
+        else:
+            try:
+                Ed25519PublicKey.from_public_bytes(user.auth_public_key).verify(
+                    signature, nonce
+                )
+            except (InvalidSignature, ValueError) as exc:
+                raise Unauthorized("Invalid challenge signature.") from exc
+        await self.session.flush()
+        return await self._new_session(user)
 
     async def create_user(
         self,
         actor: UserModel,
         *,
         username: str,
-        temporary_password: str | None,
         role: UserRole,
+        salt: bytes | None = None,
+        public_key: bytes | None = None,
+        encrypted_private_key: bytes | None = None,
+        auth_public_key: bytes | None = None,
+        encrypted_auth_private_key: bytes | None = None,
     ) -> UserCreateResponse:
         if not actor.active or actor.role != UserRole.admin:
             raise Forbidden("Administrator access is required.")
@@ -274,34 +412,50 @@ class AuthCRUD(BaseCRUD):
         if existing is not None:
             raise TypesMismatchError("A user with that username already exists.")
 
-        credential = (
-            secrets.token_urlsafe(32)
-            if role == UserRole.service
-            else temporary_password
+        credential = secrets.token_urlsafe(32) if role == UserRole.service else None
+        if role == UserRole.service:
+            assert credential is not None
+            salt = os.urandom(16)
+            key_derivation = generate_key_derivation(salt, credential)
+            public_key, encrypted_private_key = create_user_keypair(key_derivation)
+        elif any(
+            value is None
+            for value in (
+                salt,
+                public_key,
+                encrypted_private_key,
+                auth_public_key,
+                encrypted_auth_private_key,
+            )
+        ):
+            raise TypesMismatchError(
+                "Client key material is required for a human user."
+            )
+        assert (
+            salt is not None
+            and public_key is not None
+            and encrypted_private_key is not None
         )
-        if credential is None:
-            raise TypesMismatchError("A temporary password is required.")
-        salt = os.urandom(16)
-        key_derivation = generate_key_derivation(salt, credential)
-        public_key, encrypted_private_key = create_user_keypair(key_derivation)
         user = UserModel(
             username=username,
             role=role,
             active=True,
             must_change_password=role != UserRole.service,
             salt=salt,
-            hash_key=hash_master_password(credential),
+            hash_key=None,
             public_key=public_key,
             encrypted_private_key=encrypted_private_key,
+            auth_public_key=auth_public_key,
+            encrypted_auth_private_key=encrypted_auth_private_key,
             service_token_hash=(
-                _token_hash(credential) if role == UserRole.service else None
+                _token_hash(credential) if credential is not None else None
             ),
         )
         self.session.add(user)
         await self.session.flush()
         return UserCreateResponse(
             **self._to_user(user).model_dump(),
-            service_token=credential if role == UserRole.service else None,
+            service_token=credential,
         )
 
     async def resolve_service_token(self, token: str) -> AuthContext:
@@ -324,7 +478,7 @@ class AuthCRUD(BaseCRUD):
             raise Unauthorized("Invalid service token.") from exc
         return AuthContext(user=user, private_key=private_key, token_hash=token_hash)
 
-    async def resolve_session(self, token: str, key_derivation: str) -> AuthContext:
+    async def resolve_session(self, token: str) -> AuthContext:
         token_hash = _token_hash(token)
         model = await self.session.scalar(
             select(SessionModel).where(SessionModel.token_hash == token_hash)
@@ -336,13 +490,7 @@ class AuthCRUD(BaseCRUD):
         user = await self.session.get(UserModel, model.user_id)
         if user is None or not user.active:
             raise Unauthorized("Invalid or expired session.")
-        try:
-            private_key = decrypt_user_private_key(
-                key_derivation, user.encrypted_private_key
-            )
-        except ValueError as exc:
-            raise Unauthorized("Invalid user key.") from exc
-        return AuthContext(user=user, private_key=private_key, token_hash=token_hash)
+        return AuthContext(user=user, private_key=None, token_hash=token_hash)
 
     async def logout(self, token_hash: str) -> None:
         await self.session.execute(
@@ -352,25 +500,37 @@ class AuthCRUD(BaseCRUD):
     async def change_password(
         self,
         context: AuthContext,
-        current_password: str,
-        new_password: str,
+        *,
+        new_salt: bytes,
+        encrypted_private_key: bytes,
+        encrypted_auth_private_key: bytes,
+        proof: bytes,
     ) -> AuthSessionResponse:
         user = context.user
-        if not verify_master_password(current_password, user.hash_key):
-            raise Forbidden("Current master password is incorrect.")
-        salt = os.urandom(16)
-        key_derivation = generate_key_derivation(salt, new_password)
-        user.salt = salt
-        user.hash_key = hash_master_password(new_password)
-        user.encrypted_private_key = encrypt_user_private_key(
-            key_derivation, context.private_key
-        )
+        if user.role == UserRole.service or user.auth_public_key is None:
+            raise Forbidden("Interactive authentication is required.")
+        try:
+            Ed25519PublicKey.from_public_bytes(user.auth_public_key).verify(
+                proof,
+                _rekey_message(
+                    context.token_hash,
+                    new_salt,
+                    encrypted_private_key,
+                    encrypted_auth_private_key,
+                ),
+            )
+        except (InvalidSignature, ValueError) as exc:
+            raise Unauthorized("Invalid rekey proof.") from exc
+        user.salt = new_salt
+        user.hash_key = None
+        user.encrypted_private_key = encrypted_private_key
+        user.encrypted_auth_private_key = encrypted_auth_private_key
         user.must_change_password = False
         await self.session.execute(
             delete(SessionModel).where(SessionModel.user_id == user.id)
         )
         await self.session.flush()
-        return await self._new_session(user, key_derivation)
+        return await self._new_session(user)
 
     async def list_users(self, actor: UserModel) -> list[AuthUser]:
         if not actor.active or actor.role != UserRole.admin:
@@ -389,7 +549,14 @@ class AuthCRUD(BaseCRUD):
             )
         ).scalars()
         return [
-            ShareTarget(id=user.id, username=user.username, role=UserRole(user.role))
+            ShareTarget(
+                id=user.id,
+                username=user.username,
+                role=UserRole(user.role),
+                public_key=base64.urlsafe_b64encode(user.public_key)
+                .decode()
+                .rstrip("="),
+            )
             for user in users
         ]
 

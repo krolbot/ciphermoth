@@ -3,8 +3,21 @@ import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, Typog
 import { useTranslation } from "react-i18next";
 
 import apiClient from "../api/client";
+import {
+  deriveVaultKey,
+  rewrapPrivateKeys,
+  signPasswordChange,
+} from "../lib/crypto";
+import { getMasterPasswordStrength } from "../lib/passwordStrength";
+import {
+  getAuthPrivateKey,
+  getAuthToken,
+  getPrivateKey,
+  getVaultKey,
+  getVaultSalt,
+  setAuthSession,
+} from "../utils";
 import PasswordField from "./PasswordField";
-import { setAuthSession } from "../utils";
 import { errorDetail } from "../lib/http";
 
 const PasswordChangeDialog = ({ open, onClose, required = false }) => {
@@ -25,13 +38,39 @@ const PasswordChangeDialog = ({ open, onClose, required = false }) => {
       setError(t("auth.validation.passwordsDoNotMatch"));
       return;
     }
+    if (getMasterPasswordStrength(newPassword).value < 70) {
+      setError(t("auth.validation.weakPassword"));
+      return;
+    }
     setSaving(true);
     try {
+      if ((await deriveVaultKey(currentPassword, getVaultSalt())) !== getVaultKey()) {
+        setError(t("auth.validation.currentPasswordIncorrect"));
+        return;
+      }
+      const privateKey = getPrivateKey();
+      const authPrivateKey = getAuthPrivateKey();
+      const keyMaterial = await rewrapPrivateKeys(newPassword, privateKey, authPrivateKey);
+      const proof = await signPasswordChange(
+        authPrivateKey,
+        getAuthToken(),
+        keyMaterial
+      );
       const { data } = await apiClient.put("/auth/password", {
-        current_password: currentPassword,
-        new_password: newPassword,
+        new_salt: keyMaterial.salt,
+        encrypted_private_key: keyMaterial.encryptedPrivateKey,
+        encrypted_auth_private_key: keyMaterial.encryptedAuthPrivateKey,
+        proof,
       });
-      setAuthSession(data);
+      setAuthSession({
+        token: data.token,
+        user: data.user,
+        vaultKey: keyMaterial.vaultKey,
+        vaultSalt: data.salt,
+        privateKey,
+        authPrivateKey,
+        publicKey: data.public_key,
+      });
       window.location.replace("/passwords");
     } catch (err) {
       setError(await errorDetail(err, t("errors.changePassword")));

@@ -1,9 +1,13 @@
+import base64
+import json
+
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from crud.auth import AuthCRUD
-from crud.password import PasswordCRUD
+from crud.auth import AuthContext, AuthCRUD
+from crud.encrypted_password import EncryptedPasswordCRUD
+from helpers import encrypt, generate_entry_key, wrap_entry_key
 from main import get_application
 from models import BaseModel, InstanceStateModel, UserModel
 from schemas import Password, SharePermission, UserRole
@@ -36,31 +40,57 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
     async with maker() as session:
         session.add(InstanceStateModel(id=1))
         await session.flush()
-        auth = AuthCRUD(session)
-        owner_login = await auth.bootstrap("owner", "correct horse battery staple")
-        owner_context = await auth.resolve_session(
-            owner_login.token, owner_login.key_derivation
+        owner_model = UserModel(
+            username="owner",
+            role="admin",
+            hash_key="unused",
+            salt=b"0" * 16,
+            public_key=b"1" * 32,
+            encrypted_private_key=b"unused",
         )
+        session.add(owner_model)
+        await session.flush()
+        owner_context = AuthContext(
+            user=owner_model, private_key=None, token_hash="owner-session"
+        )
+        auth = AuthCRUD(session)
         service = await auth.create_user(
             owner_context.user,
             username="future-ai",
-            temporary_password=None,
             role=UserRole.service,
         )
         assert service.service_token is not None
         service_model = await session.get(UserModel, service.id)
         assert service_model is not None
-        created = await PasswordCRUD(session).create_password(
-            Password(
-                password_name="shared",
-                password_value="secret",
-                url="https://example.com",
-                tags=["production"],
-            ),
-            owner_context,
+        entry_key = generate_entry_key()
+        cleartext = Password(
+            password_name="shared",
+            password_value="secret",
+            url="https://example.com",
+            tags=["production"],
         )
-        await PasswordCRUD(session).set_share(
-            created.id, service.id, SharePermission.read, owner_context
+        payload = cleartext.model_dump(exclude={"favorite"})
+        payload.update(password_history=[], backed_up=False)
+
+        def encoded(value: bytes) -> str:
+            return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+        encrypted = EncryptedPasswordCRUD(session)
+        created = await encrypted.create(
+            owner_context,
+            encrypted_payload=encrypt(entry_key, json.dumps(payload).encode()).decode(),
+            wrapped_key=encoded(wrap_entry_key(owner_model.public_key, entry_key)),
+            encrypted_preferences=encrypt(entry_key, b'{"favorite":false}').decode(),
+        )
+        service_wrapped_key = encoded(
+            wrap_entry_key(service_model.public_key, entry_key)
+        )
+        await encrypted.share(
+            owner_context,
+            created.id,
+            service.id,
+            permission=SharePermission.read,
+            wrapped_key=service_wrapped_key,
         )
         await session.commit()
         token = service.service_token
@@ -172,12 +202,12 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
             assert denied.json()["result"]["isError"] is True
 
             async with maker() as session:
-                auth = AuthCRUD(session)
-                owner_context = await auth.resolve_session(
-                    owner_login.token, owner_login.key_derivation
-                )
-                await PasswordCRUD(session).set_share(
-                    entry_id, service.id, SharePermission.write, owner_context
+                await EncryptedPasswordCRUD(session).share(
+                    owner_context,
+                    entry_id,
+                    service.id,
+                    permission=SharePermission.write,
+                    wrapped_key=service_wrapped_key,
                 )
                 await session.commit()
 
@@ -192,7 +222,10 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
                         "name": "update_entry",
                         "arguments": {
                             "entry_id": entry_id,
-                            "changes": {"password_value": "changed"},
+                            "changes": {
+                                "password_value": "changed",
+                                "favorite": True,
+                            },
                         },
                     },
                 },
@@ -223,13 +256,12 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
             assert reread.json()["result"]["structuredContent"]["tags"] == [
                 "production"
             ]
+            assert reread.json()["result"]["structuredContent"]["favorite"] is True
 
             async with maker() as session:
-                auth = AuthCRUD(session)
-                owner_context = await auth.resolve_session(
-                    owner_login.token, owner_login.key_derivation
+                await AuthCRUD(session).update_user(
+                    owner_context.user, service.id, active=False
                 )
-                await auth.update_user(owner_context.user, service.id, active=False)
                 await session.commit()
 
             revoked = await _post_mcp(

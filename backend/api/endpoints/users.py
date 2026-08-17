@@ -1,11 +1,13 @@
 from fastapi import APIRouter
 
 from api.endpoints.deps import AdminContextDep, AuthCRUDDep, VaultContextDep
+from crud.auth import decode_auth_key_material, decode_client_key_material
 from schemas import (
     AuthUser,
     ShareTarget,
     UserCreatePayload,
     UserCreateResponse,
+    UserRole,
     UserUpdatePayload,
 )
 
@@ -30,11 +32,34 @@ async def create_user(
     context: AdminContextDep,
     crud: AuthCRUDDep,
 ) -> UserCreateResponse:
+    key_material = (
+        decode_client_key_material(
+            payload.salt, payload.public_key, payload.encrypted_private_key
+        )
+        if payload.role != UserRole.service
+        and payload.salt is not None
+        and payload.public_key is not None
+        and payload.encrypted_private_key is not None
+        else (None, None, None)
+    )
+    auth_key_material = (
+        decode_auth_key_material(
+            payload.auth_public_key, payload.encrypted_auth_private_key
+        )
+        if payload.role != UserRole.service
+        and payload.auth_public_key is not None
+        and payload.encrypted_auth_private_key is not None
+        else (None, None)
+    )
     return await crud.create_user(
         context.user,
         username=payload.username,
-        temporary_password=payload.temporary_password,
         role=payload.role,
+        salt=key_material[0],
+        public_key=key_material[1],
+        encrypted_private_key=key_material[2],
+        auth_public_key=auth_key_material[0],
+        encrypted_auth_private_key=auth_key_material[1],
     )
 
 

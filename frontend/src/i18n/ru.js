@@ -69,6 +69,7 @@ const ru = {
     setupDescription:
       "Один мастер-пароль защищает всё хранилище. Выберите его с умом — другого ключа не будет.",
     masterPassword: "Мастер-пароль",
+    migrationToken: "Токен миграции старого хранилища",
     confirmMasterPassword: "Повторите мастер-пароль",
     noRecoveryWarning:
       "Восстановления здесь нет. Если потеряете мастер-пароль, больше не откроете хранилище: ключ есть только у вас.",
@@ -88,11 +89,13 @@ const ru = {
     migrate: "Настроить аккаунт",
     validation: {
       enterMasterPassword: "Введите мастер-пароль.",
+      enterMigrationToken: "Введите токен миграции от администратора сервера.",
       enterUsername: "Введите имя пользователя.",
       enterPasswordChange: "Введите оба пароля.",
       enterNewMasterPassword: "Задайте мастер-пароль.",
       passwordsDoNotMatch: "Пароли не совпадают.",
       weakPassword: "Слишком слабый пароль. Используйте не менее 12 символов разных типов.",
+      currentPasswordIncorrect: "Текущий пароль неверен.",
       confirmNoRecovery: "Подтвердите, что понимаете: мастер-пароль восстановить нельзя.",
     },
   },

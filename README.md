@@ -96,23 +96,25 @@ not as a public, multi-tenant service holding other people's secrets. Weigh that
 
 How it works:
 
-- your master password is hashed with **bcrypt**, never stored in plain; new vaults require a reasonably strong
-  one (12+ characters, mixed types), enforced on the server;
-- every stored field is encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) using a key derived from your master
-  password via **Argon2id** (OWASP 2024 interactive profile), unique per vault thanks to a random salt;
-- even the metadata (websites, 2FA secrets, tags, custom fields, history, attachments) is encrypted; the database never
-  learns which sites you have or how you organize them;
-- that derived key lives only in your browser's `sessionStorage`, never touches the server, and disappears the moment
-  you close the tab
+- your master password stays in the browser. Argon2id derives the vault key locally, and browser-side strength checks require
+  12+ characters with mixed types for new passwords;
+- human login uses a one-time server challenge signed by an Ed25519 authentication key. Its private half is encrypted
+  with the vault key, so neither the master password nor a password-equivalent verifier is sent to or stored by the server;
+- each entry has a random Fernet key (AES-128-CBC + HMAC-SHA256), wrapped to the user's X25519 public key. Entry fields,
+  preferences, password history, attachment names, types, and bytes are encrypted before upload;
+- the vault key lives only in the browser's `sessionStorage` and disappears when the tab closes;
+- the database still reveals unavoidable operational metadata: user and record counts, ciphertext sizes, timestamps,
+  ownership/sharing relationships, and access patterns;
 - the password generator uses `crypto.getRandomValues` with rejection sampling, no `Math.random()`, no shortcuts;
 
-**It protects against** someone who steals the database or disk (they get ciphertext and a bcrypt hash), accidental
-server-side exposure (the server never persists the master password or the derived key), and casual inspection of
-stored data.
+**It protects against** someone who steals the database or disk (they get ciphertext, public keys, and encrypted private
+key material), accidental persistence of human vault plaintext on the backend, and casual inspection of stored data.
 
-**It does not protect against** malware or a keylogger on the device you unlock from, a weak master password, exposing
-the instance on the public internet without `https`, or forgetting your master password (there is no recovery). Run it
-on a machine and network you trust, use a strong master password, and keep a backup.
+**It does not protect against** malicious JavaScript served by a compromised CipherMoth server, malware or a keylogger
+on the device you unlock from, traffic/access-pattern analysis, a weak master password, exposing the instance on the
+public internet without `https`, or forgetting your master password (there is no recovery). MCP service identities are
+a separate explicitly trusted boundary: the backend can decrypt data granted to a service identity. Run CipherMoth on a
+machine and network you trust, use a strong master password, and keep a backup.
 
 To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 

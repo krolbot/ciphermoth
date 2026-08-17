@@ -11,7 +11,7 @@ from pydantic import (
     model_validator,
 )
 
-from validators import normalize_totp_secret, validate_master_password_strength
+from validators import normalize_totp_secret
 
 _MAX_TAGS = 20
 _MAX_TAG_LENGTH = 40
@@ -73,65 +73,96 @@ class ShareTarget(BaseModel):
     id: int
     username: str
     role: UserRole
+    public_key: str
 
 
 class AuthSessionResponse(BaseModel):
     user: AuthUser
     token: str
-    key_derivation: str
+    salt: str
+    public_key: str
+    encrypted_private_key: str
+    encrypted_auth_private_key: str
+
+
+class AuthChallengeResponse(BaseModel):
+    challenge: str
+    nonce: str
+    salt: str
+    public_key: str
+    encrypted_private_key: str
+    encrypted_auth_private_key: str | None = None
+    legacy_user: bool = False
 
 
 class AuthStatus(BaseModel):
     initialized: bool
-    legacy_vault: bool
+    legacy_vault: bool = False
+    legacy_salt: str | None = None
 
 
 class AuthBootstrapPayload(BaseModel):
     username: Username
-    master_password: str = Field(min_length=1, max_length=1024)
+    salt: str = Field(min_length=22, max_length=24)
+    public_key: str = Field(min_length=43, max_length=44)
+    encrypted_private_key: str = Field(min_length=1, max_length=4096)
+    auth_public_key: str = Field(min_length=43, max_length=44)
+    encrypted_auth_private_key: str = Field(min_length=1, max_length=4096)
+    legacy_migration_token: str | None = Field(default=None, max_length=1024)
+
+
+class AuthChallengePayload(BaseModel):
+    username: Username
 
 
 class AuthLoginPayload(BaseModel):
-    username: Username
-    master_password: str = Field(min_length=1, max_length=1024)
+    challenge: str = Field(min_length=32, max_length=128)
+    signature: str = Field(min_length=43, max_length=88)
+    auth_public_key: str | None = Field(default=None, min_length=43, max_length=44)
+    encrypted_auth_private_key: str | None = Field(
+        default=None, min_length=1, max_length=4096
+    )
 
 
 class PasswordChangePayload(BaseModel):
-    current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(min_length=1, max_length=1024)
-
-    @field_validator("new_password")
-    @classmethod
-    def _strong(cls, value: str) -> str:
-        return validate_master_password_strength(value)
+    new_salt: str = Field(min_length=22, max_length=24)
+    encrypted_private_key: str = Field(min_length=1, max_length=4096)
+    encrypted_auth_private_key: str = Field(min_length=1, max_length=4096)
+    proof: str = Field(min_length=86, max_length=88)
 
 
 class UserCreatePayload(BaseModel):
     username: Username
-    temporary_password: str | None = Field(default=None, min_length=1, max_length=1024)
     role: UserRole = UserRole.member
-
-    @field_validator("temporary_password")
-    @classmethod
-    def _strong(cls, value: str | None) -> str | None:
-        return validate_master_password_strength(value) if value is not None else None
+    salt: str | None = Field(default=None, min_length=22, max_length=24)
+    public_key: str | None = Field(default=None, min_length=43, max_length=44)
+    encrypted_private_key: str | None = Field(
+        default=None, min_length=1, max_length=4096
+    )
+    auth_public_key: str | None = Field(default=None, min_length=43, max_length=44)
+    encrypted_auth_private_key: str | None = Field(
+        default=None, min_length=1, max_length=4096
+    )
 
     @model_validator(mode="after")
-    def _human_password_required(self) -> "UserCreatePayload":
-        if self.role != UserRole.service and self.temporary_password is None:
-            raise ValueError("A temporary password is required.")
+    def _human_keys_required(self) -> "UserCreatePayload":
+        if self.role != UserRole.service and any(
+            value is None
+            for value in (
+                self.salt,
+                self.public_key,
+                self.encrypted_private_key,
+                self.auth_public_key,
+                self.encrypted_auth_private_key,
+            )
+        ):
+            raise ValueError("Client key material is required for a human user.")
         return self
 
 
 class UserUpdatePayload(BaseModel):
     role: UserRole | None = None
     active: bool | None = None
-
-
-class MasterPassword(BaseModel):
-    master_password: str = Field(min_length=1, max_length=1024)
-
-    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 class CustomField(BaseModel):
@@ -209,6 +240,116 @@ class PasswordResponse(Password):
     attachment_count: int = 0
 
 
+class EncryptedPasswordResponse(BaseModel):
+    id: int
+    owner_id: int
+    owner_username: str | None = None
+    access: EntryPermission
+    encryption_version: int
+    encrypted_payload: str
+    wrapped_key: str
+    encrypted_preferences: str | None = None
+    created: datetime
+    updated: datetime
+    deleted: datetime | None = None
+
+
+EncryptedAttachmentCiphertext = Annotated[
+    str, Field(min_length=1, max_length=12_000_000)
+]
+
+
+class EncryptedPasswordCreatePayload(BaseModel):
+    encrypted_payload: str = Field(min_length=1, max_length=4_000_000)
+    wrapped_key: str = Field(min_length=1, max_length=16_384)
+    encrypted_preferences: str | None = Field(default=None, max_length=16_384)
+    encrypted_attachments: list[EncryptedAttachmentCiphertext] = Field(
+        default_factory=list, max_length=20
+    )
+
+
+class EncryptedPasswordUpdatePayload(BaseModel):
+    encrypted_payload: str = Field(min_length=1, max_length=4_000_000)
+    encrypted_preferences: str | None = Field(default=None, max_length=16_384)
+    encrypted_attachments: list[EncryptedAttachmentCiphertext] | None = Field(
+        default=None, max_length=20
+    )
+
+
+class EncryptedPreferencesUpdatePayload(BaseModel):
+    encrypted_preferences: str = Field(min_length=1, max_length=16_384)
+
+
+class EncryptedAttachmentPayload(BaseModel):
+    encrypted_payload: EncryptedAttachmentCiphertext
+
+
+class EncryptedAttachmentResponse(BaseModel):
+    id: int
+    password_id: int
+    encrypted_payload: str
+    size_bytes: int
+    created: datetime
+
+
+class LegacyAttachmentResponse(BaseModel):
+    id: int
+    filename: str
+    content_type: str | None = None
+    content: str
+
+
+class LegacyRecipient(BaseModel):
+    user_id: int
+    public_key: str
+    favorite: bool = False
+
+
+class LegacyPasswordResponse(BaseModel):
+    id: int
+    encryption_version: int
+    wrapped_key: str
+    password_name: str | None = None
+    kind: str
+    username: str | None = None
+    password_value: str | None = None
+    url: str | None = None
+    totp_secret: str | None = None
+    description: str | None = None
+    tags: str | None = None
+    custom_fields: str | None = None
+    folder: str | None = None
+    password_history: str | None = None
+    favorite: bool = False
+    backed_up: bool = False
+    attachments: list[LegacyAttachmentResponse] = Field(default_factory=list)
+    recipients: list[LegacyRecipient] = Field(default_factory=list)
+
+
+class MigratedAttachmentPayload(BaseModel):
+    id: int
+    encrypted_payload: EncryptedAttachmentCiphertext
+
+
+class MigratedWrappedKey(BaseModel):
+    user_id: int
+    wrapped_key: str = Field(min_length=1, max_length=4096)
+
+
+class MigratedPreference(BaseModel):
+    user_id: int
+    encrypted_preferences: str = Field(min_length=1, max_length=16_384)
+
+
+class PasswordMigrationPayload(BaseModel):
+    encrypted_payload: str = Field(min_length=1, max_length=4_194_304)
+    preferences: list[MigratedPreference]
+    attachments: list[MigratedAttachmentPayload] = Field(
+        default_factory=list, max_length=20
+    )
+    wrapped_keys: list[MigratedWrappedKey]
+
+
 class AttachmentResponse(BaseModel):
     id: int
     filename: str
@@ -229,6 +370,7 @@ class PasswordCreate(BaseModel):
 
 class ShareUpdatePayload(BaseModel):
     permission: SharePermission
+    wrapped_key: str = Field(min_length=1, max_length=16_384)
 
 
 class ShareGrant(BaseModel):

@@ -1,24 +1,15 @@
-import io
-from datetime import UTC, datetime
-from urllib.parse import quote
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Form, Request, UploadFile
-from starlette.responses import StreamingResponse
-
-from api.endpoints.deps import AttachmentCRUDDep, PasswordCRUDDep, VaultContextDep
-from api.exceptions import TypesMismatchError
-from api.rate_limit import limiter, rate
+from api.endpoints.deps import EncryptedPasswordCRUDDep, VaultContextDep
 from schemas import (
-    AttachmentResponse,
-    FavoriteUpdatePayload,
-    MasterPassword,
-    OnConflict,
-    Password,
-    PasswordCreate,
-    PasswordDelete,
-    PasswordImportResult,
-    PasswordResponse,
-    PasswordUpdate,
+    EncryptedAttachmentPayload,
+    EncryptedAttachmentResponse,
+    EncryptedPasswordCreatePayload,
+    EncryptedPasswordResponse,
+    EncryptedPasswordUpdatePayload,
+    EncryptedPreferencesUpdatePayload,
+    LegacyPasswordResponse,
+    PasswordMigrationPayload,
     ShareGrant,
     ShareUpdatePayload,
     SimpleDetailSchema,
@@ -26,151 +17,115 @@ from schemas import (
 
 router = APIRouter(tags=["passwords"])
 
-_MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
-_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
-
-async def _read_capped(file: UploadFile, max_bytes: int, message: str) -> bytes:
-    if file.size is not None and file.size > max_bytes:
-        raise TypesMismatchError(message)
-    data = await file.read()
-    if len(data) > max_bytes:
-        raise TypesMismatchError(message)
-    return data
-
-
-def _safe_content_disposition(filename: str) -> str:
-    cleaned = filename.replace("\r", "").replace("\n", "").replace('"', "")
-    cleaned = cleaned.strip() or "attachment"
-    ascii_name = cleaned.encode("ascii", "replace").decode("ascii").replace("?", "_")
-    quoted = quote(cleaned, safe="")
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"
-
-
-@router.get("", response_model=list[PasswordResponse])
+@router.get("", response_model=list[EncryptedPasswordResponse])
 async def get_passwords(
-    crud: PasswordCRUDDep, context: VaultContextDep
-) -> list[PasswordResponse]:
-    return await crud.get_passwords(context)
+    crud: EncryptedPasswordCRUDDep, context: VaultContextDep
+) -> list[EncryptedPasswordResponse]:
+    return await crud.list_passwords(context)
 
 
-@router.get("/trash", response_model=list[PasswordResponse])
+@router.get("/trash", response_model=list[EncryptedPasswordResponse])
 async def get_trash(
-    crud: PasswordCRUDDep, context: VaultContextDep
-) -> list[PasswordResponse]:
-    return await crud.get_trash(context)
+    crud: EncryptedPasswordCRUDDep, context: VaultContextDep
+) -> list[EncryptedPasswordResponse]:
+    return await crud.list_passwords(context, deleted=True)
 
 
-@router.post("", response_model=PasswordCreate)
+@router.get("/legacy", response_model=list[LegacyPasswordResponse])
+async def list_legacy_passwords(
+    crud: EncryptedPasswordCRUDDep, context: VaultContextDep
+) -> list[LegacyPasswordResponse]:
+    return await crud.list_legacy(context)
+
+
+@router.put("/legacy/{password_id}", response_model=EncryptedPasswordResponse)
+async def migrate_legacy_password(
+    password_id: int,
+    payload: PasswordMigrationPayload,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> EncryptedPasswordResponse:
+    return await crud.migrate(context, password_id, payload)
+
+
+@router.post("", response_model=EncryptedPasswordResponse)
 async def create_password(
-    password: Password, crud: PasswordCRUDDep, context: VaultContextDep
-) -> PasswordCreate:
-    return await crud.create_password(password, context)
-
-
-@router.post("/import", response_model=PasswordImportResult)
-@limiter.limit(rate("5/hour"))
-async def import_passwords(
-    request: Request,
-    file: UploadFile,
-    crud: PasswordCRUDDep,
+    body: EncryptedPasswordCreatePayload,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
-    master_password: str = Form(...),
-    on_conflict: OnConflict = Form(OnConflict.skip),
-) -> PasswordImportResult:
-    file_bytes = await _read_capped(
-        file, _MAX_IMPORT_FILE_BYTES, "File too large. Maximum allowed size is 10 MB."
-    )
-    return await crud.import_passwords(
-        file_bytes, master_password, context, on_conflict
-    )
+) -> EncryptedPasswordResponse:
+    return await crud.create(context, **body.model_dump())
 
 
-@router.post("/import/csv", response_model=PasswordImportResult)
-@limiter.limit(rate("5/hour"))
-async def import_passwords_csv(
-    request: Request,
-    file: UploadFile,
-    crud: PasswordCRUDDep,
-    context: VaultContextDep,
-    on_conflict: OnConflict = Form(OnConflict.skip),
-) -> PasswordImportResult:
-    file_bytes = await _read_capped(
-        file, _MAX_IMPORT_FILE_BYTES, "File too large. Maximum allowed size is 10 MB."
-    )
-    return await crud.import_passwords_csv(file_bytes, context, on_conflict)
-
-
-@router.post("/backup")
-@limiter.limit(rate("3/hour"))
-async def backup_passwords(
-    request: Request,
-    body: MasterPassword,
-    crud: PasswordCRUDDep,
-    context: VaultContextDep,
-) -> StreamingResponse:
-    data = await crud.create_backup(body.master_password, context)
-    filename = f"ciphermoth_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.zip"
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/{password_id}", response_model=PasswordResponse)
+@router.get("/{password_id}", response_model=EncryptedPasswordResponse)
 async def get_password(
-    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
-) -> PasswordResponse:
-    return await crud.get_password(password_id, context)
+    password_id: int,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> EncryptedPasswordResponse:
+    return await crud.get(context, password_id)
 
 
-@router.put("/{password_id}", response_model=PasswordUpdate)
+@router.put("/{password_id}", response_model=EncryptedPasswordResponse)
 async def update_password(
     password_id: int,
-    password: Password,
-    crud: PasswordCRUDDep,
+    body: EncryptedPasswordUpdatePayload,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
-) -> PasswordUpdate:
-    return await crud.update_password(password_id, password, context)
+) -> EncryptedPasswordResponse:
+    return await crud.update(context, password_id, **body.model_dump())
 
 
-@router.patch("/{password_id}/favorite", response_model=PasswordUpdate)
-async def set_favorite(
+@router.patch("/{password_id}/preferences", response_model=EncryptedPasswordResponse)
+async def set_preferences(
     password_id: int,
-    body: FavoriteUpdatePayload,
-    crud: PasswordCRUDDep,
+    body: EncryptedPreferencesUpdatePayload,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
-) -> PasswordUpdate:
-    return await crud.set_favorite(password_id, body.favorite, context)
+) -> EncryptedPasswordResponse:
+    return await crud.set_preferences(
+        context,
+        password_id,
+        encrypted_preferences=body.encrypted_preferences,
+    )
 
 
-@router.delete("/{password_id}", response_model=PasswordDelete)
+@router.delete("/{password_id}", response_model=EncryptedPasswordResponse)
 async def delete_password(
-    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
-) -> PasswordDelete:
-    return await crud.delete_password(password_id, context)
+    password_id: int,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> EncryptedPasswordResponse:
+    return await crud.set_deleted(context, password_id, deleted=True)
 
 
-@router.post("/{password_id}/restore", response_model=PasswordUpdate)
+@router.post("/{password_id}/restore", response_model=EncryptedPasswordResponse)
 async def restore_password(
-    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
-) -> PasswordUpdate:
-    return await crud.restore_password(password_id, context)
+    password_id: int,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> EncryptedPasswordResponse:
+    return await crud.set_deleted(context, password_id, deleted=False)
 
 
-@router.delete("/{password_id}/purge", response_model=PasswordDelete)
+@router.delete("/{password_id}/purge", response_model=SimpleDetailSchema)
 async def purge_password(
-    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
-) -> PasswordDelete:
-    return await crud.purge_password(password_id, context)
+    password_id: int,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> SimpleDetailSchema:
+    await crud.delete(context, password_id)
+    return SimpleDetailSchema(detail="Password permanently deleted.")
 
 
 @router.get("/{password_id}/shares", response_model=list[ShareGrant])
 async def list_shares(
-    password_id: int, crud: PasswordCRUDDep, context: VaultContextDep
+    password_id: int,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
 ) -> list[ShareGrant]:
-    return await crud.list_shares(password_id, context)
+    return await crud.list_shares(context, password_id)
 
 
 @router.put("/{password_id}/shares/{user_id}", response_model=ShareGrant)
@@ -178,76 +133,89 @@ async def set_share(
     password_id: int,
     user_id: int,
     body: ShareUpdatePayload,
-    crud: PasswordCRUDDep,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
 ) -> ShareGrant:
-    return await crud.set_share(password_id, user_id, body.permission, context)
+    return await crud.share(
+        context,
+        password_id,
+        user_id,
+        permission=body.permission,
+        wrapped_key=body.wrapped_key,
+    )
 
 
 @router.delete("/{password_id}/shares/{user_id}", response_model=SimpleDetailSchema)
 async def revoke_share(
     password_id: int,
     user_id: int,
-    crud: PasswordCRUDDep,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
 ) -> SimpleDetailSchema:
-    await crud.revoke_share(password_id, user_id, context)
+    await crud.revoke_share(context, password_id, user_id)
     return SimpleDetailSchema(detail="Access revoked.")
 
 
-@router.get("/{password_id}/attachments", response_model=list[AttachmentResponse])
+@router.get(
+    "/{password_id}/attachments", response_model=list[EncryptedAttachmentResponse]
+)
 async def list_attachments(
-    password_id: int, crud: AttachmentCRUDDep, context: VaultContextDep
-) -> list[AttachmentResponse]:
-    return await crud.list_attachments(password_id, context)
-
-
-@router.post("/{password_id}/attachments", response_model=AttachmentResponse)
-@limiter.limit(rate("60/hour"))
-async def add_attachment(
-    request: Request,
     password_id: int,
-    file: UploadFile,
-    crud: AttachmentCRUDDep,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
-) -> AttachmentResponse:
-    data = await _read_capped(
-        file, _MAX_ATTACHMENT_BYTES, "Attachment too large. Maximum size is 5 MB."
-    )
+) -> list[EncryptedAttachmentResponse]:
+    return await crud.list_attachments(context, password_id)
+
+
+@router.post("/{password_id}/attachments", response_model=EncryptedAttachmentResponse)
+async def add_attachment(
+    password_id: int,
+    body: EncryptedAttachmentPayload,
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> EncryptedAttachmentResponse:
     return await crud.add_attachment(
-        password_id,
-        file.filename or "attachment",
-        file.content_type,
-        data,
-        context,
+        context, password_id, encrypted_payload=body.encrypted_payload
     )
 
 
-@router.get("/{password_id}/attachments/{attachment_id}")
-async def download_attachment(
+@router.put(
+    "/{password_id}/attachments", response_model=list[EncryptedAttachmentResponse]
+)
+async def replace_attachments(
+    password_id: int,
+    body: list[EncryptedAttachmentPayload],
+    crud: EncryptedPasswordCRUDDep,
+    context: VaultContextDep,
+) -> list[EncryptedAttachmentResponse]:
+    return await crud.replace_attachments(
+        context,
+        password_id,
+        encrypted_payloads=[item.encrypted_payload for item in body],
+    )
+
+
+@router.get(
+    "/{password_id}/attachments/{attachment_id}",
+    response_model=EncryptedAttachmentResponse,
+)
+async def get_attachment(
     password_id: int,
     attachment_id: int,
-    crud: AttachmentCRUDDep,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
-) -> StreamingResponse:
-    filename, content_type, data = await crud.get_attachment_data(
-        password_id, attachment_id, context
-    )
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type=content_type or "application/octet-stream",
-        headers={"Content-Disposition": _safe_content_disposition(filename)},
-    )
+) -> EncryptedAttachmentResponse:
+    return await crud.get_attachment(context, password_id, attachment_id)
 
 
 @router.delete(
-    "/{password_id}/attachments/{attachment_id}", response_model=PasswordDelete
+    "/{password_id}/attachments/{attachment_id}", response_model=SimpleDetailSchema
 )
 async def delete_attachment(
     password_id: int,
     attachment_id: int,
-    crud: AttachmentCRUDDep,
+    crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
-) -> PasswordDelete:
-    await crud.delete_attachment(password_id, attachment_id, context)
-    return PasswordDelete(deleted=True, detail="Attachment deleted.")
+) -> SimpleDetailSchema:
+    await crud.delete_attachment(context, password_id, attachment_id)
+    return SimpleDetailSchema(detail="Attachment deleted.")

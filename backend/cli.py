@@ -1,18 +1,42 @@
+import base64
 import binascii
+import csv
+import hmac
+import io
+import json
 import os
 import stat
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 from urllib.parse import urlparse
 
 import httpx
+import pyzipper
 import typer
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from helpers import generate_totp
+from helpers import (
+    create_encrypted_zip,
+    decrypt,
+    decrypt_bytes,
+    decrypt_user_private_key,
+    encrypt,
+    generate_entry_key,
+    generate_key_derivation,
+    generate_totp,
+    unwrap_entry_key,
+    wrap_entry_key,
+)
 
 app = typer.Typer(
     name="ciphermoth",
@@ -34,6 +58,16 @@ _LABEL_WIDTH = 13
 _KINDS = ("login", "note")
 _CONFLICTS = ("skip", "overwrite")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+_HISTORY_LIMIT = 20
+
+
+@dataclass(frozen=True)
+class CliSession:
+    master_password: str
+    headers: dict[str, str]
+    vault_key: bytes
+    private_key: bytes
+    public_key: bytes
 
 
 def _api_url() -> str:
@@ -76,30 +110,214 @@ def _warn_plaintext_transport() -> None:
 
     _err.print(
         f"[yellow]![/yellow]  {escape(host)} is reached over plain HTTP, so your "
-        f"master password crosses the network unencrypted. Put the API behind HTTPS."
+        "authentication session crosses the network unencrypted. "
+        "Put the API behind HTTPS."
     )
 
 
-def _unlock(client: httpx.Client) -> tuple[str, dict[str, str]]:
+def _decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _unlock(client: httpx.Client) -> CliSession:
     _warn_plaintext_transport()
     username = os.environ.get("CIPHERMOTH_USERNAME") or typer.prompt("Username")
     master = typer.prompt("Master password", hide_input=True)
     try:
-        resp = client.post(
-            "/auth/login",
-            json={"username": username, "master_password": master},
-        )
+        resp = client.post("/auth/challenge", json={"username": username})
     except httpx.ConnectError:
         _die(f"Cannot reach the API at {_api_url()!r}. Is the service running?")
 
     _check(resp)
+    challenge = resp.json()
+    vault_key = generate_key_derivation(_decode(challenge["salt"]), master)
+    login_payload = {"challenge": challenge["challenge"]}
+    if challenge.get("legacy_user"):
+        private_bytes = decrypt_bytes(
+            vault_key, challenge["encrypted_private_key"].encode()
+        )
+        if private_bytes is None:
+            _die("Invalid username or master password.")
+        try:
+            private_key = X25519PrivateKey.from_private_bytes(private_bytes)
+        except ValueError:
+            _die("Invalid vault key.")
+        shared = private_key.exchange(
+            X25519PublicKey.from_public_bytes(_decode(challenge["nonce"]))
+        )
+        auth_private = Ed25519PrivateKey.generate()
+        auth_private_bytes = auth_private.private_bytes(
+            serialization.Encoding.DER,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        login_payload.update(
+            signature=_encode(
+                hmac.digest(shared, challenge["challenge"].encode(), "sha256")
+            ),
+            auth_public_key=_encode(
+                auth_private.public_key().public_bytes(
+                    serialization.Encoding.Raw, serialization.PublicFormat.Raw
+                )
+            ),
+            encrypted_auth_private_key=encrypt(vault_key, auth_private_bytes).decode(),
+        )
+    else:
+        encrypted_auth_private = challenge["encrypted_auth_private_key"].encode()
+        auth_private_bytes = decrypt_bytes(vault_key, encrypted_auth_private)
+        if auth_private_bytes is None:
+            _die("Invalid username or master password.")
+        auth_private = serialization.load_der_private_key(
+            auth_private_bytes, password=None
+        )
+        if not isinstance(auth_private, Ed25519PrivateKey):
+            _die("Invalid authentication key.")
+        login_payload["signature"] = _encode(
+            auth_private.sign(_decode(challenge["nonce"]))
+        )
+    resp = client.post("/auth/login", json=login_payload)
+    _check(resp)
     data = resp.json()
     if data["user"].get("must_change_password"):
         _die("Change the temporary master password in the web UI first.")
-    return master, {
-        "authorization": f"Bearer {data['token']}",
-        "x-ciphermoth-key-derivation": data["key_derivation"],
+    private_key = decrypt_user_private_key(
+        vault_key, data["encrypted_private_key"].encode()
+    )
+    return CliSession(
+        master_password=master,
+        headers={"authorization": f"Bearer {data['token']}"},
+        vault_key=vault_key,
+        private_key=private_key,
+        public_key=_decode(data["public_key"]),
+    )
+
+
+def _entry_key(session: CliSession, record: dict) -> bytes:
+    context = (
+        str(record["id"]).encode() if record.get("encryption_version") == 2 else b""
+    )
+    return unwrap_entry_key(
+        session.private_key, _decode(record["wrapped_key"]), context
+    )
+
+
+def _decrypt_record(session: CliSession, record: dict) -> dict:
+    key = _entry_key(session, record)
+    payload = decrypt(key, record["encrypted_payload"].encode())
+    if payload is None:
+        _die(f"Could not decrypt entry #{record['id']}.")
+    item = json.loads(payload)
+    preferences = (
+        decrypt(key, record["encrypted_preferences"].encode())
+        if record.get("encrypted_preferences")
+        else None
+    )
+    item.update(
+        id=record["id"],
+        owner_id=record["owner_id"],
+        owner_username=str(record["owner_id"]),
+        access=record["access"],
+        favorite=(
+            json.loads(preferences).get("favorite", False) if preferences else False
+        ),
+        updated=record.get("updated"),
+        deleted=record.get("deleted"),
+    )
+    return item
+
+
+def _encrypted_attachments(key: bytes, attachments: list[dict]) -> list[str]:
+    if any(
+        not isinstance(attachment, dict) or not isinstance(attachment.get("data"), str)
+        for attachment in attachments
+    ):
+        _die("Backup contains an invalid attachment.")
+    return [
+        encrypt(key, json.dumps(attachment).encode()).decode()
+        for attachment in attachments
+    ]
+
+
+def _encrypted_create(session: CliSession, item: dict) -> dict[str, object]:
+    key = generate_entry_key()
+    favorite = bool(item.pop("favorite", False))
+    attachments = item.pop("attachments", [])
+    return {
+        "encrypted_payload": encrypt(key, json.dumps(item).encode()).decode(),
+        "wrapped_key": _encode(wrap_entry_key(session.public_key, key)),
+        "encrypted_preferences": encrypt(
+            key, json.dumps({"favorite": favorite}).encode()
+        ).decode(),
+        "encrypted_attachments": _encrypted_attachments(key, attachments),
     }
+
+
+def _encrypted_update(
+    session: CliSession, record: dict, item: dict, *, restoring: bool = False
+) -> dict[str, object]:
+    item = item.copy()
+    attachments = item.pop("attachments", None)
+    current = _decrypt_record(session, record)
+    history = list(item.get("password_history", current.get("password_history", [])))
+    if (
+        not restoring
+        and item.get("kind", current.get("kind")) == "login"
+        and item.get("password_value") != current.get("password_value")
+    ):
+        history.append(
+            {
+                "value": current["password_value"],
+                "changed_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        history = history[-_HISTORY_LIMIT:]
+    item["password_history"] = history
+    key = _entry_key(session, record)
+    result: dict[str, object] = {
+        "encrypted_payload": encrypt(key, json.dumps(item).encode()).decode()
+    }
+    if restoring:
+        result["encrypted_preferences"] = encrypt(
+            key, json.dumps({"favorite": bool(item.get("favorite", False))}).encode()
+        ).decode()
+        if attachments is not None:
+            result["encrypted_attachments"] = _encrypted_attachments(key, attachments)
+    return result
+
+
+def _encrypted_preferences(
+    session: CliSession, record: dict, favorite: bool
+) -> dict[str, str]:
+    return {
+        "encrypted_preferences": encrypt(
+            _entry_key(session, record),
+            json.dumps({"favorite": favorite}).encode(),
+        ).decode()
+    }
+
+
+def _decrypt_attachment(session: CliSession, record: dict, attachment: dict) -> dict:
+    value = decrypt(_entry_key(session, record), attachment["encrypted_payload"])
+    if value is None:
+        _die("Attachment payload is empty.")
+    payload = json.loads(value)
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), str):
+        _die("Attachment payload is invalid.")
+    return payload
+
+
+def _get_records(client: httpx.Client, session: CliSession, path: str) -> list[dict]:
+    legacy = client.get("/passwords/legacy", headers=session.headers)
+    _check(legacy)
+    if legacy.json():
+        _die("Legacy entries must be migrated once in the web UI before using the CLI.")
+    response = client.get(path, headers=session.headers)
+    _check(response)
+    return response.json()
 
 
 def _entry_path(password_id: int, suffix: str = "") -> str:
@@ -181,12 +399,10 @@ def pw_list() -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
-        resp = client.get("/passwords", headers=headers)
+        session = _unlock(client)
+        records = _get_records(client, session, "/passwords")
 
-    _check(resp)
-
-    items: list[dict] = resp.json()
+    items = [_decrypt_record(session, record) for record in records]
     if not items:
         _out.print("[dim]The vault is empty.[/dim]")
         return
@@ -217,12 +433,12 @@ def pw_get(password_id: Annotated[int, typer.Argument(help="Entry ID.")]) -> Non
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
-        resp = client.get(_entry_path(password_id), headers=headers)
+        session = _unlock(client)
+        resp = client.get(_entry_path(password_id), headers=session.headers)
 
     _check(resp)
 
-    _print_details(resp.json())
+    _print_details(_decrypt_record(session, resp.json()))
 
 
 @pw_app.command(
@@ -242,7 +458,7 @@ def pw_create(
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
+        session = _unlock(client)
 
         value = _prompt_secret("Note body" if is_note else "Password value")
         username = None if is_note else _optional("Username / email")
@@ -252,17 +468,23 @@ def pw_create(
         folder = _optional("Folder")
         resp = client.post(
             "/passwords",
-            json={
-                "password_name": name,
-                "kind": kind,
-                "username": username,
-                "password_value": value,
-                "url": url,
-                "totp_secret": totp_secret,
-                "description": description,
-                "folder": folder,
-            },
-            headers=headers,
+            json=_encrypted_create(
+                session,
+                {
+                    "password_name": name,
+                    "kind": kind,
+                    "username": username,
+                    "password_value": value,
+                    "url": url,
+                    "totp_secret": totp_secret,
+                    "description": description,
+                    "folder": folder,
+                    "tags": [],
+                    "custom_fields": [],
+                    "favorite": False,
+                },
+            ),
+            headers=session.headers,
         )
 
     _check(resp)
@@ -280,13 +502,14 @@ def pw_update(
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
+        session = _unlock(client)
 
-        current_resp = client.get(_entry_path(password_id), headers=headers)
+        current_resp = client.get(_entry_path(password_id), headers=session.headers)
 
         _check(current_resp)
 
-        current = current_resp.json()
+        record = current_resp.json()
+        current = _decrypt_record(session, record)
         is_note = current.get("kind") == "note"
 
         secret_label = "New note" if is_note else "New password value"
@@ -313,16 +536,20 @@ def pw_update(
         }
         resp = client.put(
             _entry_path(password_id),
-            json={
-                **shared,
-                "username": new_username,
-                "password_value": new_value,
-                "url": new_url,
-                "totp_secret": new_totp,
-                "description": new_description,
-                "folder": new_folder,
-            },
-            headers=headers,
+            json=_encrypted_update(
+                session,
+                record,
+                {
+                    **shared,
+                    "username": new_username,
+                    "password_value": new_value,
+                    "url": new_url,
+                    "totp_secret": new_totp,
+                    "description": new_description,
+                    "folder": new_folder,
+                },
+            ),
+            headers=session.headers,
         )
 
     _check(resp)
@@ -340,12 +567,12 @@ def pw_delete(
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
+        session = _unlock(client)
 
         if not yes:
             typer.confirm(f"Move entry #{password_id} to trash?", abort=True)
 
-        resp = client.delete(_entry_path(password_id), headers=headers)
+        resp = client.delete(_entry_path(password_id), headers=session.headers)
 
     _check(resp)
 
@@ -357,12 +584,10 @@ def pw_trash() -> None:
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
-        resp = client.get("/passwords/trash", headers=headers)
+        session = _unlock(client)
+        records = _get_records(client, session, "/passwords/trash")
 
-    _check(resp)
-
-    items: list[dict] = resp.json()
+    items = [_decrypt_record(session, record) for record in records]
     if not items:
         _out.print("[dim]The trash is empty.[/dim]")
         return
@@ -391,8 +616,10 @@ def pw_restore(password_id: Annotated[int, typer.Argument(help="Entry ID.")]) ->
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
-        resp = client.post(_entry_path(password_id, "/restore"), headers=headers)
+        session = _unlock(client)
+        resp = client.post(
+            _entry_path(password_id, "/restore"), headers=session.headers
+        )
 
     _check(resp)
 
@@ -414,8 +641,10 @@ def pw_purge(
     with httpx.Client(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
-        resp = client.delete(_entry_path(password_id, "/purge"), headers=headers)
+        session = _unlock(client)
+        resp = client.delete(
+            _entry_path(password_id, "/purge"), headers=session.headers
+        )
 
     _check(resp)
 
@@ -433,21 +662,50 @@ def cmd_backup(
     with httpx.Client(
         base_url=_api_url(), timeout=60, follow_redirects=False
     ) as client:
-        master, headers = _unlock(client)
-        resp = client.post(
-            "/passwords/backup",
-            json={"master_password": master},
-            headers=headers,
-        )
-
-    _check(resp)
+        session = _unlock(client)
+        records = _get_records(client, session, "/passwords")
+        items = [_decrypt_record(session, record) for record in records]
+        backup_entries = [
+            {
+                "name": item["password_name"],
+                "kind": item.get("kind", "login"),
+                "username": item.get("username"),
+                "value": item["password_value"],
+                "url": item.get("url"),
+                "totp_secret": item.get("totp_secret"),
+                "description": item.get("description"),
+                "tags": item.get("tags", []),
+                "custom_fields": item.get("custom_fields", []),
+                "folder": item.get("folder"),
+                "favorite": item.get("favorite", False),
+                "password_history": item.get("password_history", []),
+                "attachments": [
+                    _decrypt_attachment(session, record, attachment)
+                    for attachment in _get_records(
+                        client,
+                        session,
+                        _entry_path(record["id"], "/attachments"),
+                    )
+                ],
+            }
+            for record, item in zip(records, items, strict=True)
+        ]
+        archive = create_encrypted_zip(backup_entries, session.master_password)
+        for record, item in zip(records, items, strict=True):
+            item["backed_up"] = True
+            response = client.put(
+                _entry_path(record["id"]),
+                json=_encrypted_update(session, record, item),
+                headers=session.headers,
+            )
+            _check(response)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     filename = f"ciphermoth_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.zip"
     dest = out_dir / filename
     dest.touch(mode=stat.S_IRUSR | stat.S_IWUSR)
     dest.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    dest.write_bytes(resp.content)
+    dest.write_bytes(archive)
 
     _ok(f"Backup saved to [cyan]{escape(str(dest))}[/cyan]")
 
@@ -471,6 +729,125 @@ def _read_import_file(file: Path, on_conflict: str) -> bytes:
     return file.read_bytes()
 
 
+def _backup_item(item: dict) -> dict:
+    result = {
+        "password_name": item.get("name"),
+        "kind": item.get("kind", "login"),
+        "username": item.get("username"),
+        "password_value": item.get("value"),
+        "url": item.get("url"),
+        "totp_secret": item.get("totp_secret"),
+        "description": item.get("description"),
+        "tags": item.get("tags", []),
+        "custom_fields": item.get("custom_fields", []),
+        "folder": item.get("folder"),
+        "favorite": item.get("favorite", False),
+    }
+    if isinstance(item.get("password_history"), list):
+        result["password_history"] = item["password_history"]
+    if isinstance(item.get("attachments"), list):
+        result["attachments"] = item["attachments"]
+    return result
+
+
+def _read_backup(file_bytes: bytes, password: str) -> list[dict]:
+    try:
+        with pyzipper.AESZipFile(io.BytesIO(file_bytes)) as archive:
+            archive.setpassword(password.encode())
+            payload = json.loads(archive.read("ciphermoth_backup.json"))
+    except (KeyError, ValueError, RuntimeError, pyzipper.BadZipFile) as exc:
+        _die(f"Could not decrypt backup: {exc}")
+    if not isinstance(payload.get("passwords"), list):
+        _die("Invalid CipherMoth backup.")
+    return [_backup_item(item) for item in payload["passwords"]]
+
+
+def _csv_items(file_bytes: bytes) -> list[dict]:
+    aliases = {
+        "password_name": ("name", "title", "account", "login_name", "item name"),
+        "username": ("username", "login_username", "user", "email", "login"),
+        "password_value": ("password", "login_password", "pass"),
+        "url": ("url", "uri", "login_uri", "website", "site"),
+        "description": ("notes", "note", "description", "comment", "comments"),
+        "folder": ("folder", "grouping", "group", "category", "collection"),
+        "totp_secret": ("totp", "login_totp", "otpauth", "otp", "2fa"),
+    }
+    reader = csv.DictReader(io.StringIO(file_bytes.decode("utf-8-sig")))
+    headers = {header.lower(): header for header in (reader.fieldnames or [])}
+
+    def value(row: dict, field: str) -> str | None:
+        source = next(
+            (headers[name] for name in aliases[field] if name in headers), None
+        )
+        return row.get(source, "").strip() or None if source else None
+
+    entries = []
+    for row in reader:
+        entries.append(
+            {
+                "password_name": value(row, "password_name"),
+                "kind": "login",
+                "username": value(row, "username"),
+                "password_value": value(row, "password_value"),
+                "url": value(row, "url"),
+                "totp_secret": value(row, "totp_secret"),
+                "description": value(row, "description"),
+                "tags": [],
+                "custom_fields": [],
+                "folder": value(row, "folder"),
+                "favorite": False,
+            }
+        )
+    return entries
+
+
+def _import_items(
+    client: httpx.Client,
+    session: CliSession,
+    items: list[dict],
+    on_conflict: str,
+) -> dict[str, int]:
+    records = _get_records(client, session, "/passwords")
+    existing = {
+        item["password_name"]: (record, item)
+        for record in records
+        for item in [_decrypt_record(session, record)]
+    }
+    result = {
+        "imported": 0,
+        "overwritten": 0,
+        "skipped": 0,
+        "total": len(items),
+    }
+    for item in items:
+        name = item.get("password_name")
+        if not name or not item.get("password_value"):
+            _die("Import contains an entry without a name or password value.")
+        current = existing.get(name)
+        if current and on_conflict == "skip":
+            result["skipped"] += 1
+            continue
+        if current:
+            record, current_item = current
+            updated_item = {**current_item, **item}
+            response = client.put(
+                _entry_path(record["id"]),
+                json=_encrypted_update(session, record, updated_item, restoring=True),
+                headers=session.headers,
+            )
+            _check(response)
+            result["overwritten"] += 1
+        else:
+            response = client.post(
+                "/passwords",
+                json=_encrypted_create(session, item.copy()),
+                headers=session.headers,
+            )
+            result["imported"] += 1
+        _check(response)
+    return result
+
+
 @app.command("import", help="Restore entries from a CipherMoth backup ZIP.")
 def cmd_import(
     file: Annotated[Path, typer.Argument(help="Path to the ciphermoth backup ZIP.")],
@@ -486,17 +863,15 @@ def cmd_import(
     with httpx.Client(
         base_url=_api_url(), timeout=60, follow_redirects=False
     ) as client:
-        master, headers = _unlock(client)
-        resp = client.post(
-            "/passwords/import",
-            data={"master_password": master, "on_conflict": on_conflict},
-            files={"file": (file.name, file_bytes, "application/zip")},
-            headers=headers,
+        session = _unlock(client)
+        result = _import_items(
+            client,
+            session,
+            _read_backup(file_bytes, session.master_password),
+            on_conflict,
         )
 
-    _check(resp)
-
-    _report_import(resp.json())
+    _report_import(result)
 
 
 @app.command(
@@ -519,17 +894,15 @@ def cmd_import_csv(
     with httpx.Client(
         base_url=_api_url(), timeout=60, follow_redirects=False
     ) as client:
-        _, headers = _unlock(client)
-        resp = client.post(
-            "/passwords/import/csv",
-            data={"on_conflict": on_conflict},
-            files={"file": (file.name, file_bytes, "text/csv")},
-            headers=headers,
+        session = _unlock(client)
+        result = _import_items(
+            client,
+            session,
+            _csv_items(file_bytes),
+            on_conflict,
         )
 
-    _check(resp)
-
-    _report_import(resp.json())
+    _report_import(result)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,12 @@ import test from "node:test";
 import {
   clearAuth,
   getAuthToken,
+  getAuthPrivateKey,
   getCurrentUser,
-  getKeyDerivation,
+  getPrivateKey,
+  getPublicKey,
+  getVaultKey,
+  getVaultSalt,
   isAuth,
   setAuthSession,
   shouldClearAuth,
@@ -18,14 +22,26 @@ globalThis.sessionStorage = {
   setItem: (key, value) => storage.set(key, value),
 };
 
-test("auth sessions retain the token, key derivation, and user until cleared", () => {
+test("auth sessions retain browser-only vault keys until cleared", () => {
   const user = { id: 7, username: "moth", role: "member", active: true, must_change_password: false };
 
-  setAuthSession({ token: "session-token", key_derivation: "derived-key", user });
+  setAuthSession({
+    token: "session-token",
+    vaultKey: "derived-key",
+    vaultSalt: "public-salt",
+    privateKey: "private-key",
+    authPrivateKey: "auth-private-key",
+    publicKey: "public-key",
+    user,
+  });
 
   assert.equal(isAuth(), true);
   assert.equal(getAuthToken(), "session-token");
-  assert.equal(getKeyDerivation(), "derived-key");
+  assert.equal(getVaultKey(), "derived-key");
+  assert.equal(getVaultSalt(), "public-salt");
+  assert.equal(getPrivateKey(), "private-key");
+  assert.equal(getAuthPrivateKey(), "auth-private-key");
+  assert.equal(getPublicKey(), "public-key");
   assert.deepEqual(getCurrentUser(), user);
 
   clearAuth();

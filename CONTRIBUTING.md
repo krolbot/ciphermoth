@@ -76,6 +76,12 @@ Everything is optional, the defaults work fine for local use.
 | `DISABLE_DOCS` | `false` | Set `true` to hide `/docs` and `/redoc` |
 | `DEBUG` | `false` | FastAPI debug mode |
 | `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
+| `CIPHERMOTH_LEGACY_MIGRATION_TOKEN` | unset | Required only to claim a pre-account legacy vault; at least 32 characters |
+
+Before upgrading a pre-account vault, generate a one-time operator token (`openssl rand -base64 32`), store it as
+`CIPHERMOTH_LEGACY_MIGRATION_TOKEN` in the install `.env`, restart the backend, and enter it in the migration form.
+Remove it from `.env` after the migration succeeds. The token authorizes the ownership transition; the master password,
+Argon2id key derivation, and legacy data decryption remain client-side.
 
 **Frontend:**
 
@@ -90,7 +96,7 @@ Everything is optional, the defaults work fine for local use.
 | `CIPHERMOTH_API_URL` | `http://localhost:8000/api` | Backend API base URL (baked to `http://localhost/api` inside the backend image) |
 | `CIPHERMOTH_COMPOSE_FILE` | `<cip's folder>/docker-compose.prod.yml` | Compose file the `cip` wrapper drives |
 
-The CLI warns before prompting if `CIPHERMOTH_API_URL` points at a remote host over plain HTTP, since the master password would cross the network unencrypted. See [docs/CLI.md](./docs/CLI.md).
+The CLI warns if `CIPHERMOTH_API_URL` points at a remote host over plain HTTP, since its authentication session would cross the network unencrypted. The master password and derived key stay local. See [docs/CLI.md](./docs/CLI.md).
 
 ## Putting it on a real server
 

@@ -26,12 +26,25 @@ const LoginPage = () => {
   const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
 
-  const { fetchStatus, authenticate, setUsername, setValue, setConfirm, setError } = useStoreActions(
-    (a) => a.ciphermothModels.masterPassword
-  );
-  const { initialized, legacyVault, error, username, value, confirm, loading } = useStoreState(
-    (s) => s.ciphermothModels.masterPassword
-  );
+  const {
+    fetchStatus,
+    authenticate,
+    setUsername,
+    setValue,
+    setConfirm,
+    setMigrationToken,
+    setError,
+  } = useStoreActions((a) => a.ciphermothModels.masterPassword);
+  const {
+    initialized,
+    legacyVault,
+    error,
+    username,
+    value,
+    confirm,
+    migrationToken,
+    loading,
+  } = useStoreState((s) => s.ciphermothModels.masterPassword);
 
   useEffect(() => {
     fetchStatus();
@@ -72,6 +85,10 @@ const LoginPage = () => {
     if (!validateUsername()) return;
     if (!value) {
       setError(t(creatingVault ? "auth.validation.enterNewMasterPassword" : "auth.validation.enterMasterPassword"));
+      return;
+    }
+    if (legacyVault && !migrationToken) {
+      setError(t("auth.validation.enterMigrationToken"));
       return;
     }
     if (creatingVault && value !== confirm) {
@@ -189,6 +206,16 @@ const LoginPage = () => {
           autoFocus={false}
           autoComplete={creatingVault ? "new-password" : "current-password"}
         />
+
+        {legacyVault && (
+          <PasswordField
+            label={t("auth.migrationToken")}
+            required
+            value={migrationToken}
+            onChange={(e) => setMigrationToken(e.target.value)}
+            autoComplete="off"
+          />
+        )}
 
         {creatingVault && value && strength && (
           <Box sx={{ mt: 2, textAlign: "left" }}>

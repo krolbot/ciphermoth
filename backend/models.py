@@ -65,9 +65,13 @@ class UserModel(BaseModel):
         Boolean, default=False, server_default="false"
     )
     salt: Mapped[bytes] = mapped_column(LargeBinary)
-    hash_key: Mapped[str] = mapped_column(String)
+    hash_key: Mapped[str | None] = mapped_column(String, nullable=True)
     public_key: Mapped[bytes] = mapped_column(LargeBinary)
     encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary)
+    auth_public_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    encrypted_auth_private_key: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
     service_token_hash: Mapped[str | None] = mapped_column(
         String(64), unique=True, nullable=True
     )
@@ -84,6 +88,17 @@ class SessionModel(BaseModel):
         Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+
+
+class AuthChallengeModel(BaseModel):
+    __tablename__ = "auth_challenges"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP)
 
 
 class PasswordModel(BaseModel):
@@ -111,10 +126,11 @@ class PasswordModel(BaseModel):
     encryption_version: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1"
     )
-    password_name: Mapped[str] = mapped_column(String)
+    encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
+    password_name: Mapped[str | None] = mapped_column(String)
     kind: Mapped[str] = mapped_column(String, default="login", server_default="login")
     username: Mapped[str | None] = mapped_column(String)
-    password_value: Mapped[bytes] = mapped_column(LargeBinary)
+    password_value: Mapped[bytes | None] = mapped_column(LargeBinary)
     description: Mapped[str | None] = mapped_column(String)
     url: Mapped[bytes | None] = mapped_column(LargeBinary)
     totp_secret: Mapped[bytes | None] = mapped_column(LargeBinary)
@@ -141,8 +157,9 @@ class PasswordAttachmentModel(BaseModel):
         nullable=False,
         index=True,
     )
-    filename: Mapped[bytes] = mapped_column(LargeBinary)
-    content: Mapped[bytes] = mapped_column(LargeBinary)
+    encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
+    filename: Mapped[bytes | None] = mapped_column(LargeBinary)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary)
     content_type: Mapped[bytes | None] = mapped_column(LargeBinary)
     size_bytes: Mapped[int] = mapped_column(Integer)
 
@@ -160,6 +177,7 @@ class PasswordAccessModel(BaseModel):
     )
     permission: Mapped[str] = mapped_column(String(16))
     wrapped_key: Mapped[bytes] = mapped_column(LargeBinary)
+    encrypted_preferences: Mapped[bytes | None] = mapped_column(LargeBinary)
     favorite: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )

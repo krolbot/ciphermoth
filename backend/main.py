@@ -68,7 +68,7 @@ def get_application(
         allow_origins=settings.cors_origins,
         allow_credentials=False,
         allow_methods=["*"],
-        allow_headers=["Authorization", "Content-Type", "x-ciphermoth-key-derivation"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     @server.middleware("http")

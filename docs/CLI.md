@@ -143,15 +143,15 @@ It follows the same zero-trust rules as the web UI, and it's small enough to rea
 
 - **Nothing is stored.** There is no session, no token cache, no config file. Each command prompts for the master password, derives the key, uses it for that one command, and forgets it. That's also why every command asks again.
 - **Secrets are never arguments.** Passwords and note bodies are typed at a hidden prompt, so they don't reach your shell history, `ps`, or `docker inspect`. Only entry names are arguments, so `cip password get github` does reveal in your history that a `github` entry exists.
-- **Redirects are never followed**, so the key-derivation header can't be replayed to another host.
+- **Redirects are never followed**, so the bearer session can't be replayed to another host.
 - **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password.
-- **You get warned about plaintext transport.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI says so before prompting, because your master password would cross the network unencrypted. Put the API behind HTTPS, or reach it over a VPN or SSH tunnel.
+- **You get warned about plaintext transport.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI says so because its authentication session would cross the network unencrypted. The master password and derived key remain local, but the API still belongs behind HTTPS, a VPN, or an SSH tunnel.
 
 A note on entry names: names containing a `/` can be created in the web UI but can't be addressed from the CLI, because the API routes on the name. The CLI reports a plain "no password found" for those rather than acting on a different entry. Rename them if you want to reach them from the terminal.
 
 ## Rate limits
 
-Unlocking the vault is rate-limited to 30 attempts an hour per IP address to slow down anyone guessing your master password. Every CLI command unlocks once, so a long batch of commands can run into it. Raise it on the backend if you hit it:
+Authentication challenges are rate-limited to 30 attempts an hour per IP address. Every CLI command authenticates once, so a long batch of commands can run into it. Raise the limit on the backend if you hit it:
 
 ```shell
 # in your .env, then: docker compose -f docker-compose.prod.yml up -d

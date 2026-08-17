@@ -15,6 +15,7 @@ import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
 import useClipboard from "../hooks/useClipboard";
+import { generateUserKeyMaterial } from "../lib/crypto";
 import PasswordField from "./PasswordField";
 
 const UsersDialog = ({ open, onClose }) => {
@@ -35,7 +36,20 @@ const UsersDialog = ({ open, onClose }) => {
     setSaving(true);
     setError("");
     try {
-      const payload = form.role === "service" ? { username: form.username, role: form.role } : form;
+      const keyMaterial =
+        form.role === "service" ? null : await generateUserKeyMaterial(form.temporary_password);
+      const payload =
+        form.role === "service"
+          ? { username: form.username, role: form.role }
+          : {
+              username: form.username,
+              role: form.role,
+              salt: keyMaterial.salt,
+              public_key: keyMaterial.publicKey,
+              encrypted_private_key: keyMaterial.encryptedPrivateKey,
+              auth_public_key: keyMaterial.authPublicKey,
+              encrypted_auth_private_key: keyMaterial.encryptedAuthPrivateKey,
+            };
       const created = await create(payload);
       setServiceToken(created.service_token || "");
       setForm({ username: "", temporary_password: "", role: "member" });
