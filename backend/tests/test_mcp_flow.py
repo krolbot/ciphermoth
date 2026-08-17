@@ -66,14 +66,11 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
         token = service.service_token
         entry_id = created.id
 
-    application = get_application(
-        api_settings=APISettings(mcp_public_url="http://127.0.0.1:8000/mcp"),
-        session_factory=maker,
-    )
+    application = get_application(api_settings=APISettings(), session_factory=maker)
     transport = httpx.ASGITransport(app=application)
     async with application.router.lifespan_context(application):
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://127.0.0.1:8000"
+            transport=transport, base_url="https://public.example"
         ) as client:
             unauthorized = await client.post(
                 "/mcp",

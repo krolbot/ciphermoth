@@ -1,10 +1,15 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import (
+    BearerAuthBackend,
+    RequireAuthMiddleware,
+)
 from mcp.server.transport_security import TransportSecuritySettings
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
@@ -12,7 +17,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
 from crud.session import AsyncSessionLocal
-from mcp_server import SessionFactory, build_mcp_server
+from mcp_server import MCP_SCOPE, ServiceTokenVerifier, SessionFactory, build_mcp_server
 from settings import APISettings, get_api_settings
 
 _SECURITY_HEADERS = {
@@ -46,8 +51,7 @@ def get_application(
     session_factory: SessionFactory = AsyncSessionLocal,
 ) -> FastAPI:
     settings = api_settings or get_api_settings()
-    public_url = str(settings.mcp_public_url)
-    mcp = build_mcp_server(session_factory, public_url=public_url)
+    mcp = build_mcp_server(session_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -84,15 +88,17 @@ def get_application(
     server.include_router(make_api_router(), prefix="/api")
     make_api_exceptions(server)
 
-    parsed_url = urlsplit(public_url)
     mcp_app = mcp.streamable_http_app(
         stateless_http=True,
         json_response=True,
         max_request_body_size=settings.mcp_max_request_bytes,
         transport_security=TransportSecuritySettings(
-            allowed_hosts=sorted({parsed_url.hostname or "", parsed_url.netloc}),
-            allowed_origins=[f"{parsed_url.scheme}://{parsed_url.netloc}"],
+            enable_dns_rebinding_protection=False
         ),
+    )
+    mcp_app = AuthenticationMiddleware(
+        AuthContextMiddleware(RequireAuthMiddleware(mcp_app, [MCP_SCOPE])),
+        backend=BearerAuthBackend(ServiceTokenVerifier(session_factory)),
     )
     server.mount("/", mcp_app)
     server.state.mcp_server = mcp

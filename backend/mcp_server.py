@@ -5,8 +5,6 @@ from typing import TypedDict
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
-from mcp.server.auth.settings import AuthSettings
-from pydantic import AnyHttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +15,7 @@ from models import UserModel
 from schemas import CustomField, Password, PasswordResponse, UserRole
 
 SessionFactory = Callable[[], AsyncSession]
-_MCP_SCOPE = "vault"
+MCP_SCOPE = "vault"
 
 
 class EntryChanges(TypedDict, total=False):
@@ -35,9 +33,8 @@ class EntryChanges(TypedDict, total=False):
 
 
 class ServiceTokenVerifier:
-    def __init__(self, session_factory: SessionFactory, issuer: str) -> None:
+    def __init__(self, session_factory: SessionFactory) -> None:
         self._session_factory = session_factory
-        self._issuer = issuer
 
     async def verify_token(self, token: str) -> AccessToken | None:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -55,8 +52,8 @@ class ServiceTokenVerifier:
             token=token,
             client_id=f"ciphermoth-service-{user.id}",
             subject=str(user.id),
-            scopes=[_MCP_SCOPE],
-            claims={"iss": self._issuer},
+            scopes=[MCP_SCOPE],
+            claims={},
         )
 
 
@@ -100,19 +97,10 @@ def _entry_detail(entry: PasswordResponse) -> dict[str, object]:
     )
 
 
-def build_mcp_server(
-    session_factory: SessionFactory, *, public_url: str
-) -> MCPServer[None]:
-    resource_url = AnyHttpUrl(public_url)
+def build_mcp_server(session_factory: SessionFactory) -> MCPServer[None]:
     server = MCPServer(
         "ciphermoth",
         description="Access explicitly shared CipherMoth vault entries.",
-        token_verifier=ServiceTokenVerifier(session_factory, public_url),
-        auth=AuthSettings(
-            issuer_url=resource_url,
-            resource_server_url=resource_url,
-            required_scopes=[_MCP_SCOPE],
-        ),
     )
 
     @server.tool()

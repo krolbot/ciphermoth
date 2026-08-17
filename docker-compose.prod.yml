@@ -30,8 +30,6 @@ services:
       CORS_ORIGINS: '["${CIPHERMOTH_FRONTEND_ORIGIN:-http://localhost:3000}"]'
       # Overrides the per-route rate limits (e.g. 200/hour) when set.
       CIPHERMOTH_RATE_LIMIT: ${CIPHERMOTH_RATE_LIMIT:-}
-      # Public MCP endpoint. Public hosts require HTTPS; local/private HTTP is allowed.
-      MCP_PUBLIC_URL: ${CIPHERMOTH_MCP_PUBLIC_URL:-http://localhost:8000/mcp}
     ports:
       - "${CIPHERMOTH_BACKEND_PORT:-8000}:80"
     volumes:
