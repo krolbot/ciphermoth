@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -25,6 +26,15 @@ const vector = {
   wrapped:
     "AYx7xZrgPIbeSRMRXX6QMVL-bQf0DWrRR_D_9udK5th05xgRiYEN6dP6r7AeFQplbWlcreC7uOiAtEgYfOr7Fsses6nokkcgk4fxCAcSriUjegBogNcNthRk_mR5izg1APcFfNEX3mPi",
 };
+
+test("production CSP permits the Argon2 WebAssembly compiler", () => {
+  const config = JSON.parse(readFileSync(new URL("../serve.json", import.meta.url)));
+  const policy = config.headers[0].headers.find(
+    ({ key }) => key === "Content-Security-Policy"
+  ).value;
+
+  assert.match(policy, /script-src[^;]*'wasm-unsafe-eval'/);
+});
 
 test("Argon2id derivation matches the backend parameters byte for byte", async () => {
   assert.equal(await deriveVaultKey(vector.password, vector.salt), vector.key);
