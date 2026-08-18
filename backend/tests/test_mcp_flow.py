@@ -135,6 +135,7 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
                 "list_entries",
                 "get_entry",
                 "create_entry",
+                "relinquish_entry",
                 "update_entry",
             ]
 
@@ -315,6 +316,50 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
                 "created-by-agent",
             }
 
+            relinquished = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "relinquish_entry",
+                        "arguments": {"entry_id": created_id},
+                    },
+                },
+                protocol_version,
+            )
+            assert relinquished.json()["result"]["structuredContent"] == {
+                "entry_id": created_id,
+                "relinquished": True,
+            }
+            async with maker() as session:
+                assert (
+                    await session.get(PasswordAccessModel, (created_id, owner_model.id))
+                ) is not None
+                assert (
+                    await session.get(PasswordAccessModel, (created_id, service.id))
+                ) is None
+
+            listed_after_relinquish = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 12,
+                    "method": "tools/call",
+                    "params": {"name": "list_entries", "arguments": {}},
+                },
+                protocol_version,
+            )
+            assert [
+                entry["name"]
+                for entry in listed_after_relinquish.json()["result"][
+                    "structuredContent"
+                ]["result"]
+            ] == ["shared"]
+
             async with maker() as session:
                 await AuthCRUD(session).update_user(
                     owner_context.user, service.id, active=False
@@ -324,7 +369,7 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
             revoked = await _post_mcp(
                 client,
                 token,
-                {"jsonrpc": "2.0", "id": 11, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 13, "method": "tools/list"},
                 protocol_version,
             )
             assert revoked.status_code == 401

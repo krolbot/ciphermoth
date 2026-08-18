@@ -133,6 +133,19 @@ def build_mcp_server(session_factory: SessionFactory) -> MCPServer[None]:
                 raise
 
     @server.tool()
+    async def relinquish_entry(entry_id: int) -> dict[str, object]:
+        """Remove this service identity's access while preserving the owner's entry."""
+        async with session_factory() as session:
+            try:
+                context = await _service_context(session)
+                await PasswordCRUD(session).relinquish_password(entry_id, context)
+                await session.commit()
+                return {"entry_id": entry_id, "relinquished": True}
+            except Exception:
+                await session.rollback()
+                raise
+
+    @server.tool()
     async def update_entry(entry_id: int, changes: EntryChanges) -> dict[str, object]:
         """Update fields on one entry when this service identity has write access."""
         if not changes:

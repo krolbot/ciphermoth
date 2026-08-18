@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from api.exceptions import Forbidden, NotFound, TypesMismatchError
 from crud.auth import AuthContext
@@ -226,6 +226,22 @@ class PasswordCRUD(BaseCRUD):
         grant = await self._get_grant(password_id, context)
         counts = await self._attachment_counts([password_id])
         return self._response(grant, counts.get(password_id, 0))
+
+    async def relinquish_password(self, password_id: int, context: AuthContext) -> None:
+        access = await self.session.get(
+            PasswordAccessModel, (password_id, context.user.id)
+        )
+        if access is None:
+            raise NotFound("Password not found.")
+        if access.permission == EntryPermission.owner:
+            raise Forbidden("Owners cannot relinquish their own vault entry.")
+        await self.session.execute(
+            delete(PasswordAccessModel).where(
+                PasswordAccessModel.password_id == password_id,
+                PasswordAccessModel.user_id == context.user.id,
+            )
+        )
+        await self.session.flush()
 
     async def update_password(
         self, password_id: int, new_password: Password, context: AuthContext
