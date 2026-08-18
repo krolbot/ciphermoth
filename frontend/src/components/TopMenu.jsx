@@ -22,6 +22,7 @@ import apiClient from "../api/client";
 import { getCurrentUser, isAuth, removeKeyDerivation } from "../utils";
 import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
 import { GLOW } from "../lib/brand";
+import { VAULT_HEALTH_ACTION_ID } from "../lib/domSlots";
 import EnvBadge from "./EnvBadge";
 import LanguageSwitcher from "./LanguageSwitcher";
 import MothIcon from "./MothIcon";
@@ -133,6 +134,7 @@ const TopMenu = () => {
                   />
                 </Tooltip>
               )}
+              <Box id={VAULT_HEALTH_ACTION_ID} sx={{ display: "flex", alignItems: "center" }} />
               <LanguageSwitcher />
               {user?.role === "admin" && (
                 <Tooltip title={t("users.title")}>

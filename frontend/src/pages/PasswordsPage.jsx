@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Box,
   Button,
   CircularProgress,
+  IconButton,
   InputAdornment,
   MenuItem,
   Pagination,
   Paper,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
@@ -31,6 +34,7 @@ import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
 import VaultEntryCard from "../components/vault/VaultEntryCard";
 import useClipboard from "../hooks/useClipboard";
+import { VAULT_HEALTH_ACTION_ID } from "../lib/domSlots";
 
 const buildSubtitle = (t, loading, passwords) => {
   if (loading) return t("common.labels.loading");
@@ -86,11 +90,16 @@ const PasswordsPage = () => {
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [healthActionTarget, setHealthActionTarget] = useState(null);
 
   useEffect(() => {
     get();
     getTrash();
   }, [get, getTrash]);
+
+  useEffect(() => {
+    setHealthActionTarget(document.getElementById(VAULT_HEALTH_ACTION_ID));
+  }, []);
 
   useEffect(() => {
     if (error) enqueueSnackbar(error, { variant: "error" });
@@ -275,17 +284,6 @@ const PasswordsPage = () => {
         >
           <Button
             variant="outlined"
-            startIcon={<HealthAndSafetyIcon />}
-            onClick={() => setHealthOpen(true)}
-            disabled={passwords.length === 0}
-            sx={COMPACT_ACTION_SX}
-          >
-            <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
-              {t("vault.health")}
-            </Box>
-          </Button>
-          <Button
-            variant="outlined"
             startIcon={<DownloadIcon />}
             onClick={() => setBackupOpen(true)}
             disabled={passwords.length === 0}
@@ -445,6 +443,23 @@ const PasswordsPage = () => {
           openEdit(row);
         }}
       />
+      {healthActionTarget &&
+        createPortal(
+          <Tooltip title={t("vault.health")}>
+            <span>
+              <IconButton
+                color="inherit"
+                aria-label={t("vault.health")}
+                disabled={passwords.length === 0}
+                onClick={() => setHealthOpen(true)}
+                sx={{ p: 1 }}
+              >
+                <HealthAndSafetyIcon />
+              </IconButton>
+            </span>
+          </Tooltip>,
+          healthActionTarget
+        )}
       <ConfirmDialog
         open={!!deleteTarget}
         title={t("vault.moveToTrash.title")}
