@@ -11,6 +11,7 @@ from schemas import (
     ShareGrant,
     ShareUpdatePayload,
     SimpleDetailSchema,
+    TrashPurgeResponse,
 )
 
 router = APIRouter(tags=["passwords"])
@@ -28,6 +29,13 @@ async def get_trash(
     crud: EncryptedPasswordCRUDDep, context: VaultContextDep
 ) -> list[EncryptedPasswordResponse]:
     return await crud.list_passwords(context, deleted=True)
+
+
+@router.delete("/trash", response_model=TrashPurgeResponse)
+async def empty_trash(
+    crud: EncryptedPasswordCRUDDep, context: VaultContextDep
+) -> TrashPurgeResponse:
+    return TrashPurgeResponse(deleted_count=await crud.empty_trash(context))
 
 
 @router.post("", response_model=EncryptedPasswordResponse)

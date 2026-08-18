@@ -67,6 +67,7 @@ const PasswordsPage = () => {
     getTrash,
     restore,
     purge,
+    emptyTrash,
     syncServiceAccess,
   } = useStoreActions((actions) => actions.ciphermothModels.passwords);
   const { error, loading, passwords, trash } = useStoreState(
@@ -182,6 +183,13 @@ const PasswordsPage = () => {
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
+  };
+
+  const handleEmptyTrash = async () => {
+    const deletedCount = await emptyTrash();
+    enqueueSnackbar(t("trashDialog.deletedAll", { count: deletedCount }), {
+      variant: "success",
+    });
   };
 
   const handleBackup = async (masterPassword) => {
@@ -458,6 +466,7 @@ const PasswordsPage = () => {
         onClose={() => setTrashOpen(false)}
         onRestore={handleRestore}
         onPurge={handlePurge}
+        onPurgeAll={handleEmptyTrash}
       />
     </Box>
   );

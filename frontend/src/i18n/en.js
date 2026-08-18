@@ -350,6 +350,14 @@ const en = {
     deleteForever: "Delete forever",
     deleteForeverTitle: "Delete Forever",
     deleteForeverMessage: "Permanently delete <strong>{{name}}</strong>? This cannot be undone.",
+    deleteAll: "Delete all",
+    deleteAllTitle: "Empty trash?",
+    deleteAllMessage:
+      "All of your trashed entries will be permanently deleted: {{count}}. This cannot be undone.",
+    deletedAll_one: "Permanently deleted {{count}} entry.",
+    deletedAll_few: "Permanently deleted {{count}} entries.",
+    deletedAll_many: "Permanently deleted {{count}} entries.",
+    deletedAll_other: "Permanently deleted {{count}} entries.",
   },
   autoLogout: {
     countdown: "You'll be logged out in {{seconds}}s due to inactivity.",

@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RestoreFromTrashIcon from "@mui/icons-material/RestoreFromTrash";
 import { Trans, useTranslation } from "react-i18next";
 
@@ -23,13 +24,20 @@ const formatDeleted = (iso, language) => {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString(language);
 };
 
-const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
+const TrashDialog = ({ open, trash, onClose, onRestore, onPurge, onPurgeAll }) => {
   const { t, i18n } = useTranslation();
   const [purgeTarget, setPurgeTarget] = useState(null);
+  const [purgeAllOpen, setPurgeAllOpen] = useState(false);
+  const ownedCount = trash.filter((entry) => entry.access === "owner").length;
 
   const handlePurge = async () => {
     await onPurge(purgeTarget.id);
     setPurgeTarget(null);
+  };
+
+  const handlePurgeAll = async () => {
+    await onPurgeAll();
+    setPurgeAllOpen(false);
   };
 
   return (
@@ -77,23 +85,33 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
                       <RestoreFromTrashIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
-                  <Tooltip title={t("trashDialog.deleteForever")}>
-                    <IconButton
-                      aria-label={t("trashDialog.deleteForever")}
-                      size="small"
-                      color="error"
-                      onClick={() => setPurgeTarget(entry)}
-                    >
-                      <DeleteForeverIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
+                  {entry.access === "owner" && (
+                    <Tooltip title={t("trashDialog.deleteForever")}>
+                      <IconButton
+                        aria-label={t("trashDialog.deleteForever")}
+                        size="small"
+                        color="error"
+                        onClick={() => setPurgeTarget(entry)}
+                      >
+                        <DeleteForeverIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                 </Stack>
               </Paper>
             ))}
           </Stack>
         )}
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ justifyContent: "space-between", px: { xs: 1.5, sm: 3 } }}>
+        <Button
+          color="error"
+          startIcon={<DeleteSweepIcon />}
+          disabled={ownedCount === 0}
+          onClick={() => setPurgeAllOpen(true)}
+        >
+          {t("trashDialog.deleteAll")}
+        </Button>
         <Button onClick={onClose}>{t("common.actions.close")}</Button>
       </DialogActions>
 
@@ -110,6 +128,17 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
           values={{ name: purgeTarget?.password_name }}
           components={{ strong: <strong /> }}
         />
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={purgeAllOpen}
+        title={t("trashDialog.deleteAllTitle")}
+        confirmText={t("trashDialog.deleteAll")}
+        confirmColor="error"
+        onClose={() => setPurgeAllOpen(false)}
+        onConfirm={handlePurgeAll}
+      >
+        {t("trashDialog.deleteAllMessage", { count: ownedCount })}
       </ConfirmDialog>
     </Dialog>
   );

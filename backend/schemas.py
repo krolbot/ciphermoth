@@ -36,6 +36,10 @@ class SimpleDetailSchema(BaseModel):
     detail: str
 
 
+class TrashPurgeResponse(BaseModel):
+    deleted_count: int
+
+
 class MetaResponse(BaseModel):
     version: str
 

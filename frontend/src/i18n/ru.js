@@ -348,6 +348,14 @@ const ru = {
     deleteForeverTitle: "Удалить навсегда?",
     deleteForeverMessage:
       "Удалить <strong>{{name}}</strong> навсегда? Вернуть запись уже не получится.",
+    deleteAll: "Удалить всё",
+    deleteAllTitle: "Очистить корзину?",
+    deleteAllMessage:
+      "Будут навсегда удалены все ваши записи в корзине: {{count}}. Отменить это действие нельзя.",
+    deletedAll_one: "Навсегда удалена {{count}} запись.",
+    deletedAll_few: "Навсегда удалены {{count}} записи.",
+    deletedAll_many: "Навсегда удалено {{count}} записей.",
+    deletedAll_other: "Навсегда удалено {{count}} записи.",
   },
   autoLogout: {
     countdown: "До выхода из-за бездействия: {{seconds}} с",

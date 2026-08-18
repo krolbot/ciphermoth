@@ -139,6 +139,16 @@ const Passwords = {
     }
   }),
 
+  emptyTrash: thunk(async (actions) => {
+    try {
+      const { data } = await apiClient.delete("/passwords/trash");
+      await actions.getTrash();
+      return data.deleted_count;
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.deletePassword")));
+    }
+  }),
+
   toggleFavorite: thunk(async (actions, { passwordId, favorite }) => {
     try {
       const { data: record } = await apiClient.get(`/passwords/${passwordId}`);

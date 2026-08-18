@@ -281,6 +281,20 @@ class EncryptedPasswordCRUD:
             raise Forbidden("Only the owner can permanently delete a password.")
         await self.session.delete(entry)
 
+    async def empty_trash(self, context: AuthContext) -> int:
+        deleted_ids = (
+            await self.session.scalars(
+                delete(PasswordModel)
+                .where(
+                    PasswordModel.owner_id == context.user.id,
+                    PasswordModel.deleted.is_not(None),
+                )
+                .returning(PasswordModel.id)
+            )
+        ).all()
+        await self.session.flush()
+        return len(deleted_ids)
+
     async def share(
         self,
         context: AuthContext,

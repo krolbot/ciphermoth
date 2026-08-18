@@ -202,3 +202,58 @@ async def test_human_create_persists_only_opaque_vault_data(
     await EncryptedPasswordCRUD(session).delete(context, created.id)
     await session.flush()
     assert await session.get(PasswordModel, created.id) is None
+
+
+@pytest.mark.asyncio
+async def test_empty_trash_deletes_only_current_owners_trashed_entries(
+    session: AsyncSession,
+) -> None:
+    users = [
+        UserModel(
+            username=name,
+            role=UserRole.admin,
+            active=True,
+            must_change_password=False,
+            salt=(name * 16).encode()[:16],
+            public_key=X25519PrivateKey.generate().public_key().public_bytes_raw(),
+            encrypted_private_key=b"encrypted-private-key",
+        )
+        for name in ("owner", "other")
+    ]
+    session.add_all(users)
+    await session.flush()
+
+    async def create_for(user: UserModel) -> int:
+        key = generate_entry_key()
+        result = await EncryptedPasswordCRUD(session).create(
+            AuthContext(user=user, private_key=None, token_hash="test-session"),
+            encrypted_payload=encrypt(key, b"opaque payload").decode(),
+            wrapped_key=encoded(wrap_entry_key(user.public_key, key)),
+        )
+        return result.id
+
+    owner_context = AuthContext(
+        user=users[0], private_key=None, token_hash="owner-session"
+    )
+    active_id = await create_for(users[0])
+    trashed_ids = [await create_for(users[0]), await create_for(users[0])]
+    other_trashed_id = await create_for(users[1])
+    for password_id in trashed_ids:
+        await EncryptedPasswordCRUD(session).set_deleted(
+            owner_context, password_id, deleted=True
+        )
+    await EncryptedPasswordCRUD(session).set_deleted(
+        AuthContext(user=users[1], private_key=None, token_hash="other-session"),
+        other_trashed_id,
+        deleted=True,
+    )
+
+    assert await EncryptedPasswordCRUD(session).empty_trash(owner_context) == 2
+    assert await session.get(PasswordModel, active_id) is not None
+    assert await session.get(PasswordModel, other_trashed_id) is not None
+    assert [
+        await session.get(PasswordModel, password_id) for password_id in trashed_ids
+    ] == [
+        None,
+        None,
+    ]
