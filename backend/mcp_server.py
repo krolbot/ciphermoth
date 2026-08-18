@@ -133,6 +133,19 @@ def build_mcp_server(session_factory: SessionFactory) -> MCPServer[None]:
                 raise
 
     @server.tool()
+    async def delete_entry(entry_id: int) -> dict[str, object]:
+        """Move one writable vault entry to trash so its human owner can restore it."""
+        async with session_factory() as session:
+            try:
+                context = await _service_context(session)
+                await PasswordCRUD(session).delete_password(entry_id, context)
+                await session.commit()
+                return {"entry_id": entry_id, "moved_to_trash": True}
+            except Exception:
+                await session.rollback()
+                raise
+
+    @server.tool()
     async def relinquish_entry(entry_id: int) -> dict[str, object]:
         """Remove this service identity's access while preserving the owner's entry."""
         async with session_factory() as session:

@@ -9,7 +9,13 @@ from crud.auth import AuthContext, AuthCRUD
 from crud.encrypted_password import EncryptedPasswordCRUD
 from helpers import encrypt, generate_entry_key, wrap_entry_key
 from main import get_application
-from models import BaseModel, InstanceStateModel, PasswordAccessModel, UserModel
+from models import (
+    BaseModel,
+    InstanceStateModel,
+    PasswordAccessModel,
+    PasswordModel,
+    UserModel,
+)
 from schemas import Password, SharePermission, UserRole
 from settings import APISettings
 
@@ -135,6 +141,7 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
                 "list_entries",
                 "get_entry",
                 "create_entry",
+                "delete_entry",
                 "relinquish_entry",
                 "update_entry",
             ]
@@ -202,6 +209,22 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
                 protocol_version,
             )
             assert denied.json()["result"]["isError"] is True
+
+            delete_denied = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 61,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "delete_entry",
+                        "arguments": {"entry_id": entry_id},
+                    },
+                },
+                protocol_version,
+            )
+            assert delete_denied.json()["result"]["isError"] is True
 
             async with maker() as session:
                 await EncryptedPasswordCRUD(session).share(
@@ -359,6 +382,48 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
                     "structuredContent"
                 ]["result"]
             ] == ["shared"]
+
+            deleted = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 121,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "delete_entry",
+                        "arguments": {"entry_id": entry_id},
+                    },
+                },
+                protocol_version,
+            )
+            assert deleted.json()["result"]["structuredContent"] == {
+                "entry_id": entry_id,
+                "moved_to_trash": True,
+            }
+            async with maker() as session:
+                deleted_model = await session.get(PasswordModel, entry_id)
+                assert deleted_model is not None
+                assert deleted_model.deleted is not None
+                assert (
+                    await session.get(PasswordAccessModel, (entry_id, owner_model.id))
+                ) is not None
+
+            listed_after_delete = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 122,
+                    "method": "tools/call",
+                    "params": {"name": "list_entries", "arguments": {}},
+                },
+                protocol_version,
+            )
+            assert (
+                listed_after_delete.json()["result"]["structuredContent"]["result"]
+                == []
+            )
 
             async with maker() as session:
                 await AuthCRUD(session).update_user(

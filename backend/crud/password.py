@@ -243,6 +243,13 @@ class PasswordCRUD(BaseCRUD):
         )
         await self.session.flush()
 
+    async def delete_password(self, password_id: int, context: AuthContext) -> None:
+        grant = await self._get_grant(password_id, context, permission="write")
+        now = datetime.now(UTC).replace(tzinfo=None)
+        grant.model.deleted = now
+        grant.model.updated = now
+        await self.session.flush()
+
     async def update_password(
         self, password_id: int, new_password: Password, context: AuthContext
     ) -> PasswordUpdate:
