@@ -360,7 +360,10 @@ const en = {
   },
   sharing: {
     agentAccess: "Agent access",
+    addAccess: "Add access",
+    currentAccess: "Current access",
     noAgents: "No service agents are available.",
+    noAvailableTargets: "No other users are available.",
     none: "No access",
     title: "Share {{name}}",
     manage: "Manage sharing",

@@ -358,7 +358,10 @@ const ru = {
   },
   sharing: {
     agentAccess: "Доступ агента",
+    addAccess: "Добавить доступ",
+    currentAccess: "Текущий доступ",
     noAgents: "Нет доступных служебных агентов.",
+    noAvailableTargets: "Нет других доступных пользователей.",
     none: "Нет доступа",
     title: "Открыть доступ к {{name}}",
     manage: "Настроить доступ",
