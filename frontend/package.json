@@ -10,7 +10,6 @@
     "@fontsource/space-mono": "^5.2.9",
     "@mui/icons-material": "^9.2.0",
     "@mui/material": "^9.2.0",
-    "@mui/x-data-grid": "^9.8.0",
     "@zip.js/zip.js": "^2.8.51",
     "axios": "^1.18.1",
     "easy-peasy": "^6.1.1",

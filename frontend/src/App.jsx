@@ -52,7 +52,7 @@ const AppContent = () => {
   }
 
   return (
-    <Box sx={{ display: "flex" }}>
+    <Box sx={{ display: "flex", width: "100%", maxWidth: "100vw", overflowX: "hidden" }}>
       <CssBaseline />
       <TopMenu />
       <Box
@@ -60,12 +60,19 @@ const AppContent = () => {
         sx={{
           bgcolor: "background.default",
           flexGrow: 1,
+          minWidth: 0,
+          width: "100%",
+          maxWidth: "100%",
           minHeight: "100vh",
-          overflow: "auto",
+          overflowX: "hidden",
+          overflowY: "auto",
         }}
       >
         <Toolbar />
-        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Container
+          maxWidth="lg"
+          sx={{ mt: { xs: 2.5, sm: 4 }, mb: 4, px: { xs: 2, sm: 3 }, pb: { xs: 7, sm: 3 } }}
+        >
           {appRoutes}
         </Container>
       </Box>

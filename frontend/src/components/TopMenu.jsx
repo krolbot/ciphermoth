@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import PeopleIcon from "@mui/icons-material/People";
+import LogoutIcon from "@mui/icons-material/Logout";
 import SettingsIcon from "@mui/icons-material/Settings";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import { useStoreActions, useStoreState } from "easy-peasy";
@@ -67,10 +68,10 @@ const TopMenu = () => {
       position="absolute"
       sx={IS_DEV ? { borderBottom: `3px solid ${DEV_ACCENT}` } : undefined}
     >
-      <Container maxWidth="lg">
-        <Toolbar disableGutters>
-          <Box sx={{ flexGrow: 1, display: "flex", alignItems: "center", gap: 1 }}>
-            <Box sx={{ width: 24, height: 24, display: "flex", color: "inherit" }}>
+      <Container maxWidth="lg" sx={{ px: { xs: 1.5, sm: 3 } }}>
+        <Toolbar disableGutters sx={{ minHeight: { xs: 64, sm: 72 }, gap: 0.25 }}>
+          <Box sx={{ flexGrow: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 0.75 }}>
+            <Box sx={{ width: 22, height: 22, display: "flex", flexShrink: 0, color: "inherit" }}>
               <MothIcon
                 width="100%"
                 height="100%"
@@ -81,19 +82,22 @@ const TopMenu = () => {
               component="h1"
               variant="h6"
               noWrap
-              sx={{ color: "inherit", fontWeight: 600 }}
+              sx={{ color: "inherit", fontWeight: 600, fontSize: { xs: 18, sm: 20 } }}
             >
               Cipher
               <Box component="span" sx={{ color: GLOW }}>
                 Moth
               </Box>
             </Typography>
-            <EnvBadge />
+            <Box sx={{ display: { xs: "none", sm: "block" } }}>
+              <EnvBadge />
+            </Box>
             {version && (
               <Tooltip arrow title={t("topMenu.runningVersion")}>
                 <Typography
                   component="span"
                   sx={{
+                    display: { xs: "none", md: "inline" },
                     fontFamily: "'Space Mono', monospace",
                     fontSize: 10,
                     letterSpacing: "0.08em",
@@ -117,6 +121,7 @@ const TopMenu = () => {
                     size="small"
                     onClick={() => setUpdateOpen(true)}
                     sx={{
+                      display: { xs: "none", sm: "inline-flex" },
                       mr: 1,
                       bgcolor: GLOW,
                       color: "#0b0b0c",
@@ -131,19 +136,26 @@ const TopMenu = () => {
               <LanguageSwitcher />
               {user?.role === "admin" && (
                 <Tooltip title={t("users.title")}>
-                  <IconButton color="inherit" onClick={() => setUsersOpen(true)} sx={{ mr: 0.5 }}>
+                  <IconButton color="inherit" onClick={() => setUsersOpen(true)} sx={{ p: 1 }}>
                     <PeopleIcon />
                   </IconButton>
                 </Tooltip>
               )}
               <Tooltip title={t("topMenu.settings")}>
-                <IconButton color="inherit" onClick={() => setSettingsOpen(true)} sx={{ mr: 0.5 }}>
+                <IconButton color="inherit" onClick={() => setSettingsOpen(true)} sx={{ p: 1 }}>
                   <SettingsIcon />
                 </IconButton>
               </Tooltip>
-              <Button color="inherit" onClick={handleLogout}>
-                {t("auth.logOut")}
-              </Button>
+              <Tooltip title={t("auth.logOut")}>
+                <IconButton
+                  color="inherit"
+                  aria-label={t("auth.logOut")}
+                  onClick={handleLogout}
+                  sx={{ p: 1 }}
+                >
+                  <LogoutIcon />
+                </IconButton>
+              </Tooltip>
               <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
               <UsersDialog open={usersOpen} onClose={() => setUsersOpen(false)} />
               <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} />

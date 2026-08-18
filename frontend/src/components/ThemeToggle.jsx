@@ -32,11 +32,11 @@ const ThemeToggle = ({ zIndex = 1200 }) => {
         className={flying ? "cmFlying" : undefined}
         sx={{
           position: "fixed",
-          bottom: 24,
-          right: 24,
+          bottom: { xs: 16, sm: 24 },
+          right: { xs: 16, sm: 24 },
           zIndex,
-          width: 52,
-          height: 52,
+          width: { xs: 44, sm: 52 },
+          height: { xs: 44, sm: 52 },
           color: GLOW,
           bgcolor: dark ? "rgba(20,20,22,0.72)" : "rgba(255,255,255,0.82)",
           border: "1px solid",

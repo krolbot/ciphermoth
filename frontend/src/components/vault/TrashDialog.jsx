@@ -1,87 +1,31 @@
 import { useState } from "react";
 import {
-  Box,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   IconButton,
+  Paper,
+  Stack,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { DataGrid } from "@mui/x-data-grid";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import RestoreFromTrashIcon from "@mui/icons-material/RestoreFromTrash";
 import { Trans, useTranslation } from "react-i18next";
 
 import ConfirmDialog from "../ConfirmDialog";
-import { gridBaseSx } from "./gridStyles";
 
 const formatDeleted = (iso, language) => {
-  if (!iso) return "-";
+  if (!iso) return "—";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString(language);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString(language);
 };
-
-const buildColumns = ({ t, language, onRestore, onPurge }) => [
-  { field: "password_name", headerName: t("common.fields.name"), flex: 1, minWidth: 140 },
-  {
-    field: "username",
-    headerName: t("common.fields.usernameEmail"),
-    flex: 1,
-    minWidth: 150,
-    renderCell: (params) => (
-      <Typography variant="body2" sx={{ color: params.value ? "text.primary" : "text.disabled" }}>
-        {params.value || "-"}
-      </Typography>
-    ),
-  },
-  {
-    field: "deleted",
-    headerName: t("trashDialog.deleted"),
-    flex: 1,
-    minWidth: 170,
-    renderCell: (params) => (
-      <Typography variant="body2" sx={{ color: "text.secondary" }}>
-        {formatDeleted(params.value, language)}
-      </Typography>
-    ),
-  },
-  {
-    field: "actions",
-    headerName: t("common.fields.actions"),
-    width: 110,
-    sortable: false,
-    align: "center",
-    headerAlign: "center",
-    renderCell: (params) => (
-      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-        <Tooltip title={t("trashDialog.restore")}>
-          <IconButton size="small" color="primary" onClick={() => onRestore(params.row.id)}>
-            <RestoreFromTrashIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title={t("trashDialog.deleteForever")}>
-          <IconButton size="small" color="error" onClick={() => onPurge(params.row)}>
-            <DeleteForeverIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
-    ),
-  },
-];
 
 const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
   const { t, i18n } = useTranslation();
   const [purgeTarget, setPurgeTarget] = useState(null);
-
-  const columns = buildColumns({
-    t,
-    language: i18n.resolvedLanguage,
-    onRestore,
-    onPurge: setPurgeTarget,
-  });
 
   const handlePurge = async () => {
     await onPurge(purgeTarget.id);
@@ -89,27 +33,64 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{t("vault.trash")}</DialogTitle>
-      <DialogContent>
+      <DialogContent dividers sx={{ px: { xs: 1.5, sm: 3 } }}>
         {trash.length === 0 ? (
           <Typography variant="body2" sx={{ color: "text.secondary", py: 4, textAlign: "center" }}>
             {t("trashDialog.empty")}
           </Typography>
         ) : (
-          <DataGrid
-            rows={trash}
-            columns={columns}
-            getRowId={(row) => row.id}
-            disableRowSelectionOnClick
-            density="compact"
-            rowHeight={44}
-            columnHeaderHeight={42}
-            autoHeight
-            pageSizeOptions={[10, 25]}
-            initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-            sx={gridBaseSx}
-          />
+          <Stack spacing={1}>
+            {trash.map((entry) => (
+              <Paper
+                key={entry.id}
+                variant="outlined"
+                sx={{
+                  p: 1.5,
+                  borderRadius: 2,
+                  display: "grid",
+                  gridTemplateColumns: { xs: "minmax(0, 1fr) auto", sm: "minmax(0, 1fr) auto" },
+                  gap: 1,
+                  alignItems: "center",
+                }}
+              >
+                <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                  <Typography
+                    sx={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}
+                    noWrap
+                  >
+                    {entry.password_name}
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }} noWrap>
+                    {entry.username || "—"} · {formatDeleted(entry.deleted, i18n.resolvedLanguage)}
+                  </Typography>
+                </Stack>
+                <Stack direction="row" spacing={0.25}>
+                  <Tooltip title={t("trashDialog.restore")}>
+                    <IconButton
+                      aria-label={t("trashDialog.restore")}
+                      size="small"
+                      color="primary"
+                      onClick={() => onRestore(entry.id)}
+                    >
+                      <RestoreFromTrashIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={t("trashDialog.deleteForever")}>
+                    <IconButton
+                      aria-label={t("trashDialog.deleteForever")}
+                      size="small"
+                      color="error"
+                      onClick={() => setPurgeTarget(entry)}
+                    >
+                      <DeleteForeverIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
         )}
       </DialogContent>
       <DialogActions>

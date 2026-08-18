@@ -5,11 +5,12 @@ import {
   CircularProgress,
   InputAdornment,
   MenuItem,
+  Pagination,
+  Paper,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
-import { DataGrid } from "@mui/x-data-grid";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -28,8 +29,7 @@ import ImportDialog from "../components/vault/ImportDialog";
 import PasswordFormDialog from "../components/vault/PasswordFormDialog";
 import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
-import { createColumns } from "../components/vault/columns";
-import { gridBaseSx } from "../components/vault/gridStyles";
+import VaultEntryCard from "../components/vault/VaultEntryCard";
 import useClipboard from "../hooks/useClipboard";
 
 const buildSubtitle = (t, loading, passwords) => {
@@ -40,6 +40,14 @@ const buildSubtitle = (t, loading, passwords) => {
   if (passwords.every((p) => p.backed_up)) return t("vault.subtitle.backedUp", { countText });
   if (passwords.some((p) => p.backed_up)) return t("vault.subtitle.outdated", { countText });
   return t("vault.subtitle.noBackup", { countText });
+};
+
+const PAGE_SIZE = 12;
+const COMPACT_ACTION_SX = {
+  minWidth: { xs: 44, sm: "auto" },
+  minHeight: 40,
+  px: { xs: 1, sm: 1.75 },
+  "& .MuiButton-startIcon": { m: { xs: 0, sm: "0 8px 0 -4px" } },
 };
 
 const PasswordsPage = () => {
@@ -76,6 +84,7 @@ const PasswordsPage = () => {
   const [trashOpen, setTrashOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     get();
@@ -180,21 +189,6 @@ const PasswordsPage = () => {
     enqueueSnackbar(t("vault.messages.backupCreated"), { variant: "success" });
   };
 
-  const columns = useMemo(
-    () =>
-      createColumns({
-        t,
-        visibleRows,
-        onToggleVisibility: toggleVisibility,
-        onToggleFavorite: handleToggleFavorite,
-        onCopy: copy,
-        onEdit: openEdit,
-        onDelete: setDeleteTarget,
-        onShare: setShareTarget,
-      }),
-    [t, visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit]
-  );
-
   const folderOptions = useMemo(
     () =>
       [...new Set(passwords.map((p) => p.folder).filter(Boolean))].sort((a, b) =>
@@ -231,68 +225,112 @@ const PasswordsPage = () => {
     );
   }, [passwords, search, activeFolder, i18n.resolvedLanguage]);
 
+  useEffect(() => setPage(1), [search, activeFolder]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredPasswords.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedPasswords = filteredPasswords.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
   const subtitle = useMemo(() => buildSubtitle(t, loading, passwords), [t, loading, passwords]);
   const isEmpty = !loading && passwords.length === 0;
 
   return (
-    <Box>
+    <Box sx={{ minWidth: 0, maxWidth: "100%" }}>
       <Stack
-        direction="row"
-        sx={{ justifyContent: "space-between", alignItems: "flex-start", mb: 2.5 }}
+        direction={{ xs: "column", md: "row" }}
+        spacing={{ xs: 2, md: 3 }}
+        sx={{
+          justifyContent: "space-between",
+          alignItems: { xs: "stretch", md: "flex-start" },
+          mb: 2.5,
+        }}
       >
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            variant="h4"
+            sx={{ fontWeight: 700, lineHeight: 1.1, fontSize: { xs: 32, sm: 38 } }}
+          >
             {t("vault.title")}
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
             {subtitle}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
+        <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{ flexWrap: "wrap", justifyContent: { xs: "flex-start", md: "flex-end" } }}
+        >
           <Button
             variant="outlined"
             startIcon={<HealthAndSafetyIcon />}
             onClick={() => setHealthOpen(true)}
             disabled={passwords.length === 0}
+            sx={COMPACT_ACTION_SX}
           >
-            {t("vault.health")}
+            <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+              {t("vault.health")}
+            </Box>
           </Button>
           <Button
             variant="outlined"
             startIcon={<DownloadIcon />}
             onClick={() => setBackupOpen(true)}
             disabled={passwords.length === 0}
+            sx={COMPACT_ACTION_SX}
           >
-            {t("vault.backup")}
+            <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+              {t("vault.backup")}
+            </Box>
           </Button>
           <Button
             variant="outlined"
             startIcon={<UploadFileIcon />}
             onClick={() => setImportOpen(true)}
+            sx={COMPACT_ACTION_SX}
           >
-            {t("vault.import")}
+            <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+              {t("vault.import")}
+            </Box>
           </Button>
           <Button
             variant="outlined"
             startIcon={<DeleteOutlineIcon />}
             onClick={() => setTrashOpen(true)}
+            sx={COMPACT_ACTION_SX}
           >
-            {trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash")}
+            <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+              {trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash")}
+            </Box>
           </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={openAdd}>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={openAdd}
+            sx={{ minHeight: 40 }}
+          >
             {t("common.actions.add")}
           </Button>
         </Stack>
       </Stack>
 
       {!isEmpty && (
-        <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: "center" }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1.25}
+          sx={{ mb: 2, alignItems: "stretch" }}
+        >
           <TextField
             size="small"
             placeholder={t("vault.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            sx={{ width: 320 }}
+            fullWidth
+            sx={{ flex: 1 }}
             slotProps={{
               input: {
                 startAdornment: (
@@ -310,7 +348,7 @@ const PasswordsPage = () => {
               label={t("common.fields.folder")}
               value={activeFolder}
               onChange={(e) => setFolderFilter(e.target.value)}
-              sx={{ width: 200 }}
+              sx={{ width: { xs: "100%", sm: 220 }, flexShrink: 0 }}
             >
               <MenuItem value="">{t("vault.allFolders")}</MenuItem>
               {folderOptions.map((f) => (
@@ -331,58 +369,43 @@ const PasswordsPage = () => {
 
       {isEmpty && <EmptyVault onAdd={openAdd} />}
 
-      {!loading && !isEmpty && (
-        <DataGrid
-          rows={filteredPasswords}
-          columns={columns}
-          getRowId={(row) => row.id}
-          disableRowSelectionOnClick
-          density="compact"
-          rowHeight={44}
-          columnHeaderHeight={42}
-          pageSizeOptions={[10, 25, 50]}
-          initialState={{
-            pagination: { paginationModel: { pageSize: 10 } },
-          }}
-          slots={{
-            noRowsOverlay: () => (
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  height: "100%",
-                }}
-              >
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  {t("vault.noSearchResults", { search: search.trim() })}
-                </Typography>
-              </Box>
-            ),
-          }}
-          sx={{
-            ...gridBaseSx,
-            bgcolor: "background.paper",
-            borderRadius: 2.5,
-            "& .MuiDataGrid-columnHeaders": { borderColor: "divider" },
-            "& .MuiDataGrid-columnHeader": { bgcolor: "background.paper" },
-            "& .MuiDataGrid-columnHeaderTitle": {
-              fontWeight: 600,
-              color: "text.secondary",
-            },
-            "& .MuiDataGrid-row:hover": { bgcolor: "action.hover" },
-            "& .rowHoverActions": {
-              opacity: 0,
-              pointerEvents: "none",
-              transition: "opacity 120ms ease",
-            },
-            "& .MuiDataGrid-row:hover .rowHoverActions, & .MuiDataGrid-row:has(:focus-visible) .rowHoverActions":
-              {
-                opacity: 1,
-                pointerEvents: "auto",
-              },
-          }}
-        />
+      {!loading && !isEmpty && filteredPasswords.length === 0 && (
+        <Paper variant="outlined" sx={{ p: 4, textAlign: "center", borderRadius: 2.5 }}>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            {t("vault.noSearchResults", { search: search.trim() })}
+          </Typography>
+        </Paper>
+      )}
+
+      {!loading && pagedPasswords.length > 0 && (
+        <Stack spacing={1.25}>
+          {pagedPasswords.map((entry) => (
+            <VaultEntryCard
+              key={entry.id}
+              entry={entry}
+              visible={visibleRows.has(entry.id)}
+              onToggleVisibility={toggleVisibility}
+              onToggleFavorite={handleToggleFavorite}
+              onCopy={copy}
+              onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onShare={setShareTarget}
+            />
+          ))}
+          {pageCount > 1 && (
+            <Pagination
+              count={pageCount}
+              page={currentPage}
+              onChange={(_, nextPage) => setPage(nextPage)}
+              color="primary"
+              sx={{
+                alignSelf: "center",
+                pt: 1.5,
+                "& .MuiPaginationItem-root": { minWidth: 40, height: 40 },
+              }}
+            />
+          )}
+        </Stack>
       )}
 
       <PasswordFormDialog
