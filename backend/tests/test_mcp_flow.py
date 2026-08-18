@@ -9,7 +9,7 @@ from crud.auth import AuthContext, AuthCRUD
 from crud.encrypted_password import EncryptedPasswordCRUD
 from helpers import encrypt, generate_entry_key, wrap_entry_key
 from main import get_application
-from models import BaseModel, InstanceStateModel, UserModel
+from models import BaseModel, InstanceStateModel, PasswordAccessModel, UserModel
 from schemas import Password, SharePermission, UserRole
 from settings import APISettings
 
@@ -61,6 +61,7 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
         assert service.service_token is not None
         service_model = await session.get(UserModel, service.id)
         assert service_model is not None
+        assert service_model.service_owner_id == owner_model.id
         entry_key = generate_entry_key()
         cleartext = Password(
             password_name="shared",
@@ -133,6 +134,7 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
             assert [tool["name"] for tool in tools.json()["result"]["tools"]] == [
                 "list_entries",
                 "get_entry",
+                "create_entry",
                 "update_entry",
             ]
 
@@ -257,6 +259,62 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
             ]
             assert reread.json()["result"]["structuredContent"]["favorite"] is True
 
+            created_by_service = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "create_entry",
+                        "arguments": {
+                            "entry": {
+                                "password_name": "created-by-agent",
+                                "password_value": "generated-secret",
+                                "url": "https://created.example",
+                            }
+                        },
+                    },
+                },
+                protocol_version,
+            )
+            created_content = created_by_service.json()["result"]["structuredContent"]
+            assert created_content["owner_username"] == "owner"
+            assert created_content["access"] == "write"
+            created_id = created_content["id"]
+
+            async with maker() as session:
+                owner_grant = await session.get(
+                    PasswordAccessModel, (created_id, owner_model.id)
+                )
+                service_grant = await session.get(
+                    PasswordAccessModel, (created_id, service.id)
+                )
+                assert owner_grant is not None
+                assert owner_grant.permission == "owner"
+                assert service_grant is not None
+                assert service_grant.permission == "write"
+
+            listed_after_create = await _post_mcp(
+                client,
+                token,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {"name": "list_entries", "arguments": {}},
+                },
+                protocol_version,
+            )
+            listed_entries = listed_after_create.json()["result"]["structuredContent"][
+                "result"
+            ]
+            assert {entry["name"] for entry in listed_entries} == {
+                "shared",
+                "created-by-agent",
+            }
+
             async with maker() as session:
                 await AuthCRUD(session).update_user(
                     owner_context.user, service.id, active=False
@@ -266,7 +324,7 @@ async def test_mcp_uses_service_identity_and_existing_entry_acl() -> None:
             revoked = await _post_mcp(
                 client,
                 token,
-                {"jsonrpc": "2.0", "id": 9, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 11, "method": "tools/list"},
                 protocol_version,
             )
             assert revoked.status_code == 401

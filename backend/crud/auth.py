@@ -347,6 +347,7 @@ class AuthCRUD(BaseCRUD):
             service_token_hash=(
                 _token_hash(credential) if credential is not None else None
             ),
+            service_owner_id=actor.id if role == UserRole.service else None,
         )
         self.session.add(user)
         await self.session.flush()

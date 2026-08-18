@@ -59,6 +59,12 @@ class UserModel(BaseModel):
     service_token_hash: Mapped[str | None] = mapped_column(
         String(64), unique=True, nullable=True
     )
+    service_owner_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
 
 class SessionModel(BaseModel):

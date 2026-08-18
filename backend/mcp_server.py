@@ -120,6 +120,19 @@ def build_mcp_server(session_factory: SessionFactory) -> MCPServer[None]:
             return _entry_detail(entry)
 
     @server.tool()
+    async def create_entry(entry: Password) -> dict[str, object]:
+        """Create a vault entry for this service identity's human owner."""
+        async with session_factory() as session:
+            try:
+                context = await _service_context(session)
+                created = await PasswordCRUD(session).create_password(entry, context)
+                await session.commit()
+                return _entry_detail(created)
+            except Exception:
+                await session.rollback()
+                raise
+
+    @server.tool()
     async def update_entry(entry_id: int, changes: EntryChanges) -> dict[str, object]:
         """Update fields on one entry when this service identity has write access."""
         if not changes:

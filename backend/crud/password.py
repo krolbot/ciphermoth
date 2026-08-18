@@ -10,7 +10,9 @@ from crud.base import BaseCRUD
 from helpers import (
     decrypt,
     encrypt,
+    generate_entry_key,
     unwrap_entry_key,
+    wrap_entry_key,
 )
 from models import (
     PasswordAccessModel,
@@ -23,6 +25,8 @@ from schemas import (
     Password,
     PasswordResponse,
     PasswordUpdate,
+    SharePermission,
+    UserRole,
 )
 
 _HISTORY_LIMIT = 10
@@ -169,6 +173,52 @@ class PasswordCRUD(BaseCRUD):
         return [
             self._response(grant, counts.get(grant.model.id, 0)) for grant in grants
         ]
+
+    async def create_password(
+        self, new_password: Password, context: AuthContext
+    ) -> PasswordResponse:
+        service = context.user
+        if service.role != UserRole.service or service.service_owner_id is None:
+            raise Forbidden("This service identity cannot create vault entries.")
+        owner = await self.session.get(UserModel, service.service_owner_id)
+        if owner is None or not owner.active or owner.role == UserRole.service:
+            raise Forbidden("The service owner is unavailable.")
+
+        entry_key = generate_entry_key()
+        payload = new_password.model_dump(exclude={"favorite"})
+        payload.update(password_history=[], backed_up=False)
+        entry = PasswordModel(
+            owner_id=owner.id,
+            encryption_version=3,
+            encrypted_payload=encrypt(entry_key, json.dumps(payload).encode()),
+        )
+        self.session.add(entry)
+        await self.session.flush()
+
+        preferences = encrypt(
+            entry_key, json.dumps({"favorite": new_password.favorite}).encode()
+        )
+        owner_access = PasswordAccessModel(
+            password_id=entry.id,
+            user_id=owner.id,
+            permission=EntryPermission.owner,
+            wrapped_key=wrap_entry_key(owner.public_key, entry_key),
+            encrypted_preferences=preferences,
+            granted_by=service.id,
+        )
+        service_access = PasswordAccessModel(
+            password_id=entry.id,
+            user_id=service.id,
+            permission=SharePermission.write,
+            wrapped_key=wrap_entry_key(service.public_key, entry_key),
+            encrypted_preferences=preferences,
+            granted_by=owner.id,
+        )
+        self.session.add_all([owner_access, service_access])
+        await self.session.flush()
+        return self._response(
+            PasswordGrant(entry, service_access, owner.username, entry_key)
+        )
 
     async def get_password(
         self, password_id: int, context: AuthContext
