@@ -38,6 +38,9 @@ const ActionButton = ({ label, color = "default", disabled = false, onClick, chi
   </Tooltip>
 );
 
+const EmptyActionSlot = () => <Box aria-hidden sx={{ width: 40, height: 40, flexShrink: 0 }} />;
+const EmptyIndicatorSlot = () => <Box aria-hidden sx={{ width: 20, height: 20, flexShrink: 0 }} />;
+
 const ValueBlock = ({ label, value, monospace = false, actions }) => (
   <Box sx={{ minWidth: 0 }}>
     <Typography
@@ -107,14 +110,20 @@ const VaultEntryCard = ({
         p: { xs: 1.5, md: 1.75 },
         borderRadius: 2.5,
         bgcolor: "background.paper",
-        display: "grid",
+        display: { xs: "grid", lg: "flex" },
         gridTemplateColumns: {
           xs: "minmax(0, 1fr) minmax(0, 1fr)",
-          md: "minmax(220px, 1.35fr) minmax(170px, 0.9fr) minmax(190px, 1fr) auto",
         },
         "@media (max-width:350px)": { gridTemplateColumns: "minmax(0, 1fr)" },
-        gap: { xs: 1.4, md: 2 },
+        gap: { xs: 1.4, lg: 2 },
         alignItems: "center",
+        "& > :nth-of-type(1)": {
+          flex: { lg: "1 1 auto" },
+          minWidth: { lg: 240 },
+        },
+        "& > :nth-of-type(2)": { flex: { lg: "0 0 220px" } },
+        "& > :nth-of-type(3)": { flex: { lg: "0 0 190px" } },
+        "& > :nth-of-type(4)": { flex: { lg: "0 0 auto" } },
         transition: "border-color 150ms ease, background-color 150ms ease",
         "&:hover": { borderColor: "text.disabled" },
       }}
@@ -122,7 +131,7 @@ const VaultEntryCard = ({
       <Stack
         direction="row"
         spacing={1}
-        sx={{ alignItems: "flex-start", minWidth: 0, gridColumn: { xs: "1 / -1", md: "auto" } }}
+        sx={{ alignItems: "flex-start", minWidth: 0, gridColumn: { xs: "1 / -1", lg: "auto" } }}
       >
         <ActionButton
           label={t(entry.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
@@ -162,17 +171,28 @@ const VaultEntryCard = ({
             direction="row"
             spacing={0.75}
             useFlexGap
-            sx={{ flexWrap: "wrap", mt: 0.75, alignItems: "center" }}
+            sx={{
+              flexWrap: { xs: "wrap", lg: "nowrap" },
+              height: { lg: 24 },
+              overflow: "hidden",
+              mt: 0.75,
+              alignItems: "center",
+              "& .MuiChip-root": { flexShrink: 0 },
+            }}
           >
             {entry.folder && <Chip label={entry.folder} size="small" variant="outlined" />}
             {tags.slice(0, 2).map((tag) => (
               <Chip key={tag} label={tag} size="small" />
             ))}
             {tags.length > 2 && <Chip label={`+${tags.length - 2}`} size="small" />}
-            <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              {entry.owner_username} · {t(`sharing.${entry.access}`)}
-            </Typography>
           </Stack>
+          <Typography
+            variant="caption"
+            noWrap
+            sx={{ color: "text.secondary", display: "block", mt: 0.5 }}
+          >
+            {entry.owner_username} · {t(`sharing.${entry.access}`)}
+          </Typography>
         </Box>
       </Stack>
 
@@ -225,30 +245,36 @@ const VaultEntryCard = ({
         spacing={0.25}
         sx={{
           alignItems: "center",
-          justifyContent: { xs: "space-between", md: "flex-end" },
-          borderTop: { xs: "1px solid", md: "none" },
+          justifyContent: { xs: "space-between", lg: "flex-start" },
+          borderTop: { xs: "1px solid", lg: "none" },
           borderColor: "divider",
-          pt: { xs: 1, md: 0 },
-          gridColumn: { xs: "1 / -1", md: "auto" },
+          pt: { xs: 1, lg: 0 },
+          gridColumn: { xs: "1 / -1", lg: "auto" },
         }}
       >
         <Stack direction="row" spacing={0.25}>
-          {entry.url && (
+          {entry.url ? (
             <ActionButton label={t("vault.columns.openWebsite")} onClick={() => openUrl(entry.url)}>
               <OpenInNewIcon fontSize="small" />
             </ActionButton>
+          ) : (
+            <EmptyActionSlot />
           )}
-          {canWrite && (
+          {canWrite ? (
             <ActionButton label={t("common.actions.edit")} onClick={() => onEdit(entry)}>
               <EditIcon fontSize="small" />
             </ActionButton>
+          ) : (
+            <EmptyActionSlot />
           )}
-          {owner && (
+          {owner ? (
             <ActionButton label={t("sharing.manage")} onClick={() => onShare(entry)}>
               <ShareIcon fontSize="small" />
             </ActionButton>
+          ) : (
+            <EmptyActionSlot />
           )}
-          {owner && (
+          {owner ? (
             <ActionButton
               label={t("common.actions.delete")}
               color="error"
@@ -256,13 +282,23 @@ const VaultEntryCard = ({
             >
               <DeleteIcon fontSize="small" />
             </ActionButton>
+          ) : (
+            <EmptyActionSlot />
           )}
         </Stack>
-        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-          {strength && StrengthIcon && (
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          {strength && StrengthIcon ? (
             <Tooltip title={t(strength.strength.labelKey)}>
               <StrengthIcon fontSize="small" sx={{ color: strength.strength.color }} />
             </Tooltip>
+          ) : (
+            <EmptyIndicatorSlot />
           )}
           <Tooltip
             title={t(
