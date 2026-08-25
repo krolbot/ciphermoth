@@ -15,6 +15,10 @@ _UNLOCK_DURATION_MIGRATION = (
     Path(__file__).parents[1]
     / "migrations/ciphermoth/versions/d6a7b8c9d0e1_extend_default_unlock_duration.py"
 )
+_BALANCED_UNLOCK_MIGRATION = (
+    Path(__file__).parents[1]
+    / "migrations/ciphermoth/versions/d7b8c9d0e1f2_balance_default_unlock_duration.py"
+)
 
 
 def test_multi_user_downgrade_refuses_to_destroy_bootstrapped_keys(
@@ -96,5 +100,37 @@ def test_unlock_duration_migration_only_updates_the_old_default_set(
         "new_unlock_ms": 1_800_000,
         "old_inactivity_ms": 120_000,
         "old_hidden_ms": 60_000,
+        "warn_before_ms": 60_000,
+    }
+
+
+def test_balanced_unlock_migration_only_updates_the_thirty_minute_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "balanced_unlock_migration", _BALANCED_UNLOCK_MIGRATION
+    )
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    calls: list[tuple[str, dict[str, int]]] = []
+
+    class Connection:
+        @staticmethod
+        def execute(statement: object, parameters: dict[str, int]) -> None:
+            calls.append((str(statement), parameters))
+
+    monkeypatch.setattr(migration.op, "get_bind", lambda: Connection())
+    migration.upgrade()
+
+    assert len(calls) == 1
+    statement, parameters = calls[0]
+    assert "WHERE inactivity_ms = :previous_unlock_ms" in statement
+    assert "AND hidden_ms = :previous_unlock_ms" in statement
+    assert "AND warn_before_ms = :warn_before_ms" in statement
+    assert parameters == {
+        "new_inactivity_ms": 900_000,
+        "new_hidden_ms": 600_000,
+        "previous_unlock_ms": 1_800_000,
         "warn_before_ms": 60_000,
     }

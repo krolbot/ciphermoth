@@ -12,9 +12,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 SETTINGS_DEFAULTS = {
-    "inactivity_ms": 1_800_000,
+    "inactivity_ms": 900_000,
     "warn_before_ms": 60_000,
-    "hidden_ms": 1_800_000,
+    "hidden_ms": 600_000,
     "debounce_ms": 1_000,
     "clipboard_clear_ms": 30_000,
     # When true, the browser (never the server) checks GitHub for a newer
