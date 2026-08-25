@@ -2,21 +2,13 @@ import { action, thunk } from "easy-peasy";
 
 import apiClient from "../api/client";
 import { errorDetail } from "../lib/http";
+import { SETTINGS_DEFAULTS } from "../lib/settings";
 import i18n from "../i18n";
-
-const DEFAULTS = {
-  inactivity_ms: 120_000,
-  warn_before_ms: 60_000,
-  hidden_ms: 60_000,
-  debounce_ms: 1_000,
-  clipboard_clear_ms: 30_000,
-  update_check_enabled: true,
-};
 
 const Settings = {
   loading: false,
   error: null,
-  settings: DEFAULTS,
+  settings: SETTINGS_DEFAULTS,
 
   setSettings: action((state, settings) => {
     state.settings = settings;
