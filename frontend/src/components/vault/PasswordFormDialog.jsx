@@ -41,6 +41,7 @@ import PasswordGenerator, { CHAR_KEYS } from "./PasswordGenerator";
 import StrengthBar from "./StrengthBar";
 import { generatePassword } from "../../lib/passwordGenerator";
 import { GLOW } from "../../lib/brand";
+import { initialFolderForEntry } from "../../lib/entryForm";
 
 const EMPTY_FORM = {
   password_name: "",
@@ -62,7 +63,7 @@ const normalizeCustomFields = (fields) =>
     .map((f) => ({ label: f.label.trim(), value: f.value, hidden: !!f.hidden }))
     .filter((f) => f.label);
 
-const toForm = (target) =>
+const toForm = (target, initialFolder = "") =>
   target
     ? {
         password_name: target.password_name,
@@ -78,10 +79,10 @@ const toForm = (target) =>
           value: f.value ?? "",
           hidden: !!f.hidden,
         })),
-        folder: target.folder ?? "",
+        folder: initialFolderForEntry(target, initialFolder),
         favorite: target.favorite ?? false,
       }
-    : EMPTY_FORM;
+    : { ...EMPTY_FORM, folder: initialFolderForEntry(null, initialFolder) };
 
 const sectionsForTarget = (target) => ({
   access: !target,
@@ -223,6 +224,7 @@ const PasswordFormDialog = ({
   onSubmit,
   onCopy,
   folderOptions = [],
+  initialFolder = "",
   canWrite = true,
 }) => {
   const { t } = useTranslation();
@@ -247,7 +249,7 @@ const PasswordFormDialog = ({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setForm(toForm(editTarget));
+    setForm(toForm(editTarget, initialFolder));
     setSections(sectionsForTarget(editTarget));
     setFormError("");
     setShowValue(false);
@@ -279,7 +281,7 @@ const PasswordFormDialog = ({
     return () => {
       cancelled = true;
     };
-  }, [open, editTarget, canManageAccess, listShares, shareTargets]);
+  }, [open, editTarget, initialFolder, canManageAccess, listShares, shareTargets]);
 
   const isNote = form.kind === "note";
 

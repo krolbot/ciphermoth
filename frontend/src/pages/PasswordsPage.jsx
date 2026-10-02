@@ -418,6 +418,7 @@ const PasswordsPage = () => {
         open={dialogOpen}
         editTarget={editTarget}
         folderOptions={folderOptions}
+        initialFolder={activeFolder}
         onClose={() => setDialogOpen(false)}
         onSubmit={handleSubmit}
         onCopy={copy}
