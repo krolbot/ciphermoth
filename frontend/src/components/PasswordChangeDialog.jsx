@@ -24,7 +24,7 @@ import {
 import PasswordField from "./PasswordField";
 import { errorDetail } from "../lib/http";
 
-const PasswordChangeDialog = ({ open, onClose, required = false }) => {
+const PasswordChangeDialog = ({ open, onClose }) => {
   const { t } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -80,22 +80,10 @@ const PasswordChangeDialog = ({ open, onClose, required = false }) => {
   };
 
   return (
-    <Dialog
-      open={open}
-      onClose={(event, reason) => {
-        if (!required) onClose?.(event, reason);
-      }}
-      maxWidth="xs"
-      fullWidth
-    >
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>{t("auth.changePasswordTitle")}</DialogTitle>
       <DialogContent>
         <Stack spacing={1.5} sx={{ mt: 1 }}>
-          {required && (
-            <Typography variant="body2" color="text.secondary">
-              {t("auth.changePasswordRequired")}
-            </Typography>
-          )}
           <PasswordField
             label={t("auth.currentPassword")}
             value={currentPassword}
@@ -119,7 +107,7 @@ const PasswordChangeDialog = ({ open, onClose, required = false }) => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        {!required && <Button onClick={onClose}>{t("common.actions.cancel")}</Button>}
+        <Button onClick={onClose}>{t("common.actions.cancel")}</Button>
         <Button variant="contained" loading={saving} onClick={save}>
           {t("auth.changePassword")}
         </Button>

@@ -30,6 +30,7 @@ export const getPrivateKey = () => sessionStorage.getItem(PRIVATE_KEY);
 export const getAuthPrivateKey = () => sessionStorage.getItem(AUTH_PRIVATE_KEY);
 export const getPublicKey = () => sessionStorage.getItem(PUBLIC_KEY);
 export const getVaultSalt = () => sessionStorage.getItem(VAULT_SALT);
+export const setCurrentUser = (user) => sessionStorage.setItem(USER, JSON.stringify(user));
 export const getCurrentUser = () => {
   try {
     return JSON.parse(sessionStorage.getItem(USER));

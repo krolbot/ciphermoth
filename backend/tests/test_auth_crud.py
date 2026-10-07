@@ -372,8 +372,25 @@ async def test_admin_can_revoke_sessions_and_require_password_change(
         == 1
     )
 
+    session.add(
+        SessionModel(
+            user_id=member.id,
+            token_hash="member-current-session",
+            expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1),
+        )
+    )
+    await session.flush()
+
     await crud.require_password_change(owner, member.id)
     assert member.must_change_password is True
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(SessionModel)
+            .where(SessionModel.user_id == member.id)
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio

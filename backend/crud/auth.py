@@ -466,9 +466,6 @@ class AuthCRUD(BaseCRUD):
         if user.role == UserRole.service:
             raise Forbidden("Service users do not use interactive passwords.")
         user.must_change_password = True
-        await self.session.execute(
-            delete(SessionModel).where(SessionModel.user_id == user_id)
-        )
         await self.session.flush()
         return self._to_user(user)
 

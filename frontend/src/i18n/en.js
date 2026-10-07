@@ -85,7 +85,7 @@ const en = {
     newPassword: "New password",
     changePassword: "Change password",
     changePasswordTitle: "Change your password",
-    changePasswordRequired: "You must change your temporary password before opening the vault.",
+    passwordChangeReminder: "An administrator is asking you to change your current password.",
 
     validation: {
       enterMasterPassword: "Please enter your master password.",
@@ -394,18 +394,17 @@ const en = {
     role: "Role",
     active: "Active",
     inactive: "Disabled",
-    passwordChangePending: "Password change required",
+    passwordChangePending: "Password change reminder enabled",
     revokeSessions: "Revoke sessions",
-    requirePasswordChange: "Require password change",
+    requirePasswordChange: "Remind about password change",
     confirm: {
       sessions: {
         title: "Revoke all sessions?",
         message: "{{username}} will need to sign in again on every device.",
       },
       password: {
-        title: "Require a password change?",
-        message:
-          "All sessions for {{username}} will be revoked. They must change their current password after signing in.",
+        title: "Enable the password change reminder?",
+        message: "{{username}} will see a reminder until they change their current password.",
       },
       delete: {
         title: "Delete user?",
@@ -416,7 +415,7 @@ const en = {
     messages: {
       created: "User created.",
       sessions: "All user sessions were revoked.",
-      password: "A password change is required at the next sign-in.",
+      password: "The password change reminder is enabled.",
       delete: "User deleted.",
     },
     roles: { admin: "Admin", member: "Member", service: "Service" },
@@ -444,7 +443,7 @@ const en = {
     createUser: "Failed to create user.",
     updateUser: "Failed to update user.",
     revokeUserSessions: "Failed to revoke user sessions.",
-    requirePasswordChange: "Failed to require a password change.",
+    requirePasswordChange: "Failed to enable the password change reminder.",
     deleteUser: "Failed to delete user.",
     loadShareTargets: "Failed to load share targets.",
     loadShares: "Failed to load shares.",
