@@ -23,6 +23,13 @@ from main import app
 from models import BaseModel, InstanceStateModel
 
 
+def test_user_lifecycle_routes_are_exposed() -> None:
+    paths = app.openapi()["paths"]
+    assert "post" in paths["/api/users/{user_id}/sessions/revoke"]
+    assert "post" in paths["/api/users/{user_id}/require-password-change"]
+    assert "delete" in paths["/api/users/{user_id}"]
+
+
 def encoded(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode().rstrip("=")
 

@@ -39,6 +39,29 @@ const Users = {
       throw new Error(await errorDetail(err, i18n.t("errors.updateUser")));
     }
   }),
+  revokeSessions: thunk(async (_actions, userId) => {
+    try {
+      await apiClient.post(`/users/${userId}/sessions/revoke`);
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.revokeUserSessions")));
+    }
+  }),
+  requirePasswordChange: thunk(async (actions, userId) => {
+    try {
+      await apiClient.post(`/users/${userId}/require-password-change`);
+      await actions.get();
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.requirePasswordChange")));
+    }
+  }),
+  remove: thunk(async (actions, userId) => {
+    try {
+      await apiClient.delete(`/users/${userId}`);
+      await actions.get();
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.deleteUser")));
+    }
+  }),
   shareTargets: thunk(async () => {
     try {
       const { data } = await apiClient.get("/users/share-targets");

@@ -1,6 +1,7 @@
 import base64
 import hashlib
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -21,6 +22,8 @@ from helpers import (
 from models import (
     BaseModel,
     InstanceStateModel,
+    PasswordAccessModel,
+    PasswordModel,
     SessionModel,
     UserModel,
 )
@@ -294,3 +297,165 @@ async def test_last_active_admin_cannot_be_disabled(
     with pytest.raises(Forbidden, match="last active administrator"):
         await crud.update_user(owner, owner.id, active=False)
     assert locked
+
+
+@pytest.mark.asyncio
+async def test_role_change_revokes_existing_sessions(session: AsyncSession) -> None:
+    crud = AuthCRUD(session)
+    owner_login, _ = await bootstrap(crud)
+    owner = await session.get(UserModel, owner_login.user.id)
+    assert owner is not None
+    member_keys = client_material("temporary member password 123!", b"abcdef0123456789")
+    created = await crud.create_user(
+        owner,
+        username="member",
+        role=UserRole.member,
+        **material_for_call(member_keys),
+    )
+    session.add(
+        SessionModel(
+            user_id=created.id,
+            token_hash="member-session",
+            expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1),
+        )
+    )
+    await session.flush()
+
+    await crud.update_user(owner, created.id, role=UserRole.admin)
+
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(SessionModel)
+            .where(SessionModel.user_id == created.id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_can_revoke_sessions_and_require_password_change(
+    session: AsyncSession,
+) -> None:
+    crud = AuthCRUD(session)
+    owner_login, _ = await bootstrap(crud)
+    owner = await session.get(UserModel, owner_login.user.id)
+    assert owner is not None
+    member_keys = client_material("temporary member password 123!", b"abcdef0123456789")
+    created = await crud.create_user(
+        owner,
+        username="member",
+        role=UserRole.member,
+        **material_for_call(member_keys),
+    )
+    member = await session.get(UserModel, created.id)
+    assert member is not None
+    member.must_change_password = False
+    session.add(
+        SessionModel(
+            user_id=member.id,
+            token_hash="member-session",
+            expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1),
+        )
+    )
+    await session.flush()
+
+    with pytest.raises(Forbidden, match="Administrator"):
+        await crud.revoke_user_sessions(member, owner.id)
+    assert await crud.revoke_user_sessions(owner, member.id) == 1
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(SessionModel)
+            .where(SessionModel.user_id == owner.id)
+        )
+        == 1
+    )
+
+    await crud.require_password_change(owner, member.id)
+    assert member.must_change_password is True
+
+
+@pytest.mark.asyncio
+async def test_user_delete_is_blocked_for_self_and_owned_vault_entries(
+    session: AsyncSession,
+) -> None:
+    crud = AuthCRUD(session)
+    owner_login, _ = await bootstrap(crud)
+    owner = await session.get(UserModel, owner_login.user.id)
+    assert owner is not None
+    member_keys = client_material("temporary member password 123!", b"abcdef0123456789")
+    created = await crud.create_user(
+        owner,
+        username="member",
+        role=UserRole.member,
+        **material_for_call(member_keys),
+    )
+    member = await session.get(UserModel, created.id)
+    assert member is not None
+
+    with pytest.raises(Forbidden, match="own account"):
+        await crud.delete_user(owner, owner.id)
+
+    session.add(PasswordModel(owner_id=member.id, encrypted_payload=b"ciphertext"))
+    await session.flush()
+    with pytest.raises(Forbidden, match="owns vault entries"):
+        await crud.delete_user(owner, member.id)
+
+
+@pytest.mark.asyncio
+async def test_admin_can_delete_unreferenced_user(
+    session: AsyncSession,
+) -> None:
+    crud = AuthCRUD(session)
+    owner_login, _ = await bootstrap(crud)
+    owner = await session.get(UserModel, owner_login.user.id)
+    assert owner is not None
+    member_keys = client_material("temporary member password 123!", b"abcdef0123456789")
+    created = await crud.create_user(
+        owner,
+        username="member",
+        role=UserRole.member,
+        **material_for_call(member_keys),
+    )
+    shared_entry = PasswordModel(owner_id=owner.id, encrypted_payload=b"ciphertext")
+    session.add(shared_entry)
+    await session.flush()
+    session.add(
+        PasswordAccessModel(
+            password_id=shared_entry.id,
+            user_id=created.id,
+            permission="read",
+            wrapped_key=b"wrapped",
+            granted_by=owner.id,
+        )
+    )
+    await session.flush()
+
+    await crud.delete_user(owner, created.id)
+
+    assert await session.get(UserModel, created.id) is None
+    assert await session.get(PasswordAccessModel, (shared_entry.id, created.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_user_delete_is_blocked_while_user_owns_service_accounts(
+    session: AsyncSession,
+) -> None:
+    crud = AuthCRUD(session)
+    owner_login, _ = await bootstrap(crud)
+    owner = await session.get(UserModel, owner_login.user.id)
+    assert owner is not None
+    admin_keys = client_material("temporary admin password 123!", b"abcdef0123456789")
+    created = await crud.create_user(
+        owner,
+        username="admin2",
+        role=UserRole.admin,
+        **material_for_call(admin_keys),
+    )
+    admin = await session.get(UserModel, created.id)
+    assert admin is not None
+    await crud.create_user(admin, username="admin2-agent", role=UserRole.service)
+
+    with pytest.raises(Forbidden, match="owns service accounts"):
+        await crud.delete_user(owner, admin.id)

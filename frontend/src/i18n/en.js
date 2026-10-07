@@ -393,6 +393,32 @@ const en = {
     copyToken: "Copy token",
     role: "Role",
     active: "Active",
+    inactive: "Disabled",
+    passwordChangePending: "Password change required",
+    revokeSessions: "Revoke sessions",
+    requirePasswordChange: "Require password change",
+    confirm: {
+      sessions: {
+        title: "Revoke all sessions?",
+        message: "{{username}} will need to sign in again on every device.",
+      },
+      password: {
+        title: "Require a password change?",
+        message:
+          "All sessions for {{username}} will be revoked. They must change their current password after signing in.",
+      },
+      delete: {
+        title: "Delete user?",
+        message:
+          "{{username}} and their granted access will be deleted. Deletion is blocked while they own vault entries or service agents.",
+      },
+    },
+    messages: {
+      created: "User created.",
+      sessions: "All user sessions were revoked.",
+      password: "A password change is required at the next sign-in.",
+      delete: "User deleted.",
+    },
     roles: { admin: "Admin", member: "Member", service: "Service" },
   },
   errors: {
@@ -417,6 +443,9 @@ const en = {
     loadUsers: "Failed to load users.",
     createUser: "Failed to create user.",
     updateUser: "Failed to update user.",
+    revokeUserSessions: "Failed to revoke user sessions.",
+    requirePasswordChange: "Failed to require a password change.",
+    deleteUser: "Failed to delete user.",
     loadShareTargets: "Failed to load share targets.",
     loadShares: "Failed to load shares.",
     saveShare: "Failed to save sharing.",

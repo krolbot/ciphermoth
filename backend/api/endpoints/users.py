@@ -5,6 +5,7 @@ from crud.auth import decode_auth_key_material, decode_client_key_material
 from schemas import (
     AuthUser,
     ShareTarget,
+    SimpleDetailSchema,
     UserCreatePayload,
     UserCreateResponse,
     UserRole,
@@ -73,3 +74,32 @@ async def update_user(
     return await crud.update_user(
         context.user, user_id, role=payload.role, active=payload.active
     )
+
+
+@router.post("/{user_id}/sessions/revoke", response_model=SimpleDetailSchema)
+async def revoke_user_sessions(
+    user_id: int,
+    context: AdminContextDep,
+    crud: AuthCRUDDep,
+) -> SimpleDetailSchema:
+    count = await crud.revoke_user_sessions(context.user, user_id)
+    return SimpleDetailSchema(detail=f"Revoked {count} active sessions.")
+
+
+@router.post("/{user_id}/require-password-change", response_model=AuthUser)
+async def require_password_change(
+    user_id: int,
+    context: AdminContextDep,
+    crud: AuthCRUDDep,
+) -> AuthUser:
+    return await crud.require_password_change(context.user, user_id)
+
+
+@router.delete("/{user_id}", response_model=SimpleDetailSchema)
+async def delete_user(
+    user_id: int,
+    context: AdminContextDep,
+    crud: AuthCRUDDep,
+) -> SimpleDetailSchema:
+    await crud.delete_user(context.user, user_id)
+    return SimpleDetailSchema(detail="User deleted.")

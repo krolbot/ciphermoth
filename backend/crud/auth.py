@@ -20,7 +20,10 @@ from helpers import (
 from models import (
     AuthChallengeModel,
     InstanceStateModel,
+    PasswordAccessModel,
+    PasswordModel,
     SessionModel,
+    SettingsModel,
     UserModel,
 )
 from schemas import (
@@ -438,6 +441,70 @@ class AuthCRUD(BaseCRUD):
         ).scalars()
         return [self._to_user(user) for user in users]
 
+    async def _admin_target(self, actor: UserModel, user_id: int) -> UserModel:
+        if not actor.active or actor.role != UserRole.admin:
+            raise Forbidden("Administrator access is required.")
+        user = await self.session.get(UserModel, user_id)
+        if user is None:
+            raise NotFound("User not found.")
+        return user
+
+    async def revoke_user_sessions(self, actor: UserModel, user_id: int) -> int:
+        await self._admin_target(actor, user_id)
+        count = await self.session.scalar(
+            select(func.count())
+            .select_from(SessionModel)
+            .where(SessionModel.user_id == user_id)
+        )
+        await self.session.execute(
+            delete(SessionModel).where(SessionModel.user_id == user_id)
+        )
+        return count or 0
+
+    async def require_password_change(self, actor: UserModel, user_id: int) -> AuthUser:
+        user = await self._admin_target(actor, user_id)
+        if user.role == UserRole.service:
+            raise Forbidden("Service users do not use interactive passwords.")
+        user.must_change_password = True
+        await self.session.execute(
+            delete(SessionModel).where(SessionModel.user_id == user_id)
+        )
+        await self.session.flush()
+        return self._to_user(user)
+
+    async def delete_user(self, actor: UserModel, user_id: int) -> None:
+        user = await self._admin_target(actor, user_id)
+        if user.id == actor.id:
+            raise Forbidden("Administrators cannot delete their own account.")
+        owned_entries = await self.session.scalar(
+            select(func.count())
+            .select_from(PasswordModel)
+            .where(PasswordModel.owner_id == user.id)
+        )
+        if owned_entries:
+            raise Forbidden("User owns vault entries and cannot be deleted.")
+        owned_services = await self.session.scalar(
+            select(func.count())
+            .select_from(UserModel)
+            .where(UserModel.service_owner_id == user.id)
+        )
+        if owned_services:
+            raise Forbidden("User owns service accounts and cannot be deleted.")
+        await self.session.execute(
+            delete(PasswordAccessModel).where(PasswordAccessModel.user_id == user.id)
+        )
+        await self.session.execute(
+            delete(SessionModel).where(SessionModel.user_id == user.id)
+        )
+        await self.session.execute(
+            delete(AuthChallengeModel).where(AuthChallengeModel.user_id == user.id)
+        )
+        await self.session.execute(
+            delete(SettingsModel).where(SettingsModel.user_id == user.id)
+        )
+        await self.session.delete(user)
+        await self.session.flush()
+
     async def list_share_targets(self, actor: UserModel) -> list[ShareTarget]:
         users = (
             await self.session.execute(
@@ -501,11 +568,12 @@ class AuthCRUD(BaseCRUD):
             if not other_admins:
                 raise Forbidden("Cannot remove the last active administrator.")
 
+        role_changed = role is not None and role != current_role
         if role is not None:
             user.role = role
         if active is not None:
             user.active = active
-        if not user.active or user.role == UserRole.service:
+        if role_changed or not user.active or user.role == UserRole.service:
             await self.session.execute(
                 delete(SessionModel).where(SessionModel.user_id == user.id)
             )
