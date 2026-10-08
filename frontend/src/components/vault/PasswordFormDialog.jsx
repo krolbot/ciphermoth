@@ -103,6 +103,7 @@ const FormSection = ({ label, count, preview, open, onToggle, children }) => (
         justifyContent: "space-between",
         px: 0.5,
         py: 1,
+        minHeight: { xs: 44, sm: 0 },
         borderRadius: 1,
         "&:hover": { bgcolor: "action.hover" },
       }}

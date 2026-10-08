@@ -384,7 +384,17 @@ const ru = {
   },
   users: {
     title: "Пользователи",
+    subtitle: "Управляйте учётными записями, ролями, состоянием доступа и активными сеансами.",
+    backToVault: "К хранилищу",
+    columns: {
+      account: "Учётная запись",
+      role: "Роль",
+      status: "Состояние",
+      actions: "Действия",
+    },
     create: "Создать пользователя",
+    createDescription:
+      "Обычный пользователь получит собственное зашифрованное хранилище. Служебной учётной записи будет выдан отдельный MCP-токен.",
     temporaryPassword: "Временный пароль",
     serviceToken: "Bearer-токен MCP",
     serviceTokenOnce: "Скопируйте токен сейчас — повторно он не показывается.",
@@ -392,7 +402,7 @@ const ru = {
     role: "Роль",
     active: "Активен",
     inactive: "Отключён",
-    passwordChangePending: "Включено напоминание о смене пароля",
+    passwordChangePending: "Напоминание о смене пароля",
     revokeSessions: "Завершить сеансы",
     requirePasswordChange: "Напомнить о смене пароля",
     confirm: {

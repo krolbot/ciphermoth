@@ -386,7 +386,17 @@ const en = {
   },
   users: {
     title: "Users",
+    subtitle: "Manage accounts, roles, access status, and active sessions.",
+    backToVault: "Back to vault",
+    columns: {
+      account: "Account",
+      role: "Role",
+      status: "Status",
+      actions: "Actions",
+    },
     create: "Create user",
+    createDescription:
+      "A regular user gets their own encrypted vault. A service account gets a separate MCP token.",
     temporaryPassword: "Temporary password",
     serviceToken: "MCP bearer token",
     serviceTokenOnce: "Copy this token now. It will not be shown again.",
@@ -394,7 +404,7 @@ const en = {
     role: "Role",
     active: "Active",
     inactive: "Disabled",
-    passwordChangePending: "Password change reminder enabled",
+    passwordChangePending: "Password change reminder",
     revokeSessions: "Revoke sessions",
     requirePasswordChange: "Remind about password change",
     confirm: {

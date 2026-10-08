@@ -8,8 +8,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from api.endpoints.deps import get_session
-from crud.auth import _rekey_message
+from api.endpoints.deps import get_session, require_vault_context
+from crud.auth import AuthContext, _rekey_message
 from helpers import (
     create_user_keypair,
     decrypt_user_private_key,
@@ -20,7 +20,7 @@ from helpers import (
     wrap_entry_key,
 )
 from main import app
-from models import BaseModel, InstanceStateModel
+from models import BaseModel, InstanceStateModel, UserModel
 
 
 def test_user_lifecycle_routes_are_exposed() -> None:
@@ -28,6 +28,26 @@ def test_user_lifecycle_routes_are_exposed() -> None:
     assert "post" in paths["/api/users/{user_id}/sessions/revoke"]
     assert "post" in paths["/api/users/{user_id}/require-password-change"]
     assert "delete" in paths["/api/users/{user_id}"]
+
+
+def test_password_change_reminder_does_not_block_vault_access() -> None:
+    context = AuthContext(
+        user=UserModel(
+            username="member",
+            role="member",
+            active=True,
+            must_change_password=True,
+            salt=b"0123456789abcdef",
+            public_key=b"p" * 32,
+            encrypted_private_key=b"encrypted-private-key",
+            auth_public_key=b"a" * 32,
+            encrypted_auth_private_key=b"encrypted-auth-private-key",
+        ),
+        private_key=None,
+        token_hash="session",
+    )
+
+    assert require_vault_context(context) is context
 
 
 def encoded(value: bytes) -> str:

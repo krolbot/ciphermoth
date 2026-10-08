@@ -285,6 +285,7 @@ const PasswordsPage = () => {
           <Button
             variant="outlined"
             startIcon={<DownloadIcon />}
+            aria-label={t("vault.backup")}
             onClick={() => setBackupOpen(true)}
             disabled={passwords.length === 0}
             sx={COMPACT_ACTION_SX}
@@ -296,6 +297,7 @@ const PasswordsPage = () => {
           <Button
             variant="outlined"
             startIcon={<UploadFileIcon />}
+            aria-label={t("vault.import")}
             onClick={() => setImportOpen(true)}
             sx={COMPACT_ACTION_SX}
           >
@@ -306,6 +308,9 @@ const PasswordsPage = () => {
           <Button
             variant="outlined"
             startIcon={<DeleteOutlineIcon />}
+            aria-label={
+              trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash")
+            }
             onClick={() => setTrashOpen(true)}
             sx={COMPACT_ACTION_SX}
           >

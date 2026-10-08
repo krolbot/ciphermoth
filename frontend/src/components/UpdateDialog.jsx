@@ -131,7 +131,7 @@ const UpdateDialog = ({ open, onClose }) => {
       <DialogTitle>{t("updateDialog.title")}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.5 }}>
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
             <Chip label={current ? `v${String(current).replace(/^v/, "")}` : "-"} size="small" />
             <Typography sx={{ color: "text.disabled" }}>→</Typography>
             <Chip

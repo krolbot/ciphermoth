@@ -56,8 +56,6 @@ AuthContextDep = Annotated[AuthContext, Depends(get_auth_context)]
 
 
 def require_vault_context(context: AuthContextDep) -> AuthContext:
-    if context.user.must_change_password:
-        raise Forbidden("Master password change is required.")
     return context
 
 

@@ -2,10 +2,12 @@ import { Navigate } from "react-router-dom";
 
 import LoginPage from "./pages/LoginPage";
 import PasswordsPage from "./pages/PasswordsPage";
-import { isAuth } from "./utils";
+import UsersPage from "./pages/UsersPage";
+import { getCurrentUser, isAuth } from "./utils";
 
-const ProtectedRoute = ({ children }) => {
+const ProtectedRoute = ({ children, role }) => {
   if (!isAuth()) return <Navigate to="/login" replace />;
+  if (role && getCurrentUser()?.role !== role) return <Navigate to="/passwords" replace />;
   return children;
 };
 
@@ -19,6 +21,14 @@ const routes = [
     element: (
       <ProtectedRoute>
         <PasswordsPage />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: "/users",
+    element: (
+      <ProtectedRoute role="admin">
+        <UsersPage />
       </ProtectedRoute>
     ),
   },

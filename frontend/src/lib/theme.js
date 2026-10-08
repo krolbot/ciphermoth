@@ -86,6 +86,7 @@ export const createAppTheme = (mode, language) => {
               borderRadius: 7,
               fontWeight: 600,
               letterSpacing: "0.04em",
+              "@media (max-width:599.95px)": { minHeight: 44 },
               "&.Mui-focusVisible": { outline: `2px solid ${GLOW}`, outlineOffset: "2px" },
             },
             outlined: dark
@@ -118,6 +119,7 @@ export const createAppTheme = (mode, language) => {
         MuiIconButton: {
           styleOverrides: {
             root: {
+              "@media (max-width:599.95px)": { minWidth: 44, minHeight: 44 },
               "&.Mui-focusVisible": { outline: `2px solid ${GLOW}`, outlineOffset: "2px" },
             },
           },

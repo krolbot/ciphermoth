@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   AppBar,
   Box,
@@ -28,14 +28,13 @@ import LanguageSwitcher from "./LanguageSwitcher";
 import MothIcon from "./MothIcon";
 import SettingsModal from "./SettingsModal";
 import UpdateDialog from "./UpdateDialog";
-import UsersDialog from "./UsersDialog";
 
 const TopMenu = () => {
   const { t } = useTranslation();
   const userIsAuth = isAuth();
   const { pathname } = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [usersOpen, setUsersOpen] = useState(false);
+
   const user = getCurrentUser();
   const [updateOpen, setUpdateOpen] = useState(false);
 
@@ -138,7 +137,14 @@ const TopMenu = () => {
               <LanguageSwitcher />
               {user?.role === "admin" && (
                 <Tooltip title={t("users.title")}>
-                  <IconButton color="inherit" onClick={() => setUsersOpen(true)} sx={{ p: 1 }}>
+                  <IconButton
+                    component={Link}
+                    to="/users"
+                    color="inherit"
+                    aria-label={t("users.title")}
+                    aria-current={pathname === "/users" ? "page" : undefined}
+                    sx={{ p: 1, color: pathname === "/users" ? GLOW : "inherit" }}
+                  >
                     <PeopleIcon />
                   </IconButton>
                 </Tooltip>
@@ -159,7 +165,6 @@ const TopMenu = () => {
                 </IconButton>
               </Tooltip>
               <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-              <UsersDialog open={usersOpen} onClose={() => setUsersOpen(false)} />
               <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} />
             </>
           ) : (

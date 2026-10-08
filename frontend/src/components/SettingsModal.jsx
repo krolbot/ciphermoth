@@ -171,7 +171,7 @@ const SettingsModal = ({ open, onClose }) => {
               />
             }
             label={
-              <Stack direction="row" spacing={0.5} alignItems="center">
+              <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
                 <Typography variant="body2">{t("settings.fields.updates")}</Typography>
                 <Tooltip title={t("settings.fields.updatesHelp")} arrow placement="top">
                   <HelpOutlineIcon
