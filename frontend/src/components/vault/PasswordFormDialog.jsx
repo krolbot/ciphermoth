@@ -10,7 +10,6 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
-  MenuItem,
   Stack,
   TextField,
   ToggleButton,
@@ -32,12 +31,12 @@ import StarBorderIcon from "@mui/icons-material/StarBorder";
 import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
-import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
 import AttachmentsSection from "./AttachmentsSection";
 import PasswordGenerator, { CHAR_KEYS } from "./PasswordGenerator";
+import { ShareAccessPanel } from "./ShareDialog";
 import StrengthBar from "./StrengthBar";
 import { generatePassword } from "../../lib/passwordGenerator";
 import { GLOW } from "../../lib/brand";
@@ -229,8 +228,6 @@ const PasswordFormDialog = ({
   canWrite = true,
 }) => {
   const { t } = useTranslation();
-  const { listShares } = useStoreActions((a) => a.ciphermothModels.passwords);
-  const shareTargets = useStoreActions((a) => a.ciphermothModels.users.shareTargets);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [showValue, setShowValue] = useState(false);
@@ -240,16 +237,11 @@ const PasswordFormDialog = ({
   const [genOpts, setGenOpts] = useState(GEN_DEFAULTS);
   const [submitting, setSubmitting] = useState(false);
   const [attachmentsDirty, setAttachmentsDirty] = useState(false);
-  const [agentTargets, setAgentTargets] = useState([]);
-  const [agentAccess, setAgentAccess] = useState({});
-  const [initialAgentAccess, setInitialAgentAccess] = useState({});
-  const [accessLoading, setAccessLoading] = useState(false);
 
-  const canManageAccess = !editTarget || editTarget.access === "owner";
+  const canManageAccess = editTarget?.access === "owner";
 
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
     setForm(toForm(editTarget, initialFolder));
     setSections(sectionsForTarget(editTarget));
     setFormError("");
@@ -257,32 +249,7 @@ const PasswordFormDialog = ({
     setShowTotp(false);
     setShowGenerator(false);
     setAttachmentsDirty(false);
-    setAgentTargets([]);
-    setAgentAccess({});
-    setInitialAgentAccess({});
-    if (canManageAccess) {
-      setAccessLoading(true);
-      Promise.all([shareTargets(), editTarget ? listShares(editTarget.id) : Promise.resolve([])])
-        .then(([targets, shares]) => {
-          if (cancelled) return;
-          const agents = targets.filter((target) => target.role === "service");
-          const access = Object.fromEntries(
-            agents.map((target) => [
-              target.id,
-              shares.find((share) => share.user_id === target.id)?.permission ?? "none",
-            ])
-          );
-          setAgentTargets(agents);
-          setAgentAccess(access);
-          setInitialAgentAccess(access);
-        })
-        .catch((err) => !cancelled && setFormError(err.message))
-        .finally(() => !cancelled && setAccessLoading(false));
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [open, editTarget, initialFolder, canManageAccess, listShares, shareTargets]);
+  }, [open, editTarget, initialFolder]);
 
   const isNote = form.kind === "note";
 
@@ -342,7 +309,6 @@ const PasswordFormDialog = ({
   };
 
   const handleSubmit = async () => {
-    if (accessLoading) return;
     if (!form.password_name.trim()) {
       setFormError(t("entry.validation.nameRequired"));
       return;
@@ -375,12 +341,6 @@ const PasswordFormDialog = ({
         custom_fields: normalizeCustomFields(form.custom_fields),
         folder: form.folder.trim() || null,
         favorite: form.favorite,
-        service_access: canManageAccess
-          ? agentTargets.map((target) => ({
-              user_id: target.id,
-              permission: agentAccess[target.id] ?? "none",
-            }))
-          : [],
       });
     } catch (err) {
       setFormError(err.message);
@@ -391,8 +351,6 @@ const PasswordFormDialog = ({
 
   const history = editTarget?.password_history ?? [];
   const customCount = normalizeCustomFields(form.custom_fields).length;
-  const agentAccessCount = Object.values(agentAccess).filter((value) => value !== "none").length;
-  const agentAccessUnchanged = JSON.stringify(agentAccess) === JSON.stringify(initialAgentAccess);
 
   const unchanged =
     !!editTarget &&
@@ -402,7 +360,6 @@ const PasswordFormDialog = ({
     form.totp_secret === (editTarget.totp_secret ?? "") &&
     form.description === (editTarget.description ?? "") &&
     form.favorite === (editTarget.favorite ?? false) &&
-    agentAccessUnchanged &&
     (form.folder.trim() || "") === (editTarget.folder ?? "") &&
     form.tags.join(" ") === (editTarget.tags ?? []).join(" ") &&
     JSON.stringify(normalizeCustomFields(form.custom_fields)) ===
@@ -571,51 +528,13 @@ const PasswordFormDialog = ({
         />
 
         <Box sx={{ mt: 1.5 }}>
-          {canManageAccess && (
+          {canManageAccess && editTarget && (
             <FormSection
-              label={t("sharing.agentAccess")}
-              count={agentAccessCount}
-              preview={agentTargets
-                .filter((target) => agentAccess[target.id] !== "none")
-                .map((target) => target.username)
-                .join(", ")}
+              label={t("sharing.manage")}
               open={sections.access}
               onToggle={toggleSection("access")}
             >
-              {accessLoading ? (
-                <Typography color="text.secondary">{t("common.labels.loading")}</Typography>
-              ) : agentTargets.length === 0 ? (
-                <Typography color="text.secondary">{t("sharing.noAgents")}</Typography>
-              ) : (
-                <Stack spacing={1}>
-                  {agentTargets.map((target) => (
-                    <Stack
-                      key={target.id}
-                      direction="row"
-                      spacing={1}
-                      sx={{ alignItems: "center" }}
-                    >
-                      <Typography sx={{ flex: 1 }}>{target.username}</Typography>
-                      <TextField
-                        select
-                        size="small"
-                        value={agentAccess[target.id] ?? "none"}
-                        onChange={(event) =>
-                          setAgentAccess((current) => ({
-                            ...current,
-                            [target.id]: event.target.value,
-                          }))
-                        }
-                        sx={{ width: 150, flexShrink: 0 }}
-                      >
-                        <MenuItem value="none">{t("sharing.none")}</MenuItem>
-                        <MenuItem value="read">{t("sharing.read")}</MenuItem>
-                        <MenuItem value="write">{t("sharing.write")}</MenuItem>
-                      </TextField>
-                    </Stack>
-                  ))}
-                </Stack>
-              )}
+              <ShareAccessPanel entry={editTarget} active={open && sections.access} />
             </FormSection>
           )}
 
@@ -770,7 +689,7 @@ const PasswordFormDialog = ({
           variant="contained"
           onClick={handleSubmit}
           loading={submitting}
-          disabled={accessLoading || (unchanged && !attachmentsDirty)}
+          disabled={unchanged && !attachmentsDirty}
         >
           {t(
             editTarget

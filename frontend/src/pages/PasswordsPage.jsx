@@ -72,7 +72,6 @@ const PasswordsPage = () => {
     restore,
     purge,
     emptyTrash,
-    syncServiceAccess,
   } = useStoreActions((actions) => actions.ciphermothModels.passwords);
   const { error, loading, passwords, trash } = useStoreState(
     (state) => state.ciphermothModels.passwords
@@ -136,31 +135,26 @@ const PasswordsPage = () => {
     [toggleFavorite, enqueueSnackbar]
   );
 
-  const handleSubmit = async (entry) => {
-    const { service_access: serviceAccess, ...password } = entry;
-    let passwordId;
+  const handleSubmit = async (password) => {
     if (editTarget) {
       await update({
         passwordId: editTarget.id,
         password,
       });
-      passwordId = editTarget.id;
       enqueueSnackbar(
-        t(entry.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"),
+        t(
+          password.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"
+        ),
         { variant: "success" }
       );
     } else {
-      const created = await create(password);
-      passwordId = created.id;
+      await create(password);
       enqueueSnackbar(
-        t(entry.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"),
+        t(
+          password.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"
+        ),
         { variant: "success" }
       );
-    }
-    try {
-      await syncServiceAccess({ passwordId, desired: serviceAccess });
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
     }
     setDialogOpen(false);
   };
