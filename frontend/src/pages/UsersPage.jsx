@@ -33,8 +33,6 @@ import { generateUserKeyMaterial } from "../lib/crypto";
 import { userAdminActions } from "../lib/userAdmin";
 import { getCurrentUser } from "../utils";
 
-const ROLE_TONES = { admin: "primary", member: "info", service: "warning" };
-
 const UsersPage = () => {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -162,8 +160,7 @@ const UsersPage = () => {
 
         {users.map((user) => {
           const actions = userAdminActions(user, currentUserId);
-          const tone = ROLE_TONES[user.role] || "info";
-          const roleColor = theme.palette[tone].main;
+          const roleColor = theme.palette.primary.main;
           const RoleIcon = user.role === "service" ? SmartToyOutlinedIcon : PersonOutlineIcon;
 
           return (
@@ -205,7 +202,10 @@ const UsersPage = () => {
                     {user.username}
                   </Typography>
                   {user.must_change_password && user.role !== "service" && (
-                    <Typography variant="caption" sx={{ color: "warning.main", lineHeight: 1.25 }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.secondary", lineHeight: 1.25 }}
+                    >
                       {t("users.passwordChangePending")}
                     </Typography>
                   )}
@@ -242,7 +242,6 @@ const UsersPage = () => {
               <FormControlLabel
                 control={
                   <Switch
-                    color="success"
                     checked={user.active}
                     onChange={(event) => change(user.id, { active: event.target.checked })}
                     disabled={saving || user.id === currentUserId}
@@ -256,7 +255,7 @@ const UsersPage = () => {
                   gridColumn: { xs: "2", md: "3" },
                   gridRow: { xs: "2", md: "1" },
                   "& .MuiFormControlLabel-label": {
-                    color: user.active ? "success.main" : "text.secondary",
+                    color: user.active ? "text.primary" : "text.secondary",
                     fontSize: theme.typography.body2.fontSize,
                     fontWeight: 600,
                   },
@@ -283,8 +282,8 @@ const UsersPage = () => {
                         sx={{
                           minWidth: 44,
                           minHeight: 44,
-                          color: "info.main",
-                          bgcolor: alpha(theme.palette.info.main, 0.09),
+                          color: "text.secondary",
+                          bgcolor: "action.hover",
                         }}
                       >
                         <LogoutOutlinedIcon fontSize="small" />
@@ -303,8 +302,8 @@ const UsersPage = () => {
                         sx={{
                           minWidth: 44,
                           minHeight: 44,
-                          color: "warning.main",
-                          bgcolor: alpha(theme.palette.warning.main, 0.09),
+                          color: "text.secondary",
+                          bgcolor: "action.hover",
                         }}
                       >
                         <KeyOutlinedIcon fontSize="small" />

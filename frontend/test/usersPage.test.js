@@ -17,3 +17,12 @@ test("user administration has a dedicated protected page and top-menu link", () 
   assert.match(topMenu, /to="\/users"/);
   assert.doesNotMatch(topMenu, /UsersDialog/);
 });
+
+test("user administration follows the CipherMoth theme instead of role-specific colors", () => {
+  const page = source("../src/pages/UsersPage.jsx");
+
+  assert.doesNotMatch(page, /ROLE_TONES|palette\.(info|warning)|color="success"/);
+  assert.doesNotMatch(page, /color: "(info|warning|success)\.main"/);
+  assert.match(page, /const roleColor = theme\.palette\.primary\.main/);
+  assert.match(page, /confirmColor=\{confirmation\?\.type === "delete" \? "error" : "primary"\}/);
+});
