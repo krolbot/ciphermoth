@@ -22,7 +22,7 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
             raise
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 
 
 def get_master_password_crud(session: SessionDep) -> MasterPasswordCRUD:

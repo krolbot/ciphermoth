@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Changes are saved before the API answers.** The database transaction was committed only after the response had been sent, so a request made immediately after a change could miss it, and a change whose commit failed was still reported as successful. The commit now happens first, and a failed commit returns an error.
+
 ## [1.4.6] - 2026-10-10
 
 ### Security

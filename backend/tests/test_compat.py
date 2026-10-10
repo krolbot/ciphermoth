@@ -2,6 +2,7 @@ import io
 import json
 
 import httpx
+import pytest
 import pyzipper
 
 from helpers import create_encrypted_zip
@@ -306,3 +307,21 @@ async def test_settings_round_trip_and_validation(client: httpx.AsyncClient) -> 
     )
     assert resp.status_code == 422
     assert (await client.get("/settings", headers=headers)).json() == changed
+
+
+async def test_writes_are_committed_before_the_response(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = await create_vault(client)
+
+    async def failing_commit(self) -> None:
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.AsyncSession.commit", failing_commit)
+    resp = await client.post(
+        "/passwords/create", json=entry("never-saved"), headers=auth(key)
+    )
+    monkeypatch.undo()
+
+    assert resp.status_code == 500
+    assert await db_execute("SELECT id FROM passwords") == []
