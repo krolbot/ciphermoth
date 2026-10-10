@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-10-10
+
 ### Security
 
 - **Every vault route now checks that the key it receives is the vault's real key.** Until now the API only checked that a key was *present*, so a client that could reach the API could favorite, trash, restore or permanently delete entries, delete attachments, read and change settings and request an update without knowing the master password, could write entries encrypted with a key the vault can't read (which then broke the whole vault listing), and could learn entry names from error messages. Encrypted values (passwords, notes, 2FA secrets, attachments) were not returned without the real key in our testing. The vault now stores a small encrypted check value and every protected request must decrypt it. Existing vaults pick it up the first time you unlock after upgrading; until then, protected requests are refused, so an open browser tab from before the upgrade returns you to the unlock screen once. No data is re-encrypted and the vault format is unchanged.
