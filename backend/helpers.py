@@ -18,7 +18,7 @@ _ARGON2_ITERATIONS = 3
 _ARGON2_LANES = 4
 _ARGON2_LENGTH = 32
 
-_KEY_CHECK_PLAINTEXT = b"ciphermoth-key-check-v1"
+_KEY_CHECK_PREFIX = b"ciphermoth-key-check-v1:"
 _CANONICAL_KEY = re.compile(r"[A-Za-z0-9_-]{43}=", re.ASCII)
 
 
@@ -64,14 +64,19 @@ def decrypt_bytes(key: bytes | str, encrypted_value: bytes) -> bytes | None:
         return None
 
 
-def create_key_check(key: bytes | str) -> bytes:
-    return encrypt(key, _KEY_CHECK_PLAINTEXT)
+def create_key_check(key: bytes | str, salt: bytes) -> bytes:
+    return encrypt(key, _KEY_CHECK_PREFIX + salt)
 
 
-def verify_key_check(key: bytes | str | None, key_check: bytes | None) -> bool:
+def verify_key_check(
+    key: bytes | str | None, key_check: bytes | None, salt: bytes
+) -> bool:
     """
     Return True only if ``key`` is exactly the vault key that produced
-    ``key_check``.
+    ``key_check`` for the vault's current ``salt``.
+
+    Binding the check to the salt makes it go stale whenever the master password
+    changes, including through an older release that does not know about it.
 
     Comparing the decrypted plaintext matters: Fernet authenticates with the first
     half of the key and decrypts with the second, so a key with the right signing
@@ -90,7 +95,7 @@ def verify_key_check(key: bytes | str | None, key_check: bytes | None) -> bool:
         plaintext = Fernet(key).decrypt(key_check)
     except (InvalidToken, ValueError, TypeError):
         return False
-    return hmac.compare_digest(plaintext, _KEY_CHECK_PLAINTEXT)
+    return hmac.compare_digest(plaintext, _KEY_CHECK_PREFIX + salt)
 
 
 def encrypt_optional(key: bytes | str, value: str | None) -> bytes | None:

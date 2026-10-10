@@ -4,11 +4,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import asyncpg
 import httpx
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from crud.runtime_schema import ensure_runtime_schema
 from crud.session import engine
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -122,6 +125,26 @@ async def _reset_schema(database: str) -> None:
 
 def reset_schema(database: str) -> None:
     asyncio.run(_reset_schema(database))
+
+
+def engine_url(database: str) -> str:
+    return (
+        f"postgresql+asyncpg://{os.environ['POSTGRES_USER']}:"
+        f"{quote(os.environ['POSTGRES_PASSWORD'])}@{os.environ['POSTGRES_HOST']}:"
+        f"{os.environ['POSTGRES_PORT']}/{database}"
+    )
+
+
+async def _apply_runtime_schema(database: str) -> None:
+    temporary = create_async_engine(engine_url(database))
+    try:
+        await ensure_runtime_schema(temporary)
+    finally:
+        await temporary.dispose()
+
+
+def apply_runtime_schema(database: str) -> None:
+    asyncio.run(_apply_runtime_schema(database))
 
 
 def run_alembic(*args: str, database: str | None = None) -> str:

@@ -1,13 +1,19 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from api.access_log import install_access_log_redaction
 from api.body_limit import BodySizeLimitMiddleware, keep_uploads_in_memory
 from api.exceptions import UnhandledErrorMiddleware
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
+from crud.runtime_schema import ensure_runtime_schema
+from crud.session import engine
 from settings import get_api_settings
 
 _SECURITY_HEADERS = {
@@ -35,13 +41,20 @@ def rate_limit_exceeded(request: Request, exc: Exception) -> Response:
     )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    await ensure_runtime_schema(engine)
+    yield
+
+
 def get_application() -> FastAPI:
     settings = get_api_settings()
-    server = FastAPI(**settings.fastapi_kwargs)
+    server = FastAPI(**settings.fastapi_kwargs, lifespan=lifespan)
 
     server.state.limiter = limiter
     server.add_exception_handler(RateLimitExceeded, rate_limit_exceeded)
 
+    install_access_log_redaction()
     keep_uploads_in_memory()
     server.add_middleware(UnhandledErrorMiddleware, headers=_SECURITY_HEADERS)
     server.add_middleware(BodySizeLimitMiddleware)

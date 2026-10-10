@@ -17,6 +17,7 @@ from main import app
 from tests.support import (
     BACKEND_DIR,
     TABLES,
+    apply_runtime_schema,
     reset_schema,
     run_alembic,
     update_control_dir,
@@ -26,6 +27,7 @@ from tests.support import (
 def pytest_sessionstart(session: pytest.Session) -> None:
     reset_schema(os.environ["POSTGRES_DB"])
     run_alembic("upgrade", "head")
+    apply_runtime_schema(os.environ["POSTGRES_DB"])
 
 
 @pytest.fixture(autouse=True)

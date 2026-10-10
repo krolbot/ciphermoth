@@ -7,7 +7,12 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
-from api.body_limit import MAX_REQUEST_BODY_BYTES
+from api.body_limit import (
+    ATTACHMENT_MAX_BODY_BYTES,
+    DEFAULT_MAX_BODY_BYTES,
+    IMPORT_MAX_BODY_BYTES,
+    body_limit_for,
+)
 from helpers import create_encrypted_zip
 from tests.support import (
     MASTER_PASSWORD,
@@ -107,7 +112,7 @@ async def test_oversized_request_is_refused_before_parsing(
     headers = await _vault_with_entry(client)
     resp = await client.post(
         "/passwords/box/attachments",
-        files={"file": ("huge.bin", _binary(MAX_REQUEST_BODY_BYTES + 1), "x/y")},
+        files={"file": ("huge.bin", _binary(ATTACHMENT_MAX_BODY_BYTES + 1), "x/y")},
         headers=headers,
     )
     assert resp.status_code == 413
@@ -127,7 +132,7 @@ async def test_oversized_chunked_request_is_refused(
             'Content-Disposition: form-data; name="file"; filename="huge.bin"\r\n'
             "Content-Type: application/octet-stream\r\n\r\n"
         ).encode()
-        + _binary(MAX_REQUEST_BODY_BYTES + MIB)
+        + _binary(ATTACHMENT_MAX_BODY_BYTES + MIB)
         + f"\r\n--{boundary}--\r\n".encode()
     )
 
@@ -150,7 +155,7 @@ async def test_oversized_chunked_request_is_refused(
 
 async def test_oversized_json_body_is_refused(client: httpx.AsyncClient) -> None:
     headers = await _vault_with_entry(client)
-    huge = "x" * (MAX_REQUEST_BODY_BYTES + 1)
+    huge = "x" * (DEFAULT_MAX_BODY_BYTES + 1)
     resp = await client.post(
         "/passwords/create", json=entry("huge-note", huge), headers=headers
     )
@@ -230,3 +235,144 @@ async def test_backup_import_above_old_threshold_stays_in_memory(
     assert disk_spills == []
     resp = await client.get("/passwords/restored", headers=headers)
     assert resp.json()["password_value"] == big_value
+
+
+def test_route_limits() -> None:
+    assert body_limit_for("POST", "/api/passwords/box/attachments") == (
+        ATTACHMENT_MAX_BODY_BYTES
+    )
+    assert body_limit_for("POST", "/api/passwords/import") == IMPORT_MAX_BODY_BYTES
+    assert body_limit_for("POST", "/api/passwords/import/csv") == (
+        IMPORT_MAX_BODY_BYTES
+    )
+    assert body_limit_for("POST", "/api/passwords/create") == DEFAULT_MAX_BODY_BYTES
+    assert body_limit_for("PATCH", "/api/passwords/update") == DEFAULT_MAX_BODY_BYTES
+    assert ATTACHMENT_MAX_BODY_BYTES > ATTACHMENT_CAP
+    assert IMPORT_MAX_BODY_BYTES > IMPORT_CAP
+
+
+def _csv_of_exact_size(size: int) -> bytes:
+    header = b"name,username,password\n"
+    rows = [header]
+    total = len(header)
+    i = 0
+    while total < size:
+        row = f"site-{i:05d},user,".encode()
+        room = size - total - len(row) - 1
+        value = b"p" * max(1, min(10_000, room))
+        line = row + value + b"\n"
+        rows.append(line)
+        total += len(line)
+        i += 1
+    data = b"".join(rows)
+    return data[:size] if len(data) > size else data
+
+
+async def test_largest_csv_v145_accepted_still_imports(
+    client: httpx.AsyncClient, disk_spills: list[str]
+) -> None:
+    headers = await _vault_with_entry(client)
+    csv_bytes = _csv_of_exact_size(IMPORT_CAP)
+    assert len(csv_bytes) == IMPORT_CAP
+
+    resp = await client.post(
+        "/passwords/import/csv",
+        data={"on_conflict": "skip"},
+        files={"file": ("export.csv", csv_bytes, "text/csv")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["imported"] > 1000
+    assert disk_spills == []
+
+
+async def test_largest_backup_zip_v145_accepted_still_imports(
+    client: httpx.AsyncClient, disk_spills: list[str]
+) -> None:
+    headers = await _vault_with_entry(client)
+    size = int(9.5 * MIB)
+    archive = b""
+    for _ in range(6):
+        value = base64.b64encode(os.urandom(size)).decode()
+        archive = create_encrypted_zip(
+            [{"name": "big", "value": value}], MASTER_PASSWORD
+        )
+        if 9.5 * MIB < len(archive) <= IMPORT_CAP:
+            break
+        size = int(size * (9.8 * MIB) / len(archive))
+    assert 9.5 * MIB < len(archive) <= IMPORT_CAP
+
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD, "on_conflict": "skip"},
+        files={"file": ("backup.zip", archive, "application/zip")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["imported"] == 1
+    assert disk_spills == []
+
+
+async def test_imports_between_the_old_cap_and_the_limit_keep_the_old_error(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = await _vault_with_entry(client)
+    payload = b"x" * (IMPORT_CAP + 1)
+    for path, data in (
+        ("/passwords/import/csv", {}),
+        ("/passwords/import", {"master_password": MASTER_PASSWORD}),
+    ):
+        resp = await client.post(
+            path,
+            data=data,
+            files={"file": ("f", payload, "application/octet-stream")},
+            headers=headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["detail"] == "File too large. Maximum allowed size is 10 MB."
+
+
+async def test_imports_over_the_route_limit_are_refused(
+    client: httpx.AsyncClient, disk_spills: list[str]
+) -> None:
+    headers = await _vault_with_entry(client)
+    resp = await client.post(
+        "/passwords/import/csv",
+        files={"file": ("f.csv", b"x" * IMPORT_MAX_BODY_BYTES, "text/csv")},
+        headers=headers,
+    )
+    assert resp.status_code == 413
+    assert "11 MB" in resp.json()["detail"]
+    assert disk_spills == []
+
+
+async def test_attachment_between_cap_and_limit_keeps_the_old_error(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = await _vault_with_entry(client)
+    resp = await client.post(
+        "/passwords/box/attachments",
+        files={"file": ("big.bin", _binary(ATTACHMENT_CAP + MIB // 2), "x/y")},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Attachment too large. Maximum size is 5 MB."
+
+
+async def test_editing_a_large_existing_note_still_works(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = await _vault_with_entry(client)
+    body = "n" * (6 * MIB)
+    note = entry("big-note", body, kind="note")
+    resp = await client.post("/passwords/create", json=note, headers=headers)
+    assert resp.status_code == 200
+    edited = {**note, "password_value": body + "!"}
+    resp = await client.patch(
+        "/passwords/update",
+        json={"password": note, "new_password": edited},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    resp = await client.get("/passwords/big-note", headers=headers)
+    assert resp.json()["password_value"] == body + "!"

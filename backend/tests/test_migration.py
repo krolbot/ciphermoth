@@ -2,11 +2,9 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
-from urllib.parse import quote
 
 import httpx
 import pytest
-from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from api.endpoints.deps import get_session
@@ -15,20 +13,21 @@ from helpers import (
     generate_key_derivation,
     hash_master_password,
     verify_key_check,
-    verify_master_password,
 )
 from main import app
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     admin_connection,
+    apply_runtime_schema,
     auth,
+    engine_url,
     reset_schema,
     run_alembic,
     unlock,
 )
 
-PRE_PATCH_REVISION = "9c0d1e2f3a4b"
+V145_HEAD = "9c0d1e2f3a4b"
 MIGRATION_DB = os.environ["POSTGRES_DB"].removesuffix("_test") + "_migration_test"
 CIPHERTEXT_COLUMNS = (
     "SELECT id, password_name, password_value, url, totp_secret, tags, "
@@ -38,6 +37,10 @@ CIPHERTEXT_COLUMNS = (
 
 async def _alembic(*args: str) -> str:
     return await asyncio.to_thread(run_alembic, *args, database=MIGRATION_DB)
+
+
+async def _start_v146() -> None:
+    await asyncio.to_thread(apply_runtime_schema, MIGRATION_DB)
 
 
 async def _seed_v145_vault(conn) -> tuple[str, bytes]:
@@ -91,18 +94,13 @@ async def legacy_db() -> AsyncIterator[str]:
     finally:
         await conn.close()
     await asyncio.to_thread(reset_schema, MIGRATION_DB)
-    await _alembic("upgrade", PRE_PATCH_REVISION)
+    await _alembic("upgrade", "head")
     yield MIGRATION_DB
 
 
 @pytest.fixture
 async def legacy_client(legacy_db: str) -> AsyncIterator[httpx.AsyncClient]:
-    url = (
-        f"postgresql+asyncpg://{os.environ['POSTGRES_USER']}:"
-        f"{quote(os.environ['POSTGRES_PASSWORD'])}@{os.environ['POSTGRES_HOST']}:"
-        f"{os.environ['POSTGRES_PORT']}/{legacy_db}"
-    )
-    legacy_engine = create_async_engine(url)
+    legacy_engine = create_async_engine(engine_url(legacy_db))
     sessions = async_sessionmaker(
         legacy_engine, expire_on_commit=False, class_=AsyncSession
     )
@@ -129,6 +127,14 @@ async def legacy_client(legacy_db: str) -> AsyncIterator[httpx.AsyncClient]:
         await legacy_engine.dispose()
 
 
+async def test_release_keeps_the_v145_alembic_head() -> None:
+    output = await asyncio.to_thread(run_alembic, "heads")
+    assert output.split() == [V145_HEAD, "(head)"], (
+        "A new Alembic revision makes v1.4.5 crash-loop after the one-click "
+        "updater rolls back. Fix the updater's rollback before adding one."
+    )
+
+
 async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
     legacy_client: httpx.AsyncClient,
 ) -> None:
@@ -140,8 +146,7 @@ async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
     finally:
         await conn.close()
 
-    output = await _alembic("upgrade", "head")
-    assert "0d1e2f3a4b5c" in output
+    await _start_v146()
 
     conn = await admin_connection(MIGRATION_DB)
     try:
@@ -150,6 +155,9 @@ async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
             attachments_before
         )
         assert await conn.fetchval("SELECT key_check FROM master_password") is None
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == (
+            V145_HEAD
+        )
     finally:
         await conn.close()
 
@@ -192,7 +200,7 @@ async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
     assert download.content == blob
 
 
-async def test_downgrade_to_v145_schema_leaves_a_usable_vault(
+async def test_v146_database_stays_bootable_by_v145(
     legacy_client: httpx.AsyncClient,
 ) -> None:
     conn = await admin_connection(MIGRATION_DB)
@@ -200,34 +208,27 @@ async def test_downgrade_to_v145_schema_leaves_a_usable_vault(
         key, _ = await _seed_v145_vault(conn)
     finally:
         await conn.close()
-    await _alembic("upgrade", "head")
+    await _start_v146()
+    await _start_v146()
     assert await unlock(legacy_client) == key
 
-    conn = await admin_connection(MIGRATION_DB)
-    try:
-        token = await conn.fetchval("SELECT key_check FROM master_password")
-        assert verify_key_check(key, token)
-        before = [tuple(r) for r in await conn.fetch(CIPHERTEXT_COLUMNS)]
-    finally:
-        await conn.close()
-
-    await _alembic("downgrade", PRE_PATCH_REVISION)
+    output = await _alembic("upgrade", "head")
+    assert "Running upgrade" not in output
+    assert V145_HEAD in await _alembic("current")
 
     conn = await admin_connection(MIGRATION_DB)
     try:
-        columns = await conn.fetch(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'master_password'"
+        salt, token = await conn.fetchrow("SELECT salt, key_check FROM master_password")
+        assert verify_key_check(key, token, salt)
+        column = await conn.fetchrow(
+            "SELECT is_nullable, column_default FROM information_schema.columns "
+            "WHERE table_name = 'master_password' AND column_name = 'key_check'"
         )
-        assert "key_check" not in {c["column_name"] for c in columns}
-        assert [tuple(r) for r in await conn.fetch(CIPHERTEXT_COLUMNS)] == before
-        salt, hash_key = await conn.fetchrow(
-            "SELECT salt, hash_key FROM master_password"
+        assert column["is_nullable"] == "YES"
+        assert column["column_default"] is None
+        rows = await conn.fetch(
+            "SELECT id, created, updated, deleted, salt, hash_key FROM master_password"
         )
-        assert verify_master_password(MASTER_PASSWORD, hash_key)
-        derived = generate_key_derivation(salt, MASTER_PASSWORD)
-        assert Fernet(derived).decrypt(before[0][2]) == b"legacy-Value-1"
+        assert len(rows) == 1
     finally:
         await conn.close()
-
-    await _alembic("upgrade", "head")

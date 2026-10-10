@@ -122,12 +122,14 @@ class MasterPasswordCRUD(BaseCRUD):
         model = await fetch_master_password(self.session)
         if model is None:
             raise Forbidden("No master password set.")
-        if not verify_key_check(key_derivation, model.key_check):
+        if not verify_key_check(key_derivation, model.key_check, model.salt):
             raise InvalidKey(_INVALID_KEY)
         model = await fetch_master_password(
             self.session, lock="update" if exclusive else "share"
         )
-        if model is None or not verify_key_check(key_derivation, model.key_check):
+        if model is None or not verify_key_check(
+            key_derivation, model.key_check, model.salt
+        ):
             raise InvalidKey(_INVALID_KEY)
         return key_derivation
 
@@ -152,7 +154,7 @@ class MasterPasswordCRUD(BaseCRUD):
                 MasterPasswordModel.hash_key == observed.hash_key,
                 unchanged,
             )
-            .values(key_check=create_key_check(key_derivation))
+            .values(key_check=create_key_check(key_derivation, observed.salt))
             .returning(MasterPasswordModel.id)
             .execution_options(synchronize_session=False)
         )
@@ -163,7 +165,7 @@ class MasterPasswordCRUD(BaseCRUD):
         if not verify_master_password(master_password, model.hash_key):
             return MasterPasswordCheck(valid=False)
         key_derivation = generate_key_derivation(model.salt, master_password)
-        if not verify_key_check(key_derivation, model.key_check):
+        if not verify_key_check(key_derivation, model.key_check, model.salt):
             if model.key_check is not None:
                 logger.warning(
                     "Stored vault key check did not match the verified master "
@@ -191,7 +193,7 @@ class MasterPasswordCRUD(BaseCRUD):
             MasterPasswordModel(
                 salt=salt,
                 hash_key=hash_key,
-                key_check=create_key_check(key_derivation),
+                key_check=create_key_check(key_derivation, salt),
             )
         )
         await self.session.flush()
@@ -209,7 +211,7 @@ class MasterPasswordCRUD(BaseCRUD):
             raise Forbidden("Current master password is incorrect.")
 
         key_derivation = generate_key_derivation(model.salt, master_password)
-        if not verify_key_check(key_derivation, model.key_check):
+        if not verify_key_check(key_derivation, model.key_check, model.salt):
             raise InvalidKey(_INVALID_KEY)
 
         new_salt = os.urandom(16)
@@ -250,7 +252,7 @@ class MasterPasswordCRUD(BaseCRUD):
 
         model.salt = new_salt
         model.hash_key = hash_master_password(new_master_password)
-        model.key_check = create_key_check(new_key_derivation)
+        model.key_check = create_key_check(new_key_derivation, new_salt)
         self.session.add(model)
         await self.session.flush()
 

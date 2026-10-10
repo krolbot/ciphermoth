@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
 from crud.session import AsyncSessionLocal
-from helpers import create_key_check, verify_key_check
+from helpers import create_key_check, generate_key_derivation, verify_key_check
 from models import MasterPasswordModel
 from tests.support import (
     MASTER_PASSWORD,
@@ -33,6 +33,11 @@ async def _key_check() -> bytes | None:
     rows = await db_execute("SELECT key_check FROM master_password")
     assert len(rows) == 1
     return rows[0][0]
+
+
+async def _accepts(key: str) -> bool:
+    [(token, salt)] = await db_execute("SELECT key_check, salt FROM master_password")
+    return verify_key_check(key, token, salt)
 
 
 async def _encrypted_columns() -> list[bytes]:
@@ -61,7 +66,7 @@ async def test_create_stores_a_key_check_for_the_returned_key(
     client: httpx.AsyncClient,
 ) -> None:
     key = await create_vault(client)
-    assert verify_key_check(key, await _key_check())
+    assert await _accepts(key)
     resp = await client.get("/passwords", headers=auth(key))
     assert resp.status_code == 200
     assert resp.json() == []
@@ -96,7 +101,7 @@ async def test_first_unlock_after_upgrade_initializes_the_key_check(
     before = await db_snapshot()
 
     assert await unlock(client) == key
-    assert verify_key_check(key, await _key_check())
+    assert await _accepts(key)
 
     after = await db_snapshot()
     assert after["passwords"] == before["passwords"]
@@ -111,9 +116,10 @@ async def test_corrupt_key_check_is_repaired_by_a_verified_unlock(
     client: httpx.AsyncClient,
 ) -> None:
     key = await create_vault(client)
+    [(salt,)] = await db_execute("SELECT salt FROM master_password")
     await db_execute(
         "UPDATE master_password SET key_check = :token",
-        token=create_key_check(Fernet.generate_key()),
+        token=create_key_check(Fernet.generate_key(), salt),
     )
     resp = await client.get("/passwords", headers=auth(key))
     assert resp.status_code == 403
@@ -122,7 +128,7 @@ async def test_corrupt_key_check_is_repaired_by_a_verified_unlock(
         "/master_password/check", json={"master_password": WRONG_MASTER_PASSWORD}
     )
     assert resp.json()["valid"] is False
-    assert not verify_key_check(key, await _key_check())
+    assert not await _accepts(key)
 
     assert await unlock(client) == key
     resp = await client.get("/passwords", headers=auth(key))
@@ -138,7 +144,7 @@ async def test_concurrent_unlocks_of_a_legacy_vault_agree(
     keys = await asyncio.gather(*(unlock(client) for _ in range(4)))
 
     assert set(keys) == {key}
-    assert verify_key_check(key, await _key_check())
+    assert await _accepts(key)
 
 
 async def test_concurrent_creates_produce_exactly_one_vault(
@@ -264,8 +270,8 @@ async def test_rotation_reencrypts_everything_and_revokes_the_old_key(
     assert resp.json()["valid"] is False
     new_key = await unlock(client, NEW_MASTER_PASSWORD)
     assert new_key != old_key
-    assert verify_key_check(new_key, await _key_check())
-    assert not verify_key_check(old_key, await _key_check())
+    assert await _accepts(new_key)
+    assert not await _accepts(old_key)
 
     assert (await client.get("/passwords", headers=auth(old_key))).status_code == 403
     assert await _readable_state(client, new_key) == before
@@ -404,8 +410,8 @@ async def test_stale_unlock_cannot_overwrite_a_newer_key_check(
             )
             await session.commit()
         assert stored is False
-        assert verify_key_check(new_key, await _key_check())
-        assert not verify_key_check(old_key, await _key_check())
+        assert await _accepts(new_key)
+        assert not await _accepts(old_key)
 
 
 async def test_backup_and_import_still_require_the_master_password(
@@ -431,3 +437,33 @@ async def test_key_check_never_appears_in_api_responses(
         resp = await client.get(path, headers=auth(key))
         assert token.decode() not in resp.text
         assert "key_check" not in json.dumps(resp.json())
+
+
+async def test_key_check_left_stale_by_an_older_release_fails_closed(
+    client: httpx.AsyncClient,
+) -> None:
+    old_key = await create_vault(client)
+    resp = await client.post(
+        "/passwords/create", json=entry("kept"), headers=auth(old_key)
+    )
+    assert resp.status_code == 200
+    stale_token = await _key_check()
+
+    resp = await client.patch(
+        "/master_password/update", json=ROTATE, headers=auth(old_key)
+    )
+    assert resp.status_code == 200
+    await db_execute("UPDATE master_password SET key_check = :token", token=stale_token)
+    [(new_salt,)] = await db_execute("SELECT salt FROM master_password")
+    new_key = generate_key_derivation(new_salt, NEW_MASTER_PASSWORD).decode()
+
+    for key in (old_key, new_key):
+        resp = await client.get("/passwords", headers=auth(key))
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "invalid_key"
+
+    assert await unlock(client, NEW_MASTER_PASSWORD) == new_key
+    assert await _accepts(new_key)
+    assert not await _accepts(old_key)
+    resp = await client.get("/passwords", headers=auth(new_key))
+    assert [p["password_name"] for p in resp.json()] == ["kept"]

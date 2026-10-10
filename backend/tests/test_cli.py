@@ -187,6 +187,8 @@ async def test_live_server_logs_do_not_contain_secrets(
     log = live_server_log.read_text(errors="replace")
     assert "log-canary-Value" not in log
     assert MASTER_PASSWORD not in log
+    assert "log-canary-entry" not in log
+    assert '"GET /api/passwords/{password_name} HTTP/1.1" 200' in log
 
 
 async def test_cli_can_remove_an_entry_it_cannot_decrypt(api: str) -> None:

@@ -1,25 +1,48 @@
+import re
+
 from starlette.exceptions import HTTPException
 from starlette.formparsers import MultiPartParser
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-MAX_REQUEST_BODY_BYTES = 12 * 1024 * 1024
-_TOO_LARGE = "Request is too large. The limit is 12 MB."
+_MIB = 1024 * 1024
+
+DEFAULT_MAX_BODY_BYTES = 16 * _MIB
+ATTACHMENT_MAX_BODY_BYTES = 6 * _MIB
+IMPORT_MAX_BODY_BYTES = 11 * _MIB
+
+_ROUTE_LIMITS = (
+    ("POST", re.compile(r"/passwords/[^/]+/attachments$"), ATTACHMENT_MAX_BODY_BYTES),
+    ("POST", re.compile(r"/passwords/import(?:/csv)?$"), IMPORT_MAX_BODY_BYTES),
+)
+
+
+def body_limit_for(method: str, path: str) -> int:
+    for route_method, pattern, limit in _ROUTE_LIMITS:
+        if method == route_method and pattern.search(path):
+            return limit
+    return DEFAULT_MAX_BODY_BYTES
+
+
+def _too_large(limit: int) -> str:
+    return f"Request is too large. The limit for this request is {limit // _MIB} MB."
 
 
 class RequestTooLarge(HTTPException):
-    def __init__(self) -> None:
-        super().__init__(status_code=413, detail=_TOO_LARGE)
+    def __init__(self, limit: int) -> None:
+        super().__init__(status_code=413, detail=_too_large(limit))
 
 
-def keep_uploads_in_memory(max_bytes: int = MAX_REQUEST_BODY_BYTES) -> None:
+def keep_uploads_in_memory() -> None:
     """
     Starlette spools multipart file parts larger than 1 MB to a temporary file on
     disk, which would put attachments and imports there in plaintext. With every
-    request body capped at ``max_bytes``, raising the spool threshold to the same
-    value keeps each part in memory.
+    request body capped, raising the spool threshold to the largest cap keeps each
+    part in memory.
     """
-    MultiPartParser.spool_max_size = max_bytes
+    MultiPartParser.spool_max_size = max(
+        DEFAULT_MAX_BODY_BYTES, *(limit for _, _, limit in _ROUTE_LIMITS)
+    )
 
 
 def _declared_length(scope: Scope) -> int | None:
@@ -33,18 +56,20 @@ def _declared_length(scope: Scope) -> int | None:
 
 
 class BodySizeLimitMiddleware:
-    def __init__(self, app: ASGIApp, max_bytes: int = MAX_REQUEST_BODY_BYTES) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
-        self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        limit = body_limit_for(scope["method"], scope["path"])
         declared = _declared_length(scope)
-        if declared is not None and declared > self.max_bytes:
-            response = JSONResponse(status_code=413, content={"detail": _TOO_LARGE})
+        if declared is not None and declared > limit:
+            response = JSONResponse(
+                status_code=413, content={"detail": _too_large(limit)}
+            )
             await response(scope, receive, send)
             return
 
@@ -55,8 +80,8 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
-                    raise RequestTooLarge()
+                if received > limit:
+                    raise RequestTooLarge(limit)
             return message
 
         await self.app(scope, limited_receive, send)
