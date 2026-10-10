@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import io
 import json
+import re
 import struct
 import time
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ _ARGON2_LANES = 4
 _ARGON2_LENGTH = 32
 
 _KEY_CHECK_PLAINTEXT = b"ciphermoth-key-check-v1"
+_CANONICAL_KEY = re.compile(r"[A-Za-z0-9_-]{43}=", re.ASCII)
 
 
 def _bcrypt_input(master_password: str) -> bytes:
@@ -73,9 +75,16 @@ def verify_key_check(key: bytes | str | None, key_check: bytes | None) -> bool:
 
     Comparing the decrypted plaintext matters: Fernet authenticates with the first
     half of the key and decrypts with the second, so a key with the right signing
-    half and a wrong encryption half passes the HMAC and yields garbage.
+    half and a wrong encryption half passes the HMAC and yields garbage. Only the
+    canonical encoding the server issues is accepted, since the base64 decoder
+    would otherwise ignore stray characters.
     """
     if not key or key_check is None:
+        return False
+    text = key.decode("latin-1") if isinstance(key, bytes) else key
+    if not _CANONICAL_KEY.fullmatch(text):
+        return False
+    if base64.urlsafe_b64encode(base64.urlsafe_b64decode(text)).decode() != text:
         return False
     try:
         plaintext = Fernet(key).decrypt(key_check)

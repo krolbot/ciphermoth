@@ -6,9 +6,11 @@ from pathlib import Path
 import httpx
 import pytest
 import pyzipper
+from cryptography.fernet import Fernet
 from typer.testing import CliRunner, Result
 
 from cli import app as cli_app
+from helpers import encrypt
 from tests.support import MASTER_PASSWORD, WRONG_MASTER_PASSWORD, db_execute
 
 runner = CliRunner()
@@ -185,3 +187,29 @@ async def test_live_server_logs_do_not_contain_secrets(
     log = live_server_log.read_text(errors="replace")
     assert "log-canary-Value" not in log
     assert MASTER_PASSWORD not in log
+
+
+async def test_cli_can_remove_an_entry_it_cannot_decrypt(api: str) -> None:
+    ok(
+        cli(
+            api,
+            "password",
+            "create",
+            "good",
+            answers=["good-Pass-1", "good-Pass-1", "", "", "", "", ""],
+        )
+    )
+    await db_execute(
+        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
+        n="planted",
+        v=encrypt(Fernet.generate_key(), b"written with another key"),
+    )
+    assert cli(api, "password", "list").exit_code == 1
+
+    ok(cli(api, "password", "delete", "planted", "--yes"))
+    ok(cli(api, "password", "purge", "planted", "--yes"))
+    assert "good" in ok(cli(api, "password", "list"))
+
+    missing = cli(api, "password", "delete", "never-existed", "--yes")
+    assert missing.exit_code == 1
+    assert "No password found" in missing.output

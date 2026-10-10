@@ -13,6 +13,10 @@
 - **The UI and API are published on `127.0.0.1` by default** in `docker-compose.prod.yml`. Set `CIPHERMOTH_BIND_ADDRESS=0.0.0.0` in your `.env` to reach them from other machines. This only applies once you use the new compose file; the one-click updater does not replace it.
 - **The docs now describe what is and isn't encrypted.** Entry names, usernames and descriptions are stored in plaintext, the server holds the vault key in memory while you use it, and backup ZIPs use a much weaker key derivation than the vault. The README, `SECURITY.md` and the CLI docs previously overstated this.
 
+### Fixed
+
+- **`ciphermoth password delete` can remove an entry that no longer decrypts.** It checked that the entry existed by reading it first, so an entry written with a different key (the damage the first issue above allowed) could never be moved to the trash from the CLI. It now only stops when the entry doesn't exist. If an entry like that breaks your vault listing, `cip password delete <name> --yes` followed by `cip password purge <name> --yes` removes it; the error message names the entry.
+
 ### Changed
 
 - **`GET`/`PATCH /api/settings` and `PATCH /api/master_password/update` require an unlocked vault** like every other vault route. The web UI and CLI already sent the key.

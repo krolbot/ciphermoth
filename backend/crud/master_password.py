@@ -114,16 +114,20 @@ class MasterPasswordCRUD(BaseCRUD):
         The shared lock keeps a master password change from committing while a
         request that was checked against the old key is still writing; a change
         takes the exclusive lock, so it waits for those requests and any request
-        that arrives during it re-checks against the new key afterwards.
+        that arrives during it re-checks against the new key afterwards. The key is
+        checked once before locking so requests with a wrong key never take a lock.
         """
         if not key_derivation:
             raise InvalidKey("Key derivation is missing.")
-        model = await fetch_master_password(
-            self.session, lock="update" if exclusive else "share"
-        )
+        model = await fetch_master_password(self.session)
         if model is None:
             raise Forbidden("No master password set.")
         if not verify_key_check(key_derivation, model.key_check):
+            raise InvalidKey(_INVALID_KEY)
+        model = await fetch_master_password(
+            self.session, lock="update" if exclusive else "share"
+        )
+        if model is None or not verify_key_check(key_derivation, model.key_check):
             raise InvalidKey(_INVALID_KEY)
         return key_derivation
 

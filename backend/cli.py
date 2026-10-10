@@ -351,7 +351,7 @@ def pw_delete(
         headers = _hdr(key)
 
         exists = client.get(_entry_path(name), headers=headers)
-        if not exists.is_success:
+        if exists.status_code == 404:
             _check(exists)
 
         if not yes:

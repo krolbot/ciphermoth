@@ -51,7 +51,9 @@ def _route_label(scope: Scope) -> str:
     endpoint = scope.get("endpoint")
     if endpoint is None:
         return "<unmatched route>"
-    name = f"{endpoint.__module__}.{endpoint.__qualname__}"
+    module = getattr(endpoint, "__module__", None) or "?"
+    qualname = getattr(endpoint, "__qualname__", None) or type(endpoint).__name__
+    name = f"{module}.{qualname}"
     path = getattr(scope.get("route"), "path", None)
     return f"{name} ({path})" if isinstance(path, str) else name
 
