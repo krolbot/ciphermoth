@@ -136,7 +136,24 @@ class PasswordHistoryEntry(BaseModel):
     changed_at: datetime
 
 
-class PasswordResponse(Password):
+class StoredCustomField(BaseModel):
+    label: str
+    value: str = ""
+    hidden: bool = False
+
+
+class PasswordResponse(BaseModel):
+    password_name: str
+    kind: str = "login"
+    username: str | None = None
+    password_value: str
+    url: str | None = None
+    totp_secret: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    custom_fields: list[StoredCustomField] = Field(default_factory=list)
+    folder: str | None = None
+    favorite: bool = False
     backed_up: bool
     updated: datetime
     deleted: datetime | None = None
@@ -171,8 +188,14 @@ class PasswordDelete(BaseModel):
     detail: str
 
 
+class PasswordRef(BaseModel):
+    password_name: str = Field(min_length=1)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
 class PasswordUpdatePayload(BaseModel):
-    password: Password
+    password: PasswordRef
     new_password: Password
 
 

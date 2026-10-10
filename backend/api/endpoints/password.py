@@ -147,7 +147,7 @@ async def update_password(
     key_derivation: KeyDerivationDep,
 ) -> PasswordUpdate:
     return await crud.update_password(
-        password=body.password,
+        password_name=body.password.password_name,
         new_password=body.new_password,
         key_derivation=key_derivation,
     )
