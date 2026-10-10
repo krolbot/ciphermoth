@@ -1,4 +1,5 @@
 from fastapi import APIRouter, FastAPI
+from fastapi.exceptions import RequestValidationError
 
 from api.endpoints import (
     master_password,
@@ -16,6 +17,7 @@ from api.exceptions import (
     invalid_key_handler,
     mismatch_handler,
     not_found_handler,
+    validation_handler,
 )
 from api.responses import inject_responses
 
@@ -39,3 +41,4 @@ def make_api_exceptions(app: FastAPI) -> None:
     app.add_exception_handler(Forbidden, forbidden_handler)
     app.add_exception_handler(NotFound, not_found_handler)
     app.add_exception_handler(TypesMismatchError, mismatch_handler)
+    app.add_exception_handler(RequestValidationError, validation_handler)

@@ -10,7 +10,12 @@ from pydantic import (
     field_validator,
 )
 
-from validators import normalize_totp_secret, validate_master_password_strength
+from validators import (
+    normalize_totp_secret,
+    reject_nul,
+    require_unicode_text,
+    validate_master_password_strength,
+)
 
 _MAX_TAGS = 20
 _MAX_TAG_LENGTH = 40
@@ -32,6 +37,11 @@ class MasterPassword(BaseModel):
     master_password: str = Field(min_length=1, max_length=1024)
 
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
 
 
 class MasterPasswordCreatePayload(MasterPassword):
@@ -63,6 +73,11 @@ class MasterPasswordUpdatePayload(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
+
     @field_validator("new_master_password")
     @classmethod
     def _strong(cls, value: str) -> str:
@@ -79,6 +94,11 @@ class CustomField(BaseModel):
     hidden: bool = False
 
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
 
 
 class Password(BaseModel):
@@ -99,6 +119,16 @@ class Password(BaseModel):
     favorite: bool = False
 
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
+
+    @field_validator("password_name", "username", "description")
+    @classmethod
+    def _storable_as_text(cls, value: str | None) -> str | None:
+        return reject_nul(value)
 
     @field_validator("totp_secret")
     @classmethod
@@ -192,6 +222,16 @@ class PasswordRef(BaseModel):
     password_name: str = Field(min_length=1)
 
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
+
+    @field_validator("password_name")
+    @classmethod
+    def _storable_as_text(cls, value: str | None) -> str | None:
+        return reject_nul(value)
 
 
 class PasswordUpdatePayload(BaseModel):

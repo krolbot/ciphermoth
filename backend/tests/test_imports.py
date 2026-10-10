@@ -5,6 +5,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from helpers import create_encrypted_zip, encrypt
 from tests.support import (
@@ -401,3 +403,127 @@ async def test_csv_with_old_mac_line_endings_imports(
     resp = await _import_csv(client, vault, b"name,password\rcr-only,cr-Pass-1\r")
     assert resp.status_code == 200, resp.text
     assert resp.json()["imported"] == 1
+
+
+_CELL = st.text(
+    alphabet=st.characters(blacklist_categories=("Cs",)), min_size=0, max_size=40
+)
+
+
+@st.composite
+def _csv_rows(draw: st.DrawFn) -> tuple[list[dict[str, str]], str | None]:
+    rows = []
+    for index in range(draw(st.integers(min_value=1, max_value=6))):
+        rows.append(
+            {
+                "name": f"r{index}-" + draw(_CELL),
+                "username": draw(_CELL),
+                "password": draw(_CELL.filter(bool)),
+                "url": draw(_CELL),
+                "notes": draw(_CELL),
+                "folder": draw(_CELL),
+            }
+        )
+    defect = draw(st.sampled_from([None, None, "long-notes", "nul-name"]))
+    if defect == "long-notes":
+        rows[-1]["notes"] = "n" * 1025
+    elif defect == "nul-name":
+        rows[-1]["name"] += "\x00"
+    return rows, defect
+
+
+def _expected_csv_value(cell: str) -> str | None:
+    return cell.strip() or None
+
+
+@given(case=_csv_rows())
+async def test_csv_import_property(
+    client: httpx.AsyncClient, vault: Headers, case: tuple[list[dict], str | None]
+) -> None:
+    rows, defect = case
+    await db_execute("DELETE FROM passwords WHERE password_name <> 'existing'")
+    header = ["name", "username", "password", "url", "notes", "folder"]
+    before = await db_snapshot()
+
+    resp = await _import_csv(
+        client, vault, _csv([header, *([row[h] for h in header] for row in rows)])
+    )
+
+    if defect or any(
+        "\x00" in row["name"] + row["username"] + row["notes"] for row in rows
+    ):
+        assert resp.status_code == 400, resp.text
+        assert await db_snapshot() == before
+        return
+    assert resp.status_code == 200, resp.text
+    by_name = {p["password_name"]: p for p in await _listing(client, vault)}
+    for row in rows:
+        got = by_name[row["name"].strip()]
+        assert got["password_value"] == row["password"]
+        assert got["username"] == _expected_csv_value(row["username"])
+        assert got["url"] == _expected_csv_value(row["url"])
+        assert got["description"] == _expected_csv_value(row["notes"])
+        assert got["folder"] == _expected_csv_value(row["folder"])
+
+
+@given(data=st.binary(max_size=2048))
+async def test_arbitrary_csv_bytes_never_break_the_vault(
+    client: httpx.AsyncClient, vault: Headers, data: bytes
+) -> None:
+    await db_execute("DELETE FROM passwords WHERE password_name <> 'existing'")
+    resp = await _import_csv(client, vault, b"name,password,notes\n" + data)
+    assert resp.status_code in (200, 400), resp.text
+    await _listing(client, vault)
+
+
+_JSON = st.recursive(
+    st.none()
+    | st.booleans()
+    | st.integers()
+    | st.floats(allow_nan=False)
+    | st.text(alphabet=st.characters(blacklist_categories=("Cs",)), max_size=30),
+    lambda children: (
+        st.lists(children, max_size=4)
+        | st.dictionaries(st.text(max_size=8), children, max_size=4)
+    ),
+    max_leaves=10,
+)
+_BACKUP_KEYS = st.sampled_from(
+    [
+        "name",
+        "value",
+        "kind",
+        "username",
+        "url",
+        "totp_secret",
+        "description",
+        "tags",
+        "custom_fields",
+        "folder",
+        "favorite",
+    ]
+)
+
+
+@given(
+    entries=st.lists(
+        st.dictionaries(_BACKUP_KEYS, _JSON).map(
+            lambda d: {"name": "fuzz", "value": "fuzz-Value-1", **d}
+        )
+        | _JSON,
+        max_size=4,
+    )
+)
+async def test_arbitrary_backup_entries_never_break_the_vault(
+    client: httpx.AsyncClient, vault: Headers, entries: list
+) -> None:
+    await db_execute("DELETE FROM passwords WHERE password_name <> 'existing'")
+    before = await db_snapshot()
+
+    resp = await _import_zip(client, vault, entries, on_conflict="overwrite")
+
+    assert resp.status_code in (200, 400), resp.text
+    if resp.status_code == 400:
+        assert await db_snapshot() == before
+    listing = await _listing(client, vault)
+    assert "existing" in [p["password_name"] for p in listing]

@@ -6,6 +6,8 @@ from fastapi import (
     Request,
     status,
 )
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -44,6 +46,24 @@ async def invalid_key_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_403_FORBIDDEN,
         content={"detail": str(exc), "code": "invalid_key"},
+    )
+
+
+async def validation_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    FastAPI's default 422 body echoes every rejected value back, which for this
+    API means passwords, notes and master passwords, and fails to render at all
+    when the value holds an unpaired surrogate. Only the location and message
+    are returned.
+    """
+    errors = exc.errors() if isinstance(exc, RequestValidationError) else []
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={
+            "detail": jsonable_encoder(
+                [{"type": e["type"], "loc": e["loc"], "msg": e["msg"]} for e in errors]
+            )
+        },
     )
 
 

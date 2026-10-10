@@ -70,14 +70,16 @@ class PasswordCRUD(BaseCRUD):
             if deleted
             else PasswordModel.deleted.is_(None)
         )
-        result = (
-            await self.session.execute(
-                select(PasswordModel).where(
-                    PasswordModel.password_name == password_name,
-                    trashed,
+        result = None
+        if "\x00" not in password_name:
+            result = (
+                await self.session.execute(
+                    select(PasswordModel).where(
+                        PasswordModel.password_name == password_name,
+                        trashed,
+                    )
                 )
-            )
-        ).scalar()
+            ).scalar()
         if not result:
             where = "trash" if deleted else "vault"
             raise NotFound(f"No password found for '{password_name}' in the {where}.")

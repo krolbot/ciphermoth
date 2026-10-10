@@ -36,6 +36,29 @@ def validate_master_password_strength(password: str) -> str:
     return password
 
 
+def require_unicode_text(value: object) -> object:
+    """
+    Reject strings that cannot be encoded as UTF-8. JSON allows unpaired
+    surrogate escapes such as ``"\\ud800"``, which decode to Python strings that
+    every encrypt, hash and database call would fail on.
+    """
+    for text in value if isinstance(value, list) else (value,):
+        if isinstance(text, str):
+            try:
+                text.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError(
+                    "must be valid Unicode text (no unpaired surrogates)"
+                ) from None
+    return value
+
+
+def reject_nul(value: str | None) -> str | None:
+    if value is not None and "\x00" in value:
+        raise ValueError("must not contain NUL characters")
+    return value
+
+
 def normalize_totp_secret(raw: str | None) -> str | None:
     """
     Normalize a two-factor secret to bare base32, or raise ValueError.

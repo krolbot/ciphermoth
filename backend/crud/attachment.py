@@ -18,14 +18,16 @@ _MAX_TOTAL_BYTES = 25 * 1024 * 1024  # 25 MB across all attachments of one entry
 
 class AttachmentCRUD(BaseCRUD):
     async def _get_active_password(self, password_name: str) -> PasswordModel:
-        model = (
-            await self.session.execute(
-                select(PasswordModel).where(
-                    PasswordModel.password_name == password_name,
-                    PasswordModel.deleted.is_(None),
+        model = None
+        if "\x00" not in password_name:
+            model = (
+                await self.session.execute(
+                    select(PasswordModel).where(
+                        PasswordModel.password_name == password_name,
+                        PasswordModel.deleted.is_(None),
+                    )
                 )
-            )
-        ).scalar()
+            ).scalar()
         if not model:
             raise NotFound(f"No password found for '{password_name}' in the vault.")
         return model
