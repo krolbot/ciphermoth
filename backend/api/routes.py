@@ -9,10 +9,11 @@ from api.endpoints import (
 )
 from api.exceptions import (
     Forbidden,
+    InvalidKey,
     NotFound,
     TypesMismatchError,
     forbidden_handler,
-    internal_error_handler,
+    invalid_key_handler,
     mismatch_handler,
     not_found_handler,
 )
@@ -34,7 +35,7 @@ def make_api_router() -> APIRouter:
 
 
 def make_api_exceptions(app: FastAPI) -> None:
+    app.add_exception_handler(InvalidKey, invalid_key_handler)
     app.add_exception_handler(Forbidden, forbidden_handler)
     app.add_exception_handler(NotFound, not_found_handler)
     app.add_exception_handler(TypesMismatchError, mismatch_handler)
-    app.add_exception_handler(Exception, internal_error_handler)

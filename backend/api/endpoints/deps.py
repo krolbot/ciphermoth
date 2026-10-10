@@ -47,12 +47,18 @@ SettingsCRUDDep = Annotated[SettingsCRUD, Depends(get_settings_crud)]
 AttachmentCRUDDep = Annotated[AttachmentCRUD, Depends(get_attachment_crud)]
 
 
-def get_key_derivation(
+async def get_key_derivation(
+    crud: MasterPasswordCRUDDep,
     x_ciphermoth_key_derivation: Annotated[str | None, Header()] = None,
 ) -> str:
-    if not x_ciphermoth_key_derivation:
-        raise Forbidden("Key derivation is missing.")
-    return x_ciphermoth_key_derivation
+    return await crud.verify_vault_key(x_ciphermoth_key_derivation)
+
+
+async def get_key_derivation_for_rotation(
+    crud: MasterPasswordCRUDDep,
+    x_ciphermoth_key_derivation: Annotated[str | None, Header()] = None,
+) -> str:
+    return await crud.verify_vault_key(x_ciphermoth_key_derivation, exclusive=True)
 
 
 KeyDerivationDep = Annotated[str, Depends(get_key_derivation)]

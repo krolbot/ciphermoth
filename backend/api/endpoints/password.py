@@ -157,7 +157,7 @@ async def update_password(
     "/{password_name}/favorite",
     name="passwords:favorite",
     response_model=PasswordUpdate,
-    dependencies=[Depends(require_master_password)],
+    dependencies=[Depends(require_master_password), Depends(get_key_derivation)],
     responses=inject_responses(
         {
             status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
@@ -196,7 +196,7 @@ async def delete_password(
     "/{password_name}/restore",
     name="passwords:restore",
     response_model=PasswordUpdate,
-    dependencies=[Depends(require_master_password)],
+    dependencies=[Depends(require_master_password), Depends(get_key_derivation)],
     responses=inject_responses(
         {
             status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
@@ -216,7 +216,7 @@ async def restore_password(
     "/{password_name}/purge",
     name="passwords:purge",
     response_model=PasswordDelete,
-    dependencies=[Depends(require_master_password)],
+    dependencies=[Depends(require_master_password), Depends(get_key_derivation)],
     responses=inject_responses(
         {
             status.HTTP_404_NOT_FOUND: SimpleDetailSchema,

@@ -1,10 +1,14 @@
 from fastapi import (
     APIRouter,
+    Depends,
     Request,
     status,
 )
 
-from api.endpoints.deps import KeyDerivationDep, MasterPasswordCRUDDep
+from api.endpoints.deps import (
+    MasterPasswordCRUDDep,
+    get_key_derivation_for_rotation,
+)
 from api.rate_limit import limiter, rate
 from api.responses import inject_responses
 from schemas import (
@@ -77,6 +81,7 @@ async def create_master_password(
     "/update",
     name="master-password:update",
     response_model=MasterPasswordUpdate,
+    dependencies=[Depends(get_key_derivation_for_rotation)],
     responses=inject_responses(
         {
             status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
@@ -91,10 +96,8 @@ async def update_master_password(
     request: Request,
     body: MasterPasswordUpdatePayload,
     crud: MasterPasswordCRUDDep,
-    key_derivation: KeyDerivationDep,
 ) -> MasterPasswordUpdate:
     return await crud.update_master_password(
         master_password=body.master_password,
         new_master_password=body.new_master_password,
-        key_derivation=key_derivation,
     )

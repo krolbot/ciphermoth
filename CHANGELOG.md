@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Security
+
+- **Every vault route now checks that the key it receives is the vault's real key.** Until now the API only checked that a key was *present*, so a client that could reach the API could favorite, trash, restore or permanently delete entries, delete attachments, change settings and request an update without knowing the master password, and could write entries encrypted with a key the vault can't read (which then broke the whole vault listing). The vault now stores a small encrypted check value and every protected request must decrypt it. Existing vaults pick it up the first time you unlock after upgrading; until then, protected requests are refused, so an open browser tab from before the upgrade returns you to the unlock screen once. No data is re-encrypted and the vault format is unchanged.
+- **A key stops working the moment the master password changes.** A browser tab or CLI session still holding the old key is refused instead of writing entries the new key can't read, and a change waits for writes already in progress so they get re-encrypted too.
+- **Two vaults can no longer be created at the same time.** Simultaneous first-run requests could each create a master password; only one now succeeds.
+- **Uploads stay in memory.** Attachments, CSV files and backup ZIPs larger than 1 MB were briefly buffered to a temporary file on disk before being encrypted. Requests are now capped at 12 MB and parsed entirely in memory.
+- **Update requests must name a newer release.** The backend and the updater sidecar both refuse a target that is not strictly newer than the running version, before pulling anything. Signature verification is unchanged.
+- **Error logs no longer include request URLs or error messages**, which could contain entry names or database parameters. They name the failing endpoint and the code location instead.
+- **The UI and API are published on `127.0.0.1` by default** in `docker-compose.prod.yml`. Set `CIPHERMOTH_BIND_ADDRESS=0.0.0.0` in your `.env` to reach them from other machines. This only applies once you use the new compose file; the one-click updater does not replace it.
+- **The docs now describe what is and isn't encrypted.** Entry names, usernames and descriptions are stored in plaintext, the server holds the vault key in memory while you use it, and backup ZIPs use a much weaker key derivation than the vault. The README, `SECURITY.md` and the CLI docs previously overstated this.
+
+### Changed
+
+- **`GET`/`PATCH /api/settings` and `PATCH /api/master_password/update` require an unlocked vault** like every other vault route. The web UI and CLI already sent the key.
+- **`backend/.db.env` is no longer tracked by git.** Pulling this change removes the file from your checkout. If you already have a dev database volume, restore the matching file with `git show v1.4.5:backend/.db.env > backend/.db.env`; otherwise `make setup` creates a fresh one. The old development password is in the history, so don't reuse it for anything else.
+
 ## [1.4.5] - 2026-07-26
 
 ### Added

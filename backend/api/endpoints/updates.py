@@ -5,6 +5,7 @@ from api.rate_limit import limiter, rate
 from api.responses import inject_responses
 from crud import updates
 from schemas import SimpleDetailSchema, UpdateApplyPayload, UpdateApplyStatus
+from settings import get_api_settings
 
 router = APIRouter(tags=["updates"])
 
@@ -36,4 +37,6 @@ async def apply_update(
     body: UpdateApplyPayload,
     key_derivation: KeyDerivationDep,
 ) -> UpdateApplyStatus:
-    return UpdateApplyStatus(**updates.request_update(body.target))
+    return UpdateApplyStatus(
+        **updates.request_update(body.target, get_api_settings().version)
+    )

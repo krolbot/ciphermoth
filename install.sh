@@ -119,6 +119,10 @@ CIPHERMOTH_VERSION=latest
 # On a server (not localhost), point these at your host or domain:
 # CIPHERMOTH_API_URL=http://your-host:8000/api
 # CIPHERMOTH_FRONTEND_ORIGIN=http://your-host:3000
+
+# The UI and API listen on 127.0.0.1 only. To reach them from other machines
+# directly (not through a reverse proxy on this host), uncomment:
+# CIPHERMOTH_BIND_ADDRESS=0.0.0.0
 EOF
     say "Generated a strong database password in .env"
   fi

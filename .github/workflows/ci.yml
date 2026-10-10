@@ -31,6 +31,42 @@ jobs:
         working-directory: backend
         run: uv run ty check .
 
+  backend-tests:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ciphermoth_test
+          POSTGRES_PASSWORD: ciphermoth_test
+          POSTGRES_DB: ciphermoth_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ciphermoth_test -d ciphermoth_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CIPHERMOTH_TEST_DB_URL: postgresql://ciphermoth_test:ciphermoth_test@127.0.0.1:5432/ciphermoth_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --group dev
+
+      - name: Install jq
+        run: command -v jq || sudo apt-get install -y jq
+
+      - name: Test
+        working-directory: backend
+        run: uv run pytest
+
   frontend:
     name: Frontend (ESLint + Prettier)
     runs-on: ubuntu-latest

@@ -4,6 +4,8 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from api.body_limit import BodySizeLimitMiddleware, keep_uploads_in_memory
+from api.exceptions import UnhandledErrorMiddleware
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
 from settings import get_api_settings
@@ -40,6 +42,9 @@ def get_application() -> FastAPI:
     server.state.limiter = limiter
     server.add_exception_handler(RateLimitExceeded, rate_limit_exceeded)
 
+    keep_uploads_in_memory()
+    server.add_middleware(UnhandledErrorMiddleware, headers=_SECURITY_HEADERS)
+    server.add_middleware(BodySizeLimitMiddleware)
     server.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=settings.cors_origins,

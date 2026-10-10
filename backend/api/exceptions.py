@@ -1,15 +1,22 @@
 import logging
+import traceback
+from collections.abc import Mapping
 
 from fastapi import (
     Request,
     status,
 )
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
 
 class Forbidden(Exception):
+    pass
+
+
+class InvalidKey(Forbidden):
     pass
 
 
@@ -33,9 +40,66 @@ not_found_handler = _detail_handler(status.HTTP_404_NOT_FOUND)
 mismatch_handler = _detail_handler(status.HTTP_400_BAD_REQUEST)
 
 
-async def internal_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled exception on %s %s", request.method, request.url)
+async def invalid_key_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal server error occurred."},
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": str(exc), "code": "invalid_key"},
     )
+
+
+def _route_label(scope: Scope) -> str:
+    endpoint = scope.get("endpoint")
+    if endpoint is None:
+        return "<unmatched route>"
+    name = f"{endpoint.__module__}.{endpoint.__qualname__}"
+    path = getattr(scope.get("route"), "path", None)
+    return f"{name} ({path})" if isinstance(path, str) else name
+
+
+def log_unhandled_exception(scope: Scope, exc: BaseException) -> None:
+    logger.error(
+        "Unhandled %s on %s %s\n%s",
+        type(exc).__name__,
+        scope.get("method", "-"),
+        _route_label(scope),
+        "".join(traceback.format_tb(exc.__traceback__)).rstrip(),
+    )
+
+
+class UnhandledErrorMiddleware:
+    """
+    Turn any unhandled exception into a generic 500 and log it without request
+    details or the exception message, which can carry entry names or SQL
+    parameters. The exception is not re-raised, so the server does not log the
+    full traceback again on its own.
+    """
+
+    def __init__(self, app: ASGIApp, headers: Mapping[str, str]) -> None:
+        self.app = app
+        self.headers = dict(headers)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception as exc:
+            log_unhandled_exception(scope, exc)
+            if response_started:
+                return
+            response = JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": "An internal server error occurred."},
+                headers=self.headers,
+            )
+            await response(scope, receive, send)

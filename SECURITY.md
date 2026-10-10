@@ -24,6 +24,15 @@ Things that are out of scope:
 - Vulnerabilities in third-party dependencies that don't directly affect ciphermoth - please report those upstream
 - Self-XSS or anything only exploitable by someone already authenticated with their own master password
 
+## What the server knows
+
+So you can judge reports (and your own deployment) against what CipherMoth actually does:
+
+- The master password is only ever stored as a bcrypt hash. The vault key is derived from it with Argon2id and is never written to disk or logs.
+- When you unlock, the server hands the vault key to your browser (or the CLI), which sends it back with every request. The server checks it against an encrypted check value in the vault, uses it in memory, and forgets it. While you're using the vault, the server process sees your secrets in plaintext.
+- Passwords, notes, URLs, 2FA secrets, tags, folders, custom fields, password history and attachments are encrypted in the database. Entry **names, usernames and descriptions are not** (nor the entry type, favorite flag, timestamps and attachment sizes), so a copy of the database reveals which entries you have and their usernames.
+- Backup ZIPs are AES-256 encrypted with your master password, but the ZIP format derives that key with PBKDF2-SHA1 at 1,000 iterations. A stolen backup is much cheaper to brute-force than the vault itself.
+
 ## Updates and the supply chain
 
 Release images (`ciphermoth-backend`, `-frontend`, `-updater`) are signed with [cosign](https://github.com/sigstore/cosign) - keyless, via GitHub OIDC - so each image's digest is provably built by CipherMoth's own release workflow.

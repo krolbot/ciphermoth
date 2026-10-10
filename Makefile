@@ -89,6 +89,25 @@ format:
 	cd backend && uv run ruff format .
 	cd frontend && npm run format
 
+# Tests run against a throwaway Postgres in a tmpfs container (no volume), removed afterwards.
+TEST_DB_CONTAINER := ciphermoth-test-db
+TEST_DB_PORT := 55432
+TEST_DB_URL := postgresql://ciphermoth_test:ciphermoth_test@127.0.0.1:$(TEST_DB_PORT)/ciphermoth_test
+
+.PHONY: test
+test:
+	@docker rm -f $(TEST_DB_CONTAINER) >/dev/null 2>&1 || true
+	@docker run -d --rm --name $(TEST_DB_CONTAINER) \
+		-e POSTGRES_USER=ciphermoth_test -e POSTGRES_PASSWORD=ciphermoth_test \
+		-e POSTGRES_DB=ciphermoth_test -p 127.0.0.1:$(TEST_DB_PORT):5432 \
+		--tmpfs /var/lib/postgresql/data postgres:16-alpine >/dev/null
+	@for i in $$(seq 1 30); do \
+		docker exec $(TEST_DB_CONTAINER) pg_isready -U ciphermoth_test -d ciphermoth_test >/dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@cd backend && CIPHERMOTH_TEST_DB_URL=$(TEST_DB_URL) uv run pytest; \
+		status=$$?; docker rm -f $(TEST_DB_CONTAINER) >/dev/null 2>&1; exit $$status
+
 .PHONY: check
 check:
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run ty check .

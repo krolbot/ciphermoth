@@ -21,6 +21,8 @@ REQUEST_FILE="${CONTROL_DIR}/request.json"
 RESULT_FILE="${CONTROL_DIR}/result.json"
 READY_FILE="${CONTROL_DIR}/updater.ready"
 
+SEMVER_RE='^v?([0-9]{1,9})\.([0-9]{1,9})\.([0-9]{1,9})$'
+
 log() { echo "[updater] $*" >&2; }
 
 compose() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
@@ -88,6 +90,24 @@ snapshot_db() {
   fi
 }
 
+version_is_newer() {
+  local candidate="$1" current="$2" i
+  local -a cand cur
+  [[ "$candidate" =~ $SEMVER_RE ]] || return 1
+  cand=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  [[ "$current" =~ $SEMVER_RE ]] || return 1
+  cur=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  for i in 0 1 2; do
+    if ((10#${cand[i]} > 10#${cur[i]})); then return 0; fi
+    if ((10#${cand[i]} < 10#${cur[i]})); then return 1; fi
+  done
+  return 1
+}
+
+running_version() {
+  curl -fsS "$HEALTH_URL" 2>/dev/null | jq -r '.version // empty' 2>/dev/null
+}
+
 health_ok() {
   local target="$1" i got
   for i in $(seq 1 "$HEALTH_RETRIES"); do
@@ -106,6 +126,20 @@ process_request() {
   rm -f "$REQUEST_FILE"
   if [ -z "$target" ]; then
     log "empty/invalid request; ignoring"
+    return
+  fi
+
+  if [[ ! "$target" =~ $SEMVER_RE ]]; then
+    log "refusing malformed target"
+    write_result "failed" "Refused: the requested target is not a release tag. Nothing was changed." ""
+    return
+  fi
+
+  local running
+  running="$(running_version)"
+  if ! version_is_newer "$target" "$running"; then
+    log "refusing ${target}: not newer than the running version '${running}'"
+    write_result "failed" "Refused: ${target} is not newer than the running version. Nothing was changed." "$target"
     return
   fi
 
@@ -154,4 +188,6 @@ main() {
   done
 }
 
-main
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main
+fi

@@ -17,6 +17,8 @@ _ARGON2_ITERATIONS = 3
 _ARGON2_LANES = 4
 _ARGON2_LENGTH = 32
 
+_KEY_CHECK_PLAINTEXT = b"ciphermoth-key-check-v1"
+
 
 def _bcrypt_input(master_password: str) -> bytes:
     digest = hashlib.sha256(master_password.encode()).digest()
@@ -58,6 +60,28 @@ def decrypt_bytes(key: bytes | str, encrypted_value: bytes) -> bytes | None:
         return Fernet(key).decrypt(encrypted_value)
     except InvalidToken:
         return None
+
+
+def create_key_check(key: bytes | str) -> bytes:
+    return encrypt(key, _KEY_CHECK_PLAINTEXT)
+
+
+def verify_key_check(key: bytes | str | None, key_check: bytes | None) -> bool:
+    """
+    Return True only if ``key`` is exactly the vault key that produced
+    ``key_check``.
+
+    Comparing the decrypted plaintext matters: Fernet authenticates with the first
+    half of the key and decrypts with the second, so a key with the right signing
+    half and a wrong encryption half passes the HMAC and yields garbage.
+    """
+    if not key or key_check is None:
+        return False
+    try:
+        plaintext = Fernet(key).decrypt(key_check)
+    except (InvalidToken, ValueError, TypeError):
+        return False
+    return hmac.compare_digest(plaintext, _KEY_CHECK_PLAINTEXT)
 
 
 def encrypt_optional(key: bytes | str, value: str | None) -> bytes | None:

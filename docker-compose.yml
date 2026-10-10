@@ -26,7 +26,7 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn main:app --host 0.0.0.0 --port 80 --reload"
     ports:
-      - "8000:80"
+      - "127.0.0.1:8000:80"
     env_file:
       - ./backend/.db.env
     environment:
@@ -45,7 +45,7 @@ services:
       context: .
       dockerfile: docker/frontend/Dockerfile.dev
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       VITE_API_URL: http://localhost:8000/api
       VITE_PORT: "3000"

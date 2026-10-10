@@ -41,6 +41,7 @@ class MasterPasswordModel(BaseModel):
 
     salt: Mapped[bytes] = mapped_column(LargeBinary)
     hash_key: Mapped[str] = mapped_column(String)
+    key_check: Mapped[bytes | None] = mapped_column(LargeBinary)
 
 
 class PasswordModel(BaseModel):

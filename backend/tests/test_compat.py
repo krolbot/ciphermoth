@@ -1,0 +1,308 @@
+import io
+import json
+
+import httpx
+import pyzipper
+
+from helpers import create_encrypted_zip
+from settings import get_api_settings
+from tests.support import (
+    MASTER_PASSWORD,
+    WRONG_MASTER_PASSWORD,
+    auth,
+    create_vault,
+    db_execute,
+    entry,
+    unlock,
+)
+
+FULL_LOGIN = entry(
+    "GitHub #work",
+    "gh-Secret-1",
+    username="moth@example.com",
+    url="https://github.com",
+    totp_secret="otpauth://totp/GitHub:moth?secret=jbsw y3dp ehpk 3pxp&issuer=GitHub",
+    description="work account",
+    tags=["dev", " dev ", "ops"],
+    custom_fields=[
+        {"label": "Recovery", "value": "abcd-efgh", "hidden": True},
+        {"label": "", "value": "dropped"},
+    ],
+    folder="Work",
+    favorite=True,
+)
+NOTE = entry("Wi-Fi ключ", "  line one\n\tline two\n\n", kind="note")
+
+
+async def _get(client: httpx.AsyncClient, key: str, name: str) -> dict:
+    resp = await client.get(f"/passwords/{name.replace('#', '%23')}", headers=auth(key))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_vault_lifecycle_and_unlock(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/master_password/status")
+    assert resp.json() == {"initialized": False}
+    assert (await client.get("/meta")).json() == {"version": get_api_settings().version}
+
+    resp = await client.post(
+        "/master_password/create", json={"master_password": "short"}
+    )
+    assert resp.status_code == 422
+
+    key = await create_vault(client)
+    assert (await client.get("/master_password/status")).json() == {"initialized": True}
+    resp = await client.post(
+        "/master_password/create", json={"master_password": MASTER_PASSWORD}
+    )
+    assert resp.status_code == 403
+
+    assert await unlock(client) == key
+    assert await unlock(client, f"  {MASTER_PASSWORD}  ") == key
+    resp = await client.post(
+        "/master_password/check", json={"master_password": WRONG_MASTER_PASSWORD}
+    )
+    assert resp.json() == {"valid": False, "key_derivation": None}
+
+
+async def test_entries_notes_totp_history_and_favorites(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    headers = auth(key)
+    for item in (FULL_LOGIN, NOTE):
+        resp = await client.post("/passwords/create", json=item, headers=headers)
+        assert resp.status_code == 200, resp.text
+    resp = await client.post("/passwords/create", json=NOTE, headers=headers)
+    assert resp.status_code == 400
+
+    login = await _get(client, key, "GitHub #work")
+    assert login["totp_secret"] == "JBSWY3DPEHPK3PXP"
+    assert login["tags"] == ["dev", "ops"]
+    assert login["custom_fields"] == [
+        {"label": "Recovery", "value": "abcd-efgh", "hidden": True}
+    ]
+    assert login["folder"] == "Work"
+    assert login["favorite"] is True
+    note = await _get(client, key, "Wi-Fi ключ")
+    assert note["password_value"] == "  line one\n\tline two\n\n"
+    assert note["kind"] == "note"
+
+    resp = await client.post(
+        "/passwords/create",
+        json=entry("bad-totp", totp_secret="not base32!"),
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+    renamed = {**FULL_LOGIN, "password_name": "GitHub", "password_value": "gh-2"}
+    resp = await client.patch(
+        "/passwords/update",
+        json={"password": FULL_LOGIN, "new_password": renamed},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    login = await _get(client, key, "GitHub")
+    assert login["password_value"] == "gh-2"
+    assert [h["value"] for h in login["password_history"]] == ["gh-Secret-1"]
+
+    listing = await client.get("/passwords", headers=headers)
+    assert [p["password_name"] for p in listing.json()] == ["GitHub", "Wi-Fi ключ"]
+
+    resp = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert resp.status_code == 200
+    resp = await client.patch(
+        "/passwords/GitHub/favorite", json={"favorite": False}, headers=headers
+    )
+    assert resp.status_code == 200
+    login = await _get(client, key, "GitHub")
+    assert login["favorite"] is False
+    assert login["backed_up"] is True
+
+
+async def test_trash_restore_and_purge(client: httpx.AsyncClient) -> None:
+    key = await create_vault(client)
+    headers = auth(key)
+    await client.post("/passwords/create", json=entry("site"), headers=headers)
+    resp = await client.post(
+        "/passwords/site/attachments",
+        files={"file": ("a.txt", b"attached", "text/plain")},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    assert (await client.delete("/passwords/site", headers=headers)).status_code == 200
+    assert (await client.get("/passwords/site", headers=headers)).status_code == 404
+    trash = (await client.get("/passwords/trash", headers=headers)).json()
+    assert [t["password_name"] for t in trash] == ["site"]
+    assert trash[0]["attachment_count"] == 1
+
+    resp = await client.post("/passwords/site/restore", headers=headers)
+    assert resp.status_code == 200
+    listing = await client.get("/passwords/site/attachments", headers=headers)
+    assert len(listing.json()) == 1
+
+    await client.delete("/passwords/site", headers=headers)
+    resp = await client.post(
+        "/passwords/create", json=entry("site", "replacement-1"), headers=headers
+    )
+    assert resp.status_code == 200
+    resp = await client.post("/passwords/site/restore", headers=headers)
+    assert resp.status_code == 400
+
+    resp = await client.delete("/passwords/site/purge", headers=headers)
+    assert resp.status_code == 200
+    assert await db_execute("SELECT id FROM password_attachments") == []
+    assert (await _get(client, key, "site"))["password_value"] == "replacement-1"
+    resp = await client.get("/passwords/trash", headers=headers)
+    assert resp.json() == []
+
+
+async def test_attachments(client: httpx.AsyncClient) -> None:
+    key = await create_vault(client)
+    headers = auth(key)
+    await client.post("/passwords/create", json=entry("docs"), headers=headers)
+
+    resp = await client.post(
+        "/passwords/docs/attachments",
+        files={"file": ("Preț.pdf", b"%PDF-\x00\xff", "application/pdf")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    att = resp.json()
+    assert att["filename"] == "Preț.pdf"
+
+    download = await client.get(
+        f"/passwords/docs/attachments/{att['id']}", headers=headers
+    )
+    assert download.content == b"%PDF-\x00\xff"
+    assert download.headers["content-type"] == "application/pdf"
+    assert "filename*=UTF-8''Pre%C8%9B.pdf" in download.headers["content-disposition"]
+
+    resp = await client.post(
+        "/passwords/docs/attachments",
+        files={"file": ("empty.txt", b"", "text/plain")},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+    resp = await client.delete(
+        f"/passwords/docs/attachments/{att['id']}", headers=headers
+    )
+    assert resp.status_code == 200
+    listing = await client.get("/passwords/docs/attachments", headers=headers)
+    assert listing.json() == []
+
+
+async def test_csv_import_skip_and_overwrite(client: httpx.AsyncClient) -> None:
+    key = await create_vault(client)
+    headers = auth(key)
+    await client.post("/passwords/create", json=entry("mail", "old-1"), headers=headers)
+    csv_bytes = (
+        "﻿Title,Login,Password,Website,Notes,Folder,TOTP\n"
+        "mail,me,new-1,https://mail.test,hello,Personal,JBSWY3DPEHPK3PXP\n"
+        "shop,me,shop-1,,,,\n"
+    ).encode()
+
+    resp = await client.post(
+        "/passwords/import/csv",
+        data={"on_conflict": "skip"},
+        files={"file": ("x.csv", csv_bytes, "text/csv")},
+        headers=headers,
+    )
+    assert resp.json() == {"imported": 1, "skipped": 1, "overwritten": 0, "total": 2}
+    assert (await _get(client, key, "mail"))["password_value"] == "old-1"
+
+    resp = await client.post(
+        "/passwords/import/csv",
+        data={"on_conflict": "overwrite"},
+        files={"file": ("x.csv", csv_bytes, "text/csv")},
+        headers=headers,
+    )
+    assert resp.json()["overwritten"] == 2
+    mail = await _get(client, key, "mail")
+    assert mail["password_value"] == "new-1"
+    assert mail["folder"] == "Personal"
+    assert mail["totp_secret"] == "JBSWY3DPEHPK3PXP"
+
+
+async def test_backup_export_and_restore_into_a_fresh_vault(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    headers = auth(key)
+    for item in (FULL_LOGIN, NOTE):
+        await client.post("/passwords/create", json=item, headers=headers)
+
+    resp = await client.post(
+        "/passwords/backup",
+        json={"master_password": WRONG_MASTER_PASSWORD},
+        headers=headers,
+    )
+    assert resp.status_code == 403
+    resp = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert resp.status_code == 200
+    archive = resp.content
+    with pyzipper.AESZipFile(io.BytesIO(archive)) as zf:
+        zf.setpassword(MASTER_PASSWORD.encode())
+        payload = json.loads(zf.read("ciphermoth_backup.json"))
+    assert {p["name"] for p in payload["passwords"]} == {"GitHub #work", "Wi-Fi ключ"}
+    exported = await client.get("/passwords", headers=headers)
+
+    await db_execute(
+        "TRUNCATE master_password, passwords, password_attachments, settings "
+        "RESTART IDENTITY CASCADE"
+    )
+    new_key = await create_vault(client)
+    assert new_key != key
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": WRONG_MASTER_PASSWORD},
+        files={"file": ("b.zip", archive, "application/zip")},
+        headers=auth(new_key),
+    )
+    assert resp.status_code == 403
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD},
+        files={"file": ("b.zip", archive, "application/zip")},
+        headers=auth(new_key),
+    )
+    assert resp.json()["imported"] == 2
+    restored = await client.get("/passwords", headers=auth(new_key))
+    fields = ("password_name", "kind", "username", "password_value", "url")
+    fields += ("totp_secret", "description", "tags", "custom_fields", "folder")
+    assert [{f: p[f] for f in fields} for p in restored.json()] == [
+        {f: p[f] for f in fields} for p in exported.json()
+    ]
+
+    legacy = create_encrypted_zip(
+        [{"name": "legacy", "value": "v1-backup", "description": "old format"}],
+        MASTER_PASSWORD,
+    )
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD},
+        files={"file": ("old.zip", legacy, "application/zip")},
+        headers=auth(new_key),
+    )
+    assert resp.json()["imported"] == 1
+
+
+async def test_settings_round_trip_and_validation(client: httpx.AsyncClient) -> None:
+    key = await create_vault(client)
+    headers = auth(key)
+    defaults = (await client.get("/settings", headers=headers)).json()
+    assert defaults["inactivity_ms"] == 120_000
+    changed = {**defaults, "clipboard_clear_ms": 10_000, "update_check_enabled": False}
+    resp = await client.patch("/settings", json=changed, headers=headers)
+    assert resp.json() == changed
+    resp = await client.patch(
+        "/settings", json={**changed, "inactivity_ms": 1}, headers=headers
+    )
+    assert resp.status_code == 422
+    assert (await client.get("/settings", headers=headers)).json() == changed

@@ -141,10 +141,10 @@ The **Backup** button in the web UI downloads the same encrypted ZIP straight to
 
 It follows the same zero-trust rules as the web UI, and it's small enough to read in one sitting ([`backend/cli.py`](../backend/cli.py)).
 
-- **Nothing is stored.** There is no session, no token cache, no config file. Each command prompts for the master password, derives the key, uses it for that one command, and forgets it. That's also why every command asks again.
+- **Nothing is stored.** There is no session, no token cache, no config file. Each command prompts for the master password, unlocks the vault to get the key, uses it for that one command, and forgets it. That's also why every command asks again.
 - **Secrets are never arguments.** Passwords and note bodies are typed at a hidden prompt, so they don't reach your shell history, `ps`, or `docker inspect`. Only entry names are arguments, so `cip password get github` does reveal in your history that a `github` entry exists.
 - **Redirects are never followed**, so the key-derivation header can't be replayed to another host.
-- **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password.
+- **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password. The ZIP format turns that password into a key with PBKDF2-SHA1 at 1,000 iterations, which is much weaker than the vault's Argon2id, so treat the file itself as sensitive and keep it somewhere safe. It holds your active entries, not the trash, password history, attachments or settings.
 - **You get warned about plaintext transport.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI says so before prompting, because your master password would cross the network unencrypted. Put the API behind HTTPS, or reach it over a VPN or SSH tunnel.
 
 A note on entry names: names containing a `/` can be created in the web UI but can't be addressed from the CLI, because the API routes on the name. The CLI reports a plain "no password found" for those rather than acting on a different entry. Rename them if you want to reach them from the terminal.
