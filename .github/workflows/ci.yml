@@ -72,7 +72,7 @@ jobs:
         run: uv run pytest
 
   frontend:
-    name: Frontend (ESLint + Prettier)
+    name: Frontend (ESLint + Prettier + Vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,3 +95,7 @@ jobs:
       - name: Format check
         working-directory: frontend
         run: npm run format:check
+
+      - name: Test
+        working-directory: frontend
+        run: npm test

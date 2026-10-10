@@ -94,8 +94,7 @@ TEST_DB_CONTAINER := ciphermoth-test-db
 TEST_DB_PORT := 55432
 TEST_DB_URL := postgresql://ciphermoth_test:ciphermoth_test@127.0.0.1:$(TEST_DB_PORT)/ciphermoth_test
 
-.PHONY: test
-test:
+define run_backend_tests
 	@docker rm -f $(TEST_DB_CONTAINER) >/dev/null 2>&1 || true
 	@docker run -d --rm --name $(TEST_DB_CONTAINER) \
 		-e POSTGRES_USER=ciphermoth_test -e POSTGRES_PASSWORD=ciphermoth_test \
@@ -105,8 +104,19 @@ test:
 		docker exec $(TEST_DB_CONTAINER) pg_isready -U ciphermoth_test -d ciphermoth_test >/dev/null 2>&1 && break; \
 		sleep 1; \
 	done
-	@cd backend && CIPHERMOTH_TEST_DB_URL=$(TEST_DB_URL) uv run pytest; \
+	@cd backend && CIPHERMOTH_TEST_DB_URL=$(TEST_DB_URL) $(1) uv run pytest $(2); \
 		status=$$?; docker rm -f $(TEST_DB_CONTAINER) >/dev/null 2>&1; exit $$status
+endef
+
+.PHONY: test
+test:
+	$(call run_backend_tests,,)
+	cd frontend && npm test
+
+# Fuzzing with many more Hypothesis examples, fault injection and scale tests.
+.PHONY: test-stress
+test-stress:
+	$(call run_backend_tests,HYPOTHESIS_PROFILE=stress,-m "stress or not stress")
 
 .PHONY: check
 check:

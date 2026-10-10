@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from hypothesis import HealthCheck, settings
 from sqlalchemy import text
 
 from api.rate_limit import limiter
@@ -22,6 +23,23 @@ from tests.support import (
     run_alembic,
     update_control_dir,
 )
+
+_HYPOTHESIS_HEALTH = [HealthCheck.function_scoped_fixture, HealthCheck.too_slow]
+settings.register_profile(
+    "default",
+    max_examples=25,
+    derandomize=True,
+    database=None,
+    deadline=None,
+    suppress_health_check=_HYPOTHESIS_HEALTH,
+)
+settings.register_profile(
+    "stress",
+    max_examples=500,
+    deadline=None,
+    suppress_health_check=_HYPOTHESIS_HEALTH,
+)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
