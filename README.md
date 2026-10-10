@@ -47,7 +47,7 @@ the **signed** images, and starts everything:
 curl -fsSL https://raw.githubusercontent.com/mr-grj/ciphermoth/master/install.sh | sh
 ```
 
-Open **[http://localhost:3001](http://localhost:3001)**, create your master password, and you're in. The vault
+Open **[http://localhost:3000](http://localhost:3000)**, create your master password, and you're in. The vault
 lives in a persistent Docker volume, so it survives restarts and updates.
 
 Rather read the script before piping it to a shell, set it up by hand, run it on a real server, or tweak the config?
