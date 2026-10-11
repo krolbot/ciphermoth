@@ -153,7 +153,7 @@ async def test_validation_errors_do_not_echo_submitted_values(
     assert resp.status_code in (403, 422)
     assert weak not in resp.text
 
-    secret_note = "secret-note-canary " * 100
+    secret_note = "secret-note-canary " * 600
     resp = await client.post(
         "/passwords/create",
         json=entry("echo", "secret-value-canary", description=secret_note),
@@ -164,7 +164,7 @@ async def test_validation_errors_do_not_echo_submitted_values(
     assert "secret-value-canary" not in resp.text
     [error] = resp.json()["detail"]
     assert error["loc"] == ["body", "description"]
-    assert "1024" in error["msg"]
+    assert "10000" in error["msg"]
 
     resp = await client.patch(
         "/master_password/update",

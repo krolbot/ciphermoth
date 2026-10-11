@@ -6,13 +6,13 @@
 
 - **Changes are saved before the API answers.** The database transaction was committed only after the response had been sent, so a request made immediately after a change could miss it, and a change whose commit failed was still reported as successful. The commit now happens first, and a failed commit returns an error.
 - **An entry name containing `/` could act on a different entry.** The API routes on the entry name, so deleting an entry named `x/purge` permanently deleted a trashed entry named `x`, and `ciphermoth password delete "x/attachments/1"` deleted an attachment of `x` while reporting success. The server now refuses any request whose entry name contains a `/`, and the CLI refuses such names before sending anything. Rename an affected entry (edit it) to manage it by name again.
-- **Imports can no longer break the vault.** CSV and backup imports skipped the checks the rest of the app applies, so an over-long description, name or URL, an invalid 2FA secret, or a malformed backup entry was stored as is, after which the whole vault list failed to load. Every imported row is now checked first; if any row is invalid nothing is imported and the error names the row and column. A vault already affected by this can be opened and the entry fixed by editing it.
+- **Imports can no longer break the vault.** CSV and backup imports skipped the checks the rest of the app applies, so an over-long description, name or URL, an invalid 2FA secret, or a malformed backup entry was stored as is, after which the whole vault list failed to load. A vault already affected by this opens again, and the entry can be fixed by editing it. Every imported row is now checked before anything is written; if any row is invalid nothing is imported and the error names the row and column. CSV rows get the same checks as a new entry. A CipherMoth backup restores exactly what the vault held, including values older imports stored over the usual limits, and refuses only what the vault can't store at all.
 - **CSV cells larger than 128 KB** (long notes or passwords) made the import fail with a server error. They now import, and a CSV that can't be parsed gets a clear error with the line number.
 - **Concurrent edits no longer lose passwords from the history.** Two edits of the same entry at the same moment each started from the same old value, so one replaced password vanished from the history. Concurrent attachment uploads could also push an entry past the 25 MB and 20-file limits. Edits and uploads to one entry are now applied one at a time.
 - **Text the database can't store is refused with a clear message** instead of a server error: a NUL character in an entry name, username or description, or a broken Unicode escape anywhere in a request, including the master password.
 - **Proton Pass CSV imports keep the login email** when the username column is empty. Any CSV column now falls back to the next matching column when its cell is blank.
 - **Restoring or renaming onto a name that was just taken** returns a clear error instead of a server error.
-- **Entries named `.` or `..`** can be reached from the CLI.
+- **Entries named `.` or `..`** could make the web UI act on a different entry, because browsers resolve those names in a URL (purging a trashed `.` trashed an entry named `purge`). New entries can't use these names, the web UI refuses to act on such a name (or one containing `/`) and asks you to rename it, and the CLI can still reach existing ones.
 
 ### Security
 
@@ -21,6 +21,7 @@
 
 ### Changed
 
+- **Descriptions can be up to 10,000 characters** (was 1,024), so notes from Bitwarden or KeePass exports import instead of failing.
 - **Backups and imports are checked against frozen test data from every release.** Vaults and backups created by v1.0.0 to v1.4.6, and vault databases from Dinopass v0.3.0, are proven to open, upgrade, decrypt and restore. Backups from v0.3.0 (`dinopass_backup.json`) are not importable. See [testdata/golden](testdata/golden/README.md).
 - The backend now declares Python `>=3.13,<3.15`.
 

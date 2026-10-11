@@ -96,7 +96,7 @@ async def test_csv_cells_larger_than_the_csv_module_default_import(
         ("title", "password_name", 255),
         ("username", "username", 255),
         ("url", "url", 2048),
-        ("notes", "description", 1024),
+        ("notes", "description", 10_000),
         ("folder", "folder", 200),
     ],
 )
@@ -129,7 +129,7 @@ async def test_csv_values_at_the_schema_limits_import_and_read_back(
         "password": "p" * 10_000,
         "username": "u" * 255,
         "url": "h" * 2048,
-        "notes": "d" * 1024,
+        "notes": "d" * 10_000,
         "folder": "f" * 200,
     }
     resp = await _import_csv(client, vault, _csv([list(row), list(row.values())]))
@@ -150,7 +150,7 @@ async def test_a_failed_csv_import_does_not_overwrite_existing_entries(
     rows = [
         ["name", "password", "notes"],
         ["existing", "overwritten-Pass-2", "changed"],
-        ["new", "new-Pass-1", "x" * 1025],
+        ["new", "new-Pass-1", "x" * 10_001],
     ]
 
     resp = await _import_csv(client, vault, _csv(rows), on_conflict="overwrite")
@@ -173,36 +173,19 @@ async def test_unparseable_csv_gets_a_clear_error(
 @pytest.mark.parametrize(
     ("bad_entry", "where"),
     [
-        ({"name": "n" * 256, "value": "v"}, "name"),
-        ({"name": "a", "value": "v", "description": "d" * 1025}, "description"),
-        ({"name": "a", "value": "v", "username": "u" * 256}, "username"),
-        ({"name": "a", "value": "v", "url": "h" * 2049}, "url"),
-        ({"name": "a", "value": "v", "folder": "f" * 201}, "folder"),
-        ({"name": "a", "value": "v", "tags": [f"t{i}" for i in range(21)]}, "tags"),
         ({"name": "a", "value": "v", "tags": "not-a-list"}, "tags"),
-        ({"name": "a", "value": "v", "totp_secret": "not base32!"}, "totp_secret"),
-        (
-            {
-                "name": "a",
-                "value": "v",
-                "custom_fields": [{"label": "pin", "value": "x" * 4097}],
-            },
-            "custom_fields",
-        ),
-        (
-            {
-                "name": "a",
-                "value": "v",
-                "custom_fields": [{"label": f"f{i}", "value": "x"} for i in range(31)],
-            },
-            "custom_fields",
-        ),
+        ({"name": "a", "value": "v", "tags": [1, 2]}, "tags"),
         ({"name": "a", "value": 12345}, "value"),
         ({"name": ["a"], "value": "v"}, "name"),
         ({"name": "a", "value": "v", "username": {"nested": True}}, "username"),
+        ({"name": "a", "value": "v", "url": 7}, "url"),
+        ({"name": "a\x00b", "value": "v"}, "name"),
+        ({"name": "a", "value": "v", "description": "x\x00y"}, "description"),
+        ({"name": "..", "value": "v"}, "name"),
+        ({"name": ".", "value": "v"}, "name"),
     ],
 )
-async def test_backup_entries_that_would_poison_the_vault_are_refused(
+async def test_backup_entries_the_vault_cannot_store_are_refused(
     client: httpx.AsyncClient, vault: Headers, bad_entry: dict, where: str
 ) -> None:
     before = await db_snapshot()
@@ -218,37 +201,130 @@ async def test_backup_entries_that_would_poison_the_vault_are_refused(
     assert len(await _listing(client, vault)) == 1
 
 
-async def test_backup_import_normalizes_like_the_create_endpoint(
+LEGACY_ENTRIES = [
+    {"name": "n" * 300, "value": "long-name-Value"},
+    {"name": "long notes", "value": "v", "description": "d" * 20_000},
+    {"name": "long username", "value": "v", "username": "u" * 300},
+    {"name": "long url", "value": "v", "url": "h" * 3000},
+    {"name": "long folder", "value": "v", "folder": "f" * 300},
+    {
+        "name": "many tags",
+        "value": "v",
+        "tags": [f"t{i}" + "x" * 50 for i in range(25)],
+    },
+    {"name": "bad totp", "value": "v", "totp_secret": "steam://NOTBASE32!"},
+    {
+        "name": "uri totp",
+        "value": "v",
+        "totp_secret": "otpauth://totp/x?secret=jbswy3dpehpk3pxp",
+    },
+    {
+        "name": "big fields",
+        "value": "v",
+        "custom_fields": [
+            {"label": "l" * 150, "value": "x" * 5000, "hidden": True},
+            *({"label": f"f{i}", "value": "x"} for i in range(35)),
+        ],
+    },
+    {"name": "foo", "value": "plain"},
+    {"name": "foo ", "value": "trailing space"},
+    {"name": "  spaced  ", "value": "  keep surrounding spaces  ", "kind": "note"},
+    {
+        "name": "untrimmed",
+        "value": "v",
+        "tags": [" a ", "a"],
+        "custom_fields": [{"label": " pin ", "value": " 1234 ", "hidden": True}],
+        "folder": "",
+    },
+]
+
+
+async def test_backups_restore_exactly_what_the_vault_held(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    resp = await _import_zip(
-        client,
-        vault,
-        [
-            {
-                "name": "  spaced  ",
-                "value": "  keep surrounding spaces  ",
-                "kind": "note",
-                "tags": [" a ", "a", "b"],
-                "totp_secret": "jbsw y3dp ehpk 3pxp",
-                "custom_fields": [
-                    {"label": " pin ", "value": " 1234 ", "hidden": True},
-                    {"label": "", "value": "dropped"},
-                ],
-                "folder": "",
-                "favorite": True,
-            }
-        ],
+    resp = await _import_zip(client, vault, LEGACY_ENTRIES)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["imported"] == len(LEGACY_ENTRIES)
+    by_name = {p["password_name"]: p for p in await _listing(client, vault)}
+    for item in LEGACY_ENTRIES:
+        got = by_name[item["name"]]
+        assert got["password_value"] == item["value"]
+        for field in ("username", "url", "description"):
+            assert got[field] == item.get(field), (item["name"], field)
+        if "tags" in item:
+            assert got["tags"] == item["tags"]
+        if "custom_fields" in item:
+            assert len(got["custom_fields"]) == len(item["custom_fields"])
+    assert by_name["bad totp"]["totp_secret"] == "steam://NOTBASE32!"
+    assert by_name["uri totp"]["totp_secret"] == "JBSWY3DPEHPK3PXP"
+    assert by_name["long folder"]["folder"] == "f" * 300
+    assert by_name["untrimmed"]["folder"] is None
+    assert by_name["untrimmed"]["custom_fields"] == [
+        {"label": " pin ", "value": " 1234 ", "hidden": True}
+    ]
+    assert by_name["  spaced  "]["kind"] == "note"
+
+
+async def test_a_backup_of_a_vault_with_legacy_values_restores_completely(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    resp = await _import_zip(client, vault, LEGACY_ENTRIES)
+    assert resp.status_code == 200, resp.text
+    original = await _listing(client, vault)
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=vault
+    )
+    assert backup.status_code == 200
+    await db_execute("DELETE FROM passwords")
+
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD},
+        files={"file": ("backup.zip", backup.content, "application/zip")},
+        headers=vault,
+    )
+
+    assert resp.status_code == 200, resp.text
+    fields = ("password_name", "kind", "username", "password_value", "url")
+    fields += ("totp_secret", "description", "tags", "custom_fields", "folder")
+    assert [{f: p[f] for f in fields} for p in await _listing(client, vault)] == [
+        {f: p[f] for f in fields} for p in original
+    ]
+
+
+async def test_editing_a_restored_entry_applies_the_normal_limits(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    await _import_zip(client, vault, LEGACY_ENTRIES)
+    resp = await client.patch(
+        "/passwords/update",
+        json={
+            "password": {"password_name": "long username"},
+            "new_password": entry("long username", "v2", username="u" * 300),
+        },
+        headers=vault,
+    )
+    assert resp.status_code == 422
+    resp = await client.patch(
+        "/passwords/update",
+        json={
+            "password": {"password_name": "long username"},
+            "new_password": entry("long username", "v2", username="fixed"),
+        },
+        headers=vault,
     )
     assert resp.status_code == 200, resp.text
-    got = (await client.get("/passwords/spaced", headers=vault)).json()
-    assert got["password_value"] == "  keep surrounding spaces  "
-    assert got["kind"] == "note"
-    assert got["tags"] == ["a", "b"]
-    assert got["totp_secret"] == "JBSWY3DPEHPK3PXP"
-    assert got["custom_fields"] == [{"label": "pin", "value": "1234", "hidden": True}]
-    assert got["folder"] is None
-    assert got["favorite"] is True
+
+
+@pytest.mark.parametrize("name", [".", ".."])
+async def test_dot_names_cannot_be_created(
+    client: httpx.AsyncClient, vault: Headers, name: str
+) -> None:
+    resp = await client.post("/passwords/create", json=entry(name), headers=vault)
+    assert resp.status_code == 422
+    resp = await _import_csv(client, vault, _csv([["name", "password"], [name, "v"]]))
+    assert resp.status_code == 400
 
 
 async def test_backup_entries_without_a_name_or_value_are_still_skipped_quietly(
@@ -426,7 +502,7 @@ def _csv_rows(draw: st.DrawFn) -> tuple[list[dict[str, str]], str | None]:
         )
     defect = draw(st.sampled_from([None, None, "long-notes", "nul-name"]))
     if defect == "long-notes":
-        rows[-1]["notes"] = "n" * 1025
+        rows[-1]["notes"] = "n" * 10_001
     elif defect == "nul-name":
         rows[-1]["name"] += "\x00"
     return rows, defect
@@ -527,3 +603,21 @@ async def test_arbitrary_backup_entries_never_break_the_vault(
         assert await db_snapshot() == before
     listing = await _listing(client, vault)
     assert "existing" in [p["password_name"] for p in listing]
+
+
+async def test_secrets_stored_by_older_imports_still_produce_codes(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    await db_execute(
+        "INSERT INTO passwords (password_name, password_value, totp_secret, folder) "
+        "VALUES ('legacy uri', :value, :totp, :folder)",
+        value=encrypt(key, b"v"),
+        totp=encrypt(key, b"otpauth://totp/x?secret=jbsw y3dp ehpk 3pxp"),
+        folder=encrypt(key, b""),
+    )
+    [got] = [
+        p for p in await _listing(client, vault) if p["password_name"] == "legacy uri"
+    ]
+    assert got["totp_secret"] == "JBSWY3DPEHPK3PXP"
+    assert got["folder"] is None

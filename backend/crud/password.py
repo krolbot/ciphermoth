@@ -29,8 +29,11 @@ from schemas import (
     PasswordImportResult,
     PasswordResponse,
     PasswordUpdate,
+    RestoredPassword,
 )
-from validators import normalize_totp_secret
+from validators import normalize_totp_secret, normalize_totp_secret_leniently
+
+Imported = Password | RestoredPassword
 
 _MAX_JSON_BYTES = 50 * 1024 * 1024  # 50 MB
 _HISTORY_LIMIT = 10
@@ -122,7 +125,7 @@ class PasswordCRUD(BaseCRUD):
         return self._decode_json_list(key_derivation, model.password_history)
 
     def _apply_fields(
-        self, model: PasswordModel, key_derivation: str, password: Password
+        self, model: PasswordModel, key_derivation: str, password: Imported
     ) -> None:
         """Write every shared (encrypted) column onto ``model``, except the
         password value and history, which each callsite handles itself."""
@@ -153,11 +156,13 @@ class PasswordCRUD(BaseCRUD):
             username=model.username,
             password_value=self._decrypt_or_raise(key_derivation, model),
             url=decrypt_optional(key_derivation, model.url),
-            totp_secret=decrypt_optional(key_derivation, model.totp_secret),
+            totp_secret=normalize_totp_secret_leniently(
+                decrypt_optional(key_derivation, model.totp_secret)
+            ),
             description=model.description,
             tags=self._decode_tags(key_derivation, model),
             custom_fields=self._decode_custom_fields(key_derivation, model),
-            folder=decrypt_optional(key_derivation, model.folder),
+            folder=decrypt_optional(key_derivation, model.folder) or None,
             favorite=model.favorite,
             backed_up=model.backed_up,
             updated=model.updated,
@@ -365,7 +370,7 @@ class PasswordCRUD(BaseCRUD):
         existing: dict[str, PasswordModel],
         key_derivation: str,
         on_conflict: OnConflict,
-        password: Password,
+        password: Imported,
     ) -> str:
         current = existing.get(password.password_name)
         if current is None:
@@ -401,19 +406,21 @@ class PasswordCRUD(BaseCRUD):
     def _validate_import(
         rows: Iterable[tuple[str, dict[str, object] | None]],
         label_for: Callable[[str], str],
-    ) -> list[Password]:
+        schema: type[Imported] = Password,
+    ) -> list[Imported]:
         """
-        Validate every row with the same schema as the create endpoint before
-        anything is written, so an import either stores data the vault can read
-        back or stores nothing. Problems name the row and column, never the value.
+        Validate every row before anything is written, so an import either stores
+        data the vault can read back or stores nothing. CSV rows use the create
+        endpoint's schema; backups use RestoredPassword. Problems name the row and
+        column, never the value.
         """
-        valid: list[Password] = []
+        valid: list[Imported] = []
         problems: list[str] = []
         for where, fields in rows:
             if fields is None:
                 continue
             try:
-                valid.append(Password.model_validate(fields))
+                valid.append(schema.model_validate(fields))
             except ValidationError as e:
                 error = e.errors()[0]
                 field = str(error["loc"][0]) if error["loc"] else "entry"
@@ -427,7 +434,7 @@ class PasswordCRUD(BaseCRUD):
 
     async def _store_import(
         self,
-        passwords: list[Password],
+        passwords: list[Imported],
         key_derivation: str,
         on_conflict: OnConflict,
     ) -> PasswordImportResult:
@@ -500,6 +507,7 @@ class PasswordCRUD(BaseCRUD):
                 for index, item in enumerate(entries, start=1)
             ),
             label_for=lambda field: _SOURCE_KEYS.get(field, field),
+            schema=RestoredPassword,
         )
         return await self._store_import(passwords, key_derivation, on_conflict)
 

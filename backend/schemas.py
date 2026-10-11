@@ -11,7 +11,9 @@ from pydantic import (
 )
 
 from validators import (
+    addressable_name,
     normalize_totp_secret,
+    normalize_totp_secret_leniently,
     reject_nul,
     require_unicode_text,
     validate_master_password_strength,
@@ -23,6 +25,7 @@ _MAX_CUSTOM_FIELDS = 30
 _MAX_FIELD_LABEL = 100
 _MAX_FIELD_VALUE = 4096
 _MAX_FOLDER_LENGTH = 200
+_MAX_DESCRIPTION_LENGTH = 10_000
 
 
 class SimpleDetailSchema(BaseModel):
@@ -110,7 +113,7 @@ class Password(BaseModel):
     ]
     url: str | None = Field(default=None, max_length=2048)
     totp_secret: str | None = Field(default=None, max_length=512)
-    description: str | None = Field(default=None, max_length=1024)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LENGTH)
     tags: list[str] = Field(default_factory=list, max_length=_MAX_TAGS)
     custom_fields: list[CustomField] = Field(
         default_factory=list, max_length=_MAX_CUSTOM_FIELDS
@@ -129,6 +132,11 @@ class Password(BaseModel):
     @classmethod
     def _storable_as_text(cls, value: str | None) -> str | None:
         return reject_nul(value)
+
+    @field_validator("password_name")
+    @classmethod
+    def _addressable(cls, value: str | None) -> str | None:
+        return addressable_name(value)
 
     @field_validator("totp_secret")
     @classmethod
@@ -170,6 +178,65 @@ class StoredCustomField(BaseModel):
     label: str
     value: str = ""
     hidden: bool = False
+
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
+
+
+class RestoredPassword(BaseModel):
+    """
+    An entry from a CipherMoth backup, restored exactly as the vault held it.
+
+    A backup must restore whatever the vault it came from could hold, and
+    vaults written by imports before v1.4.7 can hold values over the input
+    limits, untrimmed names and invalid 2FA secrets, so only what the database
+    cannot store, or the web UI cannot address, is refused. Reads tolerate the
+    rest, and editing the entry applies the normal limits.
+    """
+
+    password_name: str = Field(min_length=1)
+    kind: str = "login"
+    username: str | None = None
+    password_value: str = Field(min_length=1)
+    url: str | None = None
+    totp_secret: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    custom_fields: list[StoredCustomField] = Field(default_factory=list)
+    folder: str | None = None
+    favorite: bool = False
+
+    @field_validator("*")
+    @classmethod
+    def _unicode(cls, value: object) -> object:
+        return require_unicode_text(value)
+
+    @field_validator("password_name", "username", "description")
+    @classmethod
+    def _storable_as_text(cls, value: str | None) -> str | None:
+        return reject_nul(value)
+
+    @field_validator("password_name")
+    @classmethod
+    def _addressable(cls, value: str | None) -> str | None:
+        return addressable_name(value)
+
+    @field_validator("totp_secret")
+    @classmethod
+    def _normalize_totp(cls, value: str | None) -> str | None:
+        return normalize_totp_secret_leniently(value)
+
+    @field_validator("folder")
+    @classmethod
+    def _clean_folder(cls, value: str | None) -> str | None:
+        return value or None
+
+    @field_validator("kind")
+    @classmethod
+    def _clean_kind(cls, value: str) -> str:
+        return value if value in ("login", "note") else "login"
 
 
 class PasswordResponse(BaseModel):

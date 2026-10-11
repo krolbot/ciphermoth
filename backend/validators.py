@@ -59,6 +59,25 @@ def reject_nul(value: str | None) -> str | None:
     return value
 
 
+def addressable_name(value: str | None) -> str | None:
+    """
+    Browsers resolve '.' and '..' path segments (also when percent-encoded)
+    before sending a request, so an entry with such a name would be routed to a
+    different URL by the web UI.
+    """
+    if value in (".", ".."):
+        raise ValueError("cannot be '.' or '..'")
+    return value
+
+
+def normalize_totp_secret_leniently(raw: str | None) -> str | None:
+    """Normalize a stored secret when possible, otherwise return it unchanged."""
+    try:
+        return normalize_totp_secret(raw)
+    except ValueError:
+        return raw
+
+
 def normalize_totp_secret(raw: str | None) -> str | None:
     """
     Normalize a two-factor secret to bare base32, or raise ValueError.
