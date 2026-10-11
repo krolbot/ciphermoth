@@ -64,6 +64,8 @@ Every command that touches encrypted data prompts for the master password. Use `
 
 On `update`, leave a prompt blank to keep the current value: you can fix a URL without retyping the password, and the password history only records a genuine change.
 
+`import` and `import-csv` are all-or-nothing: if a row is invalid nothing is imported, and the error names the row and column. Records that simply aren't importable (cards, identities, rows without a password) are listed after the summary with their row and reason; Bitwarden and Proton Pass secure notes import as secure notes.
+
 ## Examples
 
 ```shell
@@ -147,7 +149,7 @@ It follows the same zero-trust rules as the web UI, and it's small enough to rea
 - **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password. The ZIP format turns that password into a key with PBKDF2-SHA1 at 1,000 iterations, which is much weaker than the vault's Argon2id, so treat the file itself as sensitive and keep it somewhere safe. It holds your active entries, not the trash, password history, attachments or settings.
 - **You get warned about plaintext transport.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI says so before prompting, because your master password would cross the network unencrypted. Put the API behind HTTPS, or reach it over a VPN or SSH tunnel.
 
-A note on entry names: names containing a `/` can be created in the web UI but can't be addressed by name from the CLI, because the API routes on the name. The CLI refuses such a name before sending anything, and the server refuses any request that would route one elsewhere, so a command can never act on a different entry. Rename the entry (edit it in the web UI) if you want to reach it from the terminal. New entries can't be named `.` or `..`; existing ones still work from the CLI.
+A note on entry names: any name works, including ones containing `/` (the CLI checks that the server routes them correctly and refuses them on older servers rather than risk acting on a different entry). New entries can't be named `.`, `..` or `trash`, because those can't be addressed in a web address; existing ones still work from the CLI, except that `get` and `update` can't open an entry named `trash`. Rename it in the web UI.
 
 ## Rate limits
 
