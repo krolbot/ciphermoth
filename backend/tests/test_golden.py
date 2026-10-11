@@ -267,3 +267,48 @@ async def test_historical_backup_restores_into_the_current_release(
         assert got["folder"] == item.get("folder")
         assert got["custom_fields"] == item.get("custom_fields", [])
         assert got["description"] == item["description"]
+
+
+async def test_the_migration_chain_downgrades_and_upgrades_step_by_step() -> None:
+    await ensure_database(GOLDEN_DB)
+    await asyncio.to_thread(reset_schema, GOLDEN_DB)
+    revisions = [
+        line.split(" -> ")[1].split(" ")[0].strip(",")
+        for line in run_alembic("history", "-r", "base:head").splitlines()
+        if " -> " in line
+    ]
+    assert revisions[0] == HEAD
+    await asyncio.to_thread(run_alembic, "upgrade", "head", database=GOLDEN_DB)
+    for _ in revisions:
+        await asyncio.to_thread(run_alembic, "downgrade", "-1", database=GOLDEN_DB)
+    assert "(head)" not in await asyncio.to_thread(
+        run_alembic, "current", database=GOLDEN_DB
+    )
+    await asyncio.to_thread(run_alembic, "upgrade", "head", database=GOLDEN_DB)
+    assert HEAD in await asyncio.to_thread(run_alembic, "current", database=GOLDEN_DB)
+
+
+async def test_downgrading_to_the_previous_head_keeps_data_it_can_represent() -> None:
+    data = expected("v1.1.0")
+    await load_fixture("v1.1.0")
+    raw_before, before = await scan(data["key"], data["master_password"])
+
+    await asyncio.to_thread(run_alembic, "upgrade", "head", database=GOLDEN_DB)
+    await asyncio.to_thread(apply_runtime_schema, GOLDEN_DB)
+    await asyncio.to_thread(
+        run_alembic, "downgrade", data["alembic_revision"], database=GOLDEN_DB
+    )
+
+    raw_after, after = await scan(data["key"], data["master_password"])
+    for table, rows in raw_before.items():
+        for row_id, row in rows.items():
+            assert {k: raw_after[table][row_id][k] for k in row} == row
+    assert_same_vault(before, after)
+
+
+async def test_downgrade_cannot_roll_back_a_vault_that_uses_the_trash() -> None:
+    await load_fixture("v1.4.5")
+    with pytest.raises(RuntimeError, match="could not create unique index"):
+        await asyncio.to_thread(
+            run_alembic, "downgrade", "4d5e6f7a8b9c", database=GOLDEN_DB
+        )

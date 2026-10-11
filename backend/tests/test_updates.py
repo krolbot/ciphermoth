@@ -205,3 +205,226 @@ async def test_updater_still_requires_a_valid_signature_for_newer_targets(
     assert "compose" not in outcome["calls"]
     assert "pg_dump" not in outcome["calls"]
     assert "CIPHERMOTH_VERSION=1.4.5" in outcome["env"]
+
+
+_GNU_SED_IN_PLACE = """#!/usr/bin/env python3
+import os
+import re
+import sys
+
+if sys.argv[1] != "-i":
+    os.execv("/usr/bin/sed", ["sed", *sys.argv[1:]])
+expression, path = sys.argv[2], sys.argv[3]
+_, pattern, replacement, _ = expression.split(expression[1])
+with open(path) as handle:
+    text = handle.read()
+with open(path, "w") as handle:
+    handle.write(re.sub(pattern, replacement, text, flags=re.M))
+"""
+
+
+class _UpdaterRun:
+    def __init__(self, tmp_path: Path, running: str = "1.4.6") -> None:
+        self.root = tmp_path
+        self.bin = tmp_path / "bin"
+        self.state = tmp_path / "state"
+        self.control = tmp_path / "control"
+        self.backups = tmp_path / "backups"
+        for directory in (self.bin, self.state, self.control):
+            directory.mkdir()
+        self.calls = tmp_path / "calls.log"
+        self.calls.touch()
+        self.env_file = tmp_path / ".env"
+        self.env_file.write_text(
+            f"POSTGRES_PASSWORD=x\nCIPHERMOTH_VERSION={running}\nOTHER=kept\n"
+        )
+        (self.state / "running").write_text(running)
+        log = f'echo "$(basename "$0") $*" >> "{self.calls}"'
+        _stub(
+            self.bin,
+            "docker",
+            f"{log}\n"
+            'case "$*" in\n'
+            '  *inspect*) echo "repo@sha256:0" ;;\n'
+            "  *compose*up*)\n"
+            f'    version="$(grep ^CIPHERMOTH_VERSION= "{self.env_file}" '
+            '| cut -d= -f2)"\n'
+            f'    if [ -f "{self.state}/up_fail" ] && '
+            f'[ "$version" != "$(cat "{self.state}/original")" ]; then exit 1; fi\n'
+            f'    if [ -f "{self.state}/kill_on_up" ]; then '
+            "kill -KILL $PPID; exit 1; fi\n"
+            f'    echo "$version" > "{self.state}/running" ;;\n'
+            "esac\n",
+        )
+        _stub(self.bin, "cosign", log)
+        _stub(
+            self.bin,
+            "pg_dump",
+            f'{log}\nif [ -f "{self.state}/dump_fail" ]; then exit 1; fi\n'
+            'while [ $# -gt 0 ]; do [ "$1" = "-f" ] && echo "-- dump" > "$2"; '
+            "shift; done",
+        )
+        for name in ("psql", "pg_restore"):
+            _stub(self.bin, name, log)
+        if subprocess.run(["sed", "--version"], capture_output=True).returncode:
+            sed = self.bin / "sed"
+            sed.write_text(_GNU_SED_IN_PLACE)
+            sed.chmod(0o755)
+        _stub(
+            self.bin,
+            "curl",
+            f'running="$(cat "{self.state}/running")"\n'
+            f'if [ -f "{self.state}/health_fail" ] && '
+            f'[ "$running" != "$(cat "{self.state}/original")" ]; then exit 22; fi\n'
+            'echo "{\\"version\\": \\"$running\\"}"',
+        )
+        (self.state / "original").write_text(running)
+
+    def flag(self, name: str) -> None:
+        (self.state / name).touch()
+
+    def run(self, target: str, snippet: str = "process_request") -> None:
+        (self.control / "request.json").write_text(json.dumps({"target": target}))
+        self.process = subprocess.run(
+            ["bash", "-c", f'source "{UPDATER}"\n{snippet}'],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={
+                **os.environ,
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "UPDATE_CONTROL_DIR": str(self.control),
+                "ENV_FILE": str(self.env_file),
+                "BACKUP_DIR": str(self.backups),
+                "HEALTH_RETRIES": "1",
+                "HEALTH_INTERVAL": "0",
+                "POLL_INTERVAL": "0",
+            },
+        )
+
+    @property
+    def result(self) -> dict:
+        return json.loads((self.control / "result.json").read_text())
+
+    @property
+    def lines(self) -> list[str]:
+        return self.calls.read_text().splitlines()
+
+    @property
+    def env_version(self) -> str:
+        for line in self.env_file.read_text().splitlines():
+            if line.startswith("CIPHERMOTH_VERSION="):
+                return line.split("=", 1)[1]
+        return ""
+
+    @property
+    def running(self) -> str:
+        return (self.state / "running").read_text().strip()
+
+    def index(self, prefix: str) -> int:
+        return next(i for i, line in enumerate(self.lines) if line.startswith(prefix))
+
+
+@needs_shell_tools
+async def test_updater_success_verifies_snapshots_then_applies(tmp_path: Path) -> None:
+    run = _UpdaterRun(tmp_path)
+
+    run.run("v1.4.7")
+
+    assert run.result["state"] == "success", run.process.stderr
+    assert run.env_version == "1.4.7"
+    assert run.running == "1.4.7"
+    assert "OTHER=kept" in run.env_file.read_text()
+    verified = max(i for i, line in enumerate(run.lines) if line.startswith("cosign"))
+    assert verified < run.index("pg_dump") < run.index("docker compose")
+    assert len([line for line in run.lines if line.startswith("cosign")]) == 2
+    assert list(run.backups.glob("*.sql"))
+
+
+@needs_shell_tools
+@pytest.mark.parametrize("failure", ["up_fail", "health_fail"])
+async def test_updater_rolls_back_to_the_previous_images(
+    tmp_path: Path, failure: str
+) -> None:
+    run = _UpdaterRun(tmp_path)
+    run.flag(failure)
+
+    run.run("v1.4.7")
+
+    assert run.result["state"] == "rolled_back", run.process.stderr
+    assert run.result["target"] == "1.4.6"
+    assert run.env_version == "1.4.6"
+    assert run.running == "1.4.6"
+    assert "OTHER=kept" in run.env_file.read_text()
+    assert len([line for line in run.lines if " up -d " in line]) == 2
+
+
+CONTRACT = (
+    "Updater safety contract, required before any release adds an Alembic "
+    "revision (see CONTRIBUTING.md, 'Schema changes and the updater')"
+)
+
+
+@needs_shell_tools
+@pytest.mark.xfail(strict=True, reason=CONTRACT)
+async def test_contract_no_update_without_a_restorable_snapshot(tmp_path: Path) -> None:
+    run = _UpdaterRun(tmp_path)
+    run.flag("dump_fail")
+
+    run.run("v1.4.7")
+
+    assert run.result["state"] == "failed"
+    assert not [line for line in run.lines if " up -d " in line]
+    assert run.env_version == "1.4.6"
+
+
+@needs_shell_tools
+@pytest.mark.xfail(strict=True, reason=CONTRACT)
+async def test_contract_rollback_restores_the_pre_update_snapshot(
+    tmp_path: Path,
+) -> None:
+    run = _UpdaterRun(tmp_path)
+    run.flag("health_fail")
+
+    run.run("v1.4.7")
+
+    restores = [
+        i
+        for i, line in enumerate(run.lines)
+        if line.startswith(("psql", "pg_restore")) and str(run.backups) in line
+    ]
+    second_up = [i for i, line in enumerate(run.lines) if " up -d " in line][1]
+    assert restores and restores[0] < second_up
+
+
+@needs_shell_tools
+@pytest.mark.xfail(strict=True, reason=CONTRACT)
+async def test_contract_an_interrupted_update_is_reconciled_on_restart(
+    tmp_path: Path,
+) -> None:
+    run = _UpdaterRun(tmp_path)
+    run.flag("kill_on_up")
+    run.run("v1.4.7")
+    assert run.running == "1.4.6"
+
+    (run.state / "kill_on_up").unlink()
+    run.run("v0.0.0", snippet="timeout 5 bash -c 'source \"$0\"; main' " + str(UPDATER))
+
+    assert run.result["state"] in ("failed", "rolled_back", "success")
+    assert run.env_version == run.running
+
+
+@needs_shell_tools
+@pytest.mark.xfail(strict=True, reason=CONTRACT)
+async def test_contract_the_updater_updates_itself(tmp_path: Path) -> None:
+    run = _UpdaterRun(tmp_path)
+
+    run.run("v1.4.7")
+
+    services = [
+        line.split(" up -d ", 1)[1].split() for line in run.lines if " up -d " in line
+    ]
+    assert (
+        any("updater" in names for names in services)
+        or "updater" in run.result["detail"].lower()
+    )
