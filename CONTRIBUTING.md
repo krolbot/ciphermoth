@@ -137,10 +137,12 @@ The CLI warns before prompting if `CIPHERMOTH_API_URL` points at a remote host o
 CipherMoth is built to run on a machine you trust, your home server, a VPS behind a firewall, a Raspberry Pi in your closet, not to sit naked on the open internet. If you're deploying it somewhere reachable:
 
 - Set `CIPHERMOTH_FRONTEND_ORIGIN` / `CORS_ORIGINS` to your actual domain and enable `DISABLE_DOCS=true`
-- Put everything behind a reverse proxy (nginx, Caddy) with HTTPS
+- Put everything behind a reverse proxy (nginx, Caddy) with HTTPS, and have it pass request paths through **unchanged** (see below)
 - Don't expose Postgres (port `5432`) to the outside world
 
 `docker-compose.prod.yml` publishes the UI and API on `127.0.0.1` only. That is what you want when the reverse proxy runs on the same host: the proxy can reach CipherMoth, nothing else on the network can. If other machines need to reach the ports directly (a proxy on another box, a LAN, a VPN such as Tailscale), set `CIPHERMOTH_BIND_ADDRESS=0.0.0.0` in your `.env`, or a specific interface address, and make sure HTTPS sits in front. Installs from before v1.4.6 keep whatever their own copy of the compose file says until it is replaced.
+
+**Pass request paths through unchanged.** Entry names can contain `/`, which clients send as `%2F`. A proxy that decodes `%2F` before forwarding turns a request for the entry `x/purge` into a request to purge the entry `x`. Caddy's `reverse_proxy` (also inside `handle_path`) and nginx's `proxy_pass http://127.0.0.1:8000;` (no path after the address) pass the path unchanged. nginx's `proxy_pass http://127.0.0.1:8000/;` or `.../api/;` (with a path, including any path-prefix setup) decodes it. Since v1.4.7 the web UI and CLI also name the entry in a header, so the API refuses such a rewritten request instead of acting on another entry, but older clients get no such protection and the entries stay unreachable until the proxy is fixed.
 
 One thing to know about rate limiting behind a proxy: the limits are keyed on the client IP, which the app reads from the network connection. Behind a reverse proxy every request looks like it comes from the proxy, so the limits become global instead of per client. If you want per-client rate limiting, configure your proxy to preserve the real client address (and only trust `X-Forwarded-For` from the proxy itself).
 

@@ -56,10 +56,13 @@ async def _decoys() -> list[tuple]:
     )
 
 
+@pytest.mark.parametrize("named", [False, True], ids=["path-only", "with-header"])
 @pytest.mark.parametrize("name", HOSTILE_NAMES)
 async def test_every_operation_reaches_exactly_the_named_entry(
-    client: httpx.AsyncClient, vault: Headers, name: str
+    client: httpx.AsyncClient, vault: Headers, name: str, named: bool
 ) -> None:
+    if named:
+        vault = [*vault, (b"x-ciphermoth-entry", quote(name, safe="").encode())]
     resp = await client.post(
         "/passwords/create", json=entry(name, "target-Value-1"), headers=vault
     )
@@ -238,3 +241,47 @@ async def test_editing_a_name_with_surrounding_spaces_never_touches_another_entr
     renamed = (await client.get("/passwords/foo%20renamed", headers=vault)).json()
     assert renamed["password_value"] == "edited"
     assert [h["value"] for h in renamed["password_history"]] == ["legacy-foo"]
+
+
+@pytest.mark.parametrize(
+    ("method", "decoded_path", "intended"),
+    [
+        ("DELETE", "/passwords/x/purge", "x/purge"),
+        ("DELETE", "/passwords/x/attachments/1", "x/attachments/1"),
+        ("POST", "/passwords/x/restore", "x/restore"),
+        ("PATCH", "/passwords/x/favorite", "x/favorite"),
+        ("GET", "/passwords/x/attachments", "x/attachments"),
+        ("DELETE", "/passwords/x", "x/"),
+    ],
+)
+async def test_a_path_decoded_by_a_proxy_is_refused_when_the_client_names_the_entry(
+    client: httpx.AsyncClient,
+    vault: Headers,
+    method: str,
+    decoded_path: str,
+    intended: str,
+) -> None:
+    decoys = await _decoys()
+
+    resp = await client.request(
+        method,
+        decoded_path,
+        json={"favorite": True} if method == "PATCH" else None,
+        headers=[*vault, (b"x-ciphermoth-entry", quote(intended, safe="").encode())],
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "reverse proxy" in resp.json()["detail"]
+    assert await _decoys() == decoys
+
+
+async def test_the_entry_header_is_allowed_by_cors(client: httpx.AsyncClient) -> None:
+    resp = await client.options(
+        "/passwords/x",
+        headers={
+            "origin": "http://localhost:3000",
+            "access-control-request-method": "DELETE",
+            "access-control-request-headers": "x-ciphermoth-entry",
+        },
+    )
+    assert "x-ciphermoth-entry" in resp.headers["access-control-allow-headers"].lower()

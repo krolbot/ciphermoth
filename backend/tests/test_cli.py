@@ -737,3 +737,32 @@ async def test_cli_reports_renamed_records(api: str, tmp_path: Path) -> None:
     assert "2 added" in output
     assert "1 record(s) were imported under a new name" in output
     assert "row 3 (site): imported as 'site (2)'" in output
+
+
+def test_cli_names_the_entry_on_every_entry_request() -> None:
+    def respond(handler: _Recorder) -> None:
+        if handler.path.endswith("/master_password/check"):
+            handler.send(200, {"valid": True, "key_derivation": "K" * 43 + "="})
+        elif handler.path.endswith("/meta"):
+            handler.send(
+                200, {"version": "1.4.7", "features": ["entry-names-with-slash"]}
+            )
+        elif handler.command == "GET":
+            handler.send(200, {"password_name": "x/purge", "password_value": "v"})
+        else:
+            handler.send(200, {})
+
+    with _fake_server(respond) as (api, requests):
+        for command in (["get"], ["delete", "--yes"], ["restore"], ["purge", "--yes"]):
+            result = runner.invoke(
+                cli_app,
+                ["password", command[0], "x/purge", *command[1:]],
+                input=MASTER_PASSWORD + "\n",
+                env={"CIPHERMOTH_API_URL": api, "COLUMNS": "200"},
+            )
+            assert result.exit_code == 0, result.output
+
+    entry_requests = [r for r in requests if "/passwords/x%2Fpurge" in r[1]]
+    assert len(entry_requests) == 5
+    for _, _, headers in entry_requests:
+        assert headers.get("x-ciphermoth-entry") == "x%2Fpurge"

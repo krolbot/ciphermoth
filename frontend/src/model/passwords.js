@@ -12,6 +12,10 @@ export const entryPath = (passwordName, suffix = "") => {
   return `/passwords/${encodeURIComponent(passwordName)}${suffix}`;
 };
 
+export const entryHeaders = (passwordName) => ({
+  "x-ciphermoth-entry": encodeURIComponent(passwordName),
+});
+
 const Passwords = {
   error: null,
   loading: false,
@@ -63,9 +67,10 @@ const Passwords = {
   }),
 
   remove: thunk(async (actions, passwordName) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName);
     try {
-      await apiClient.delete(path);
+      await apiClient.delete(path, { headers });
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -83,9 +88,10 @@ const Passwords = {
   }),
 
   restore: thunk(async (actions, passwordName) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/restore");
     try {
-      await apiClient.post(path);
+      await apiClient.post(path, null, { headers });
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -94,9 +100,10 @@ const Passwords = {
   }),
 
   purge: thunk(async (actions, passwordName) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/purge");
     try {
-      await apiClient.delete(path);
+      await apiClient.delete(path, { headers });
       await actions.getTrash();
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to delete password."));
@@ -104,11 +111,10 @@ const Passwords = {
   }),
 
   toggleFavorite: thunk(async (actions, { passwordName, favorite }) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/favorite");
     try {
-      await apiClient.patch(path, {
-        favorite,
-      });
+      await apiClient.patch(path, { favorite }, { headers });
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to update favorite."));
@@ -116,9 +122,10 @@ const Passwords = {
   }),
 
   fetchAttachments: thunk(async (actions, passwordName) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/attachments");
     try {
-      const { data } = await apiClient.get(path);
+      const { data } = await apiClient.get(path, { headers });
       return data;
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to load attachments."));
@@ -126,11 +133,12 @@ const Passwords = {
   }),
 
   uploadAttachment: thunk(async (actions, { passwordName, file }) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/attachments");
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const { data } = await apiClient.post(path, formData);
+      const { data } = await apiClient.post(path, formData, { headers });
       await actions.get();
       return data;
     } catch (err) {
@@ -139,9 +147,10 @@ const Passwords = {
   }),
 
   downloadAttachment: thunk(async (actions, { passwordName, attachmentId, filename }) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, `/attachments/${attachmentId}`);
     try {
-      const response = await apiClient.get(path, { responseType: "blob" });
+      const response = await apiClient.get(path, { responseType: "blob", headers });
       triggerDownload(response.data, filename || "attachment");
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to download attachment."));
@@ -149,9 +158,10 @@ const Passwords = {
   }),
 
   deleteAttachment: thunk(async (actions, { passwordName, attachmentId }) => {
+    const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, `/attachments/${attachmentId}`);
     try {
-      await apiClient.delete(path);
+      await apiClient.delete(path, { headers });
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to delete attachment."));

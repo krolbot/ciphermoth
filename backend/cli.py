@@ -108,8 +108,11 @@ def _entry(resp: httpx.Response, name: str) -> dict:
     return item
 
 
-def _hdr(key: str) -> dict[str, str]:
-    return {"x-ciphermoth-key-derivation": key}
+def _hdr(key: str, name: str | None = None) -> dict[str, str]:
+    headers = {"x-ciphermoth-key-derivation": key}
+    if name is not None:
+        headers["x-ciphermoth-entry"] = quote(name, safe="")
+    return headers
 
 
 def _routes_slash_names(client: httpx.Client) -> bool:
@@ -238,7 +241,7 @@ def pw_get(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        resp = client.get(_entry_path(client, name), headers=_hdr(key))
+        resp = client.get(_entry_path(client, name), headers=_hdr(key, name))
 
     _print_details(_entry(resp, name))
 
@@ -261,7 +264,7 @@ def pw_create(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        headers = _hdr(key)
+        headers = _hdr(key, name)
 
         existing = client.get(_entry_path(client, name), headers=headers)
         if existing.is_success and isinstance(existing.json(), dict):
@@ -302,7 +305,7 @@ def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        headers = _hdr(key)
+        headers = _hdr(key, name)
 
         current = _entry(client.get(_entry_path(client, name), headers=headers), name)
         is_note = current.get("kind") == "note"
@@ -370,7 +373,7 @@ def pw_delete(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        headers = _hdr(key)
+        headers = _hdr(key, name)
 
         exists = client.get(_entry_path(client, name), headers=headers)
         if exists.status_code == 404:
@@ -424,7 +427,9 @@ def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        resp = client.post(_entry_path(client, name, "/restore"), headers=_hdr(key))
+        resp = client.post(
+            _entry_path(client, name, "/restore"), headers=_hdr(key, name)
+        )
 
     _check(resp)
 
@@ -447,7 +452,9 @@ def pw_purge(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        resp = client.delete(_entry_path(client, name, "/purge"), headers=_hdr(key))
+        resp = client.delete(
+            _entry_path(client, name, "/purge"), headers=_hdr(key, name)
+        )
 
     _check(resp)
 

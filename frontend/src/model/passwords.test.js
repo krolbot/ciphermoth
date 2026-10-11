@@ -123,6 +123,35 @@ describe("entry names in URLs", () => {
     const actions = build({ [`DELETE ${path}`]: [200, { deleted: true }] });
     await actions.remove(name);
     expect(seen[0].url).toBe(path);
+    expect(seen[0].headers["x-ciphermoth-entry"]).toBe(encodeURIComponent(name));
+  });
+
+  it("names the entry in a header on every entry request", async () => {
+    const name = "x/purge";
+    const base = "/passwords/x%2Fpurge";
+    const actions = build({
+      [`POST ${base}/restore`]: [200, {}],
+      [`DELETE ${base}/purge`]: [200, {}],
+      [`PATCH ${base}/favorite`]: [200, {}],
+      [`GET ${base}/attachments`]: [200, []],
+      [`POST ${base}/attachments`]: [200, {}],
+      [`GET ${base}/attachments/7`]: [200, new Blob(["x"])],
+      [`DELETE ${base}/attachments/7`]: [200, {}],
+    });
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
+    vi.stubGlobal("document", { createElement: () => ({ click: () => {} }) });
+    await actions.restore(name);
+    await actions.purge(name);
+    await actions.toggleFavorite({ passwordName: name, favorite: true });
+    await actions.fetchAttachments(name);
+    await actions.uploadAttachment({ passwordName: name, file: new Blob(["f"]) });
+    await actions.downloadAttachment({ passwordName: name, attachmentId: 7, filename: "f" });
+    await actions.deleteAttachment({ passwordName: name, attachmentId: 7 });
+    const entryRequests = seen.filter((config) => config.url.startsWith(base));
+    expect(entryRequests).toHaveLength(7);
+    for (const config of entryRequests) {
+      expect(config.headers["x-ciphermoth-entry"]).toBe("x%2Fpurge");
+    }
   });
 
   it.each([".", ".."])("refuses %s, which a browser would route to another URL", async (name) => {
