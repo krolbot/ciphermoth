@@ -17,17 +17,18 @@ _MAX_TOTAL_BYTES = 25 * 1024 * 1024  # 25 MB across all attachments of one entry
 
 
 class AttachmentCRUD(BaseCRUD):
-    async def _get_active_password(self, password_name: str) -> PasswordModel:
+    async def _get_active_password(
+        self, password_name: str, *, lock: bool = False
+    ) -> PasswordModel:
         model = None
         if "\x00" not in password_name:
-            model = (
-                await self.session.execute(
-                    select(PasswordModel).where(
-                        PasswordModel.password_name == password_name,
-                        PasswordModel.deleted.is_(None),
-                    )
-                )
-            ).scalar()
+            stmt = select(PasswordModel).where(
+                PasswordModel.password_name == password_name,
+                PasswordModel.deleted.is_(None),
+            )
+            if lock:
+                stmt = stmt.with_for_update().execution_options(populate_existing=True)
+            model = (await self.session.execute(stmt)).scalar()
         if not model:
             raise NotFound(f"No password found for '{password_name}' in the vault.")
         return model
@@ -90,7 +91,7 @@ class AttachmentCRUD(BaseCRUD):
         if len(data) > _MAX_ATTACHMENT_BYTES:
             raise TypesMismatchError("Attachment too large. Maximum size is 5 MB.")
 
-        password = await self._get_active_password(password_name)
+        password = await self._get_active_password(password_name, lock=True)
 
         count = (
             await self.session.execute(

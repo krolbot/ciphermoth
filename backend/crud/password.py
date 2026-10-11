@@ -63,7 +63,7 @@ _CSV_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 
 class PasswordCRUD(BaseCRUD):
     async def _get_password_model(
-        self, password_name: str, *, deleted: bool = False
+        self, password_name: str, *, deleted: bool = False, lock: bool = False
     ) -> PasswordModel:
         trashed = (
             PasswordModel.deleted.is_not(None)
@@ -72,14 +72,12 @@ class PasswordCRUD(BaseCRUD):
         )
         result = None
         if "\x00" not in password_name:
-            result = (
-                await self.session.execute(
-                    select(PasswordModel).where(
-                        PasswordModel.password_name == password_name,
-                        trashed,
-                    )
-                )
-            ).scalar()
+            stmt = select(PasswordModel).where(
+                PasswordModel.password_name == password_name, trashed
+            )
+            if lock:
+                stmt = stmt.with_for_update().execution_options(populate_existing=True)
+            result = (await self.session.execute(stmt)).scalar()
         if not result:
             where = "trash" if deleted else "vault"
             raise NotFound(f"No password found for '{password_name}' in the {where}.")
@@ -243,7 +241,7 @@ class PasswordCRUD(BaseCRUD):
     async def update_password(
         self, password_name: str, new_password: Password, key_derivation: str
     ) -> PasswordUpdate:
-        model = await self._get_password_model(password_name)
+        model = await self._get_password_model(password_name, lock=True)
 
         if model.password_name != new_password.password_name:
             conflict = (
