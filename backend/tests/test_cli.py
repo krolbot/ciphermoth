@@ -351,7 +351,16 @@ async def test_cli_reaches_exactly_the_named_entry(
 ) -> None:
     for decoy in ("notes", "a", "50", "escape", "decoy"):
         _api_create(api, key, {"password_name": decoy, "password_value": f"{decoy}-v"})
-    _api_create(api, key, {"password_name": name, "password_value": "target-Value-1"})
+    if name in (".", ".."):
+        await db_execute(
+            "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
+            n=name,
+            v=encrypt(key["x-ciphermoth-key-derivation"], b"target-Value-1"),
+        )
+    else:
+        _api_create(
+            api, key, {"password_name": name, "password_value": "target-Value-1"}
+        )
     stored = name.strip()
 
     assert "target-Value-1" in ok(cli(api, "password", "get", stored))
