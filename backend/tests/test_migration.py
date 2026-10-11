@@ -99,7 +99,8 @@ async def test_release_keeps_the_v145_alembic_head() -> None:
     output = await asyncio.to_thread(run_alembic, "heads")
     assert output.split() == [V145_HEAD, "(head)"], (
         "A new Alembic revision makes v1.4.5 crash-loop after the one-click "
-        "updater rolls back. Fix the updater's rollback before adding one."
+        "updater rolls back. The updater must meet the contract in CONTRIBUTING.md "
+        "('Schema changes and the updater') before a revision is added."
     )
 
 

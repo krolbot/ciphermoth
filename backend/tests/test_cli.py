@@ -273,47 +273,43 @@ COMPARED = (
 )
 
 
-def _key(api: str) -> str:
+@pytest.fixture
+def key(api: str) -> dict[str, str]:
     resp = httpx.post(
         f"{api}/master_password/check", json={"master_password": MASTER_PASSWORD}
     )
-    return resp.json()["key_derivation"]
+    return {"x-ciphermoth-key-derivation": resp.json()["key_derivation"]}
 
 
-def _api_create(api: str, item: dict) -> None:
-    resp = httpx.post(
-        f"{api}/passwords/create",
-        json=item,
-        headers={"x-ciphermoth-key-derivation": _key(api)},
-    )
+def _api_create(api: str, key: dict[str, str], item: dict) -> None:
+    resp = httpx.post(f"{api}/passwords/create", json=item, headers=key)
     assert resp.status_code == 200, resp.text
 
 
-def _api_get(api: str, name: str) -> dict:
-    resp = httpx.get(
-        f"{api}/passwords/{quote(name, safe='')}",
-        headers={"x-ciphermoth-key-derivation": _key(api)},
-    )
+def _api_get(api: str, key: dict[str, str], name: str) -> dict:
+    resp = httpx.get(f"{api}/passwords/{quote(name, safe='')}", headers=key)
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
 @pytest.mark.parametrize("item", [FULL_ENTRY, NOTE_ENTRY], ids=["login", "note"])
 async def test_cli_update_with_blank_answers_changes_nothing(
-    api: str, item: dict
+    api: str, key: dict[str, str], item: dict
 ) -> None:
-    _api_create(api, item)
-    before = _api_get(api, item["password_name"])
+    _api_create(api, key, item)
+    before = _api_get(api, key, item["password_name"])
     prompts = 3 if item["kind"] == "note" else 6
 
     ok(cli(api, "password", "update", item["password_name"], answers=[""] * prompts))
 
-    after = _api_get(api, item["password_name"])
+    after = _api_get(api, key, item["password_name"])
     assert {f: after[f] for f in COMPARED} == {f: before[f] for f in COMPARED}
 
 
-async def test_cli_update_changes_only_what_was_typed(api: str) -> None:
-    _api_create(api, FULL_ENTRY)
+async def test_cli_update_changes_only_what_was_typed(
+    api: str, key: dict[str, str]
+) -> None:
+    _api_create(api, key, FULL_ENTRY)
 
     ok(
         cli(
@@ -325,7 +321,7 @@ async def test_cli_update_changes_only_what_was_typed(api: str) -> None:
         )
     )
 
-    after = _api_get(api, "full")
+    after = _api_get(api, key, "full")
     assert after["password_value"] == "full-Value-2"
     assert after["description"] == "new description"
     assert [h["value"] for h in after["password_history"]] == ["full-Value-1"]
@@ -350,10 +346,12 @@ HOSTILE_NAMES = [
 
 
 @pytest.mark.parametrize("name", HOSTILE_NAMES)
-async def test_cli_reaches_exactly_the_named_entry(api: str, name: str) -> None:
+async def test_cli_reaches_exactly_the_named_entry(
+    api: str, key: dict[str, str], name: str
+) -> None:
     for decoy in ("notes", "a", "50", "escape", "decoy"):
-        _api_create(api, {"password_name": decoy, "password_value": f"{decoy}-v"})
-    _api_create(api, {"password_name": name, "password_value": "target-Value-1"})
+        _api_create(api, key, {"password_name": decoy, "password_value": f"{decoy}-v"})
+    _api_create(api, key, {"password_name": name, "password_value": "target-Value-1"})
     stored = name.strip()
 
     assert "target-Value-1" in ok(cli(api, "password", "get", stored))
@@ -377,18 +375,17 @@ async def test_cli_reaches_exactly_the_named_entry(api: str, name: str) -> None:
     ],
 )
 async def test_cli_names_with_a_slash_never_reach_another_entry(
-    api: str, name: str, command: list[str]
+    api: str, key: dict[str, str], name: str, command: list[str]
 ) -> None:
-    _api_create(api, {"password_name": "x", "password_value": "x-Value-1"})
-    key = {"x-ciphermoth-key-derivation": _key(api)}
+    _api_create(api, key, {"password_name": "x", "password_value": "x-Value-1"})
     httpx.post(
         f"{api}/passwords/x/attachments",
         files={"file": ("f.bin", b"keep me", "application/octet-stream")},
         headers=key,
     )
-    _api_create(api, {"password_name": "trashed", "password_value": "t-v"})
+    _api_create(api, key, {"password_name": "trashed", "password_value": "t-v"})
     httpx.delete(f"{api}/passwords/trashed", headers=key)
-    _api_create(api, {"password_name": name, "password_value": "slash-v"})
+    _api_create(api, key, {"password_name": name, "password_value": "slash-v"})
     before = await db_snapshot()
 
     result = cli(api, "password", command[0], name, *command[1:])
@@ -398,11 +395,14 @@ async def test_cli_names_with_a_slash_never_reach_another_entry(
     assert await db_snapshot() == before
 
 
-async def test_cli_prints_markup_in_stored_values_literally(api: str) -> None:
+async def test_cli_prints_markup_in_stored_values_literally(
+    api: str, key: dict[str, str]
+) -> None:
     markup = "[red]x[/red] [/] [link=https://evil.test]click[/link] [bold"
     name = "markup [red]x[red] [bold"
     _api_create(
         api,
+        key,
         {
             "password_name": name,
             "password_value": "v " + markup,
@@ -423,16 +423,18 @@ async def test_cli_prints_markup_in_stored_values_literally(api: str) -> None:
     assert name in listing
 
 
-async def test_cli_masks_hidden_custom_fields(api: str) -> None:
-    _api_create(api, FULL_ENTRY)
+async def test_cli_masks_hidden_custom_fields(api: str, key: dict[str, str]) -> None:
+    _api_create(api, key, FULL_ENTRY)
     details = ok(cli(api, "password", "get", "full"))
     assert "1234" not in details
     assert "••••••••" in details
     assert "42" in details
 
 
-async def test_cli_never_echoes_the_master_password(api: str, tmp_path: Path) -> None:
-    _api_create(api, FULL_ENTRY)
+async def test_cli_never_echoes_the_master_password(
+    api: str, key: dict[str, str], tmp_path: Path
+) -> None:
+    _api_create(api, key, FULL_ENTRY)
     outputs = [
         cli(api, "password", "list").output,
         cli(api, "password", "get", "full").output,
