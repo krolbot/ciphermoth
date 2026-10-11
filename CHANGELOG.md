@@ -11,7 +11,8 @@
 - **Concurrent edits no longer lose passwords from the history.** Two edits of the same entry at the same moment each started from the same old value, so one replaced password vanished from the history. Concurrent attachment uploads could also push an entry past the 25 MB and 20-file limits. Edits and uploads to one entry are now applied one at a time.
 - **Text the database can't store is refused with a clear message** instead of a server error: a NUL character in an entry name, username or description, or a broken Unicode escape anywhere in a request, including the master password.
 - **Proton Pass CSV imports keep the login email** when the username column is empty. Any CSV column now falls back to the next matching column when its cell is blank.
-- **CSV imports no longer drop records silently.** Secure notes from Bitwarden and Proton Pass exports were skipped while the import reported success. They now import as secure notes, and anything else that can't be imported (cards, identities, aliases, rows without a name or password) is listed with its row and the reason, in the web UI and the CLI.
+- **CSV imports no longer drop records silently.** Secure notes from Bitwarden and Proton Pass exports were skipped while the import reported success; they now import as secure notes. Rows sharing a name (Chrome exports two accounts for one site that way) collapsed into one entry and were reported as "already exist"; each now imports, the later ones as `name (2)`, `name (3)`. Anything that still can't be imported (cards, identities, aliases, rows without a name or password) is listed with its row and the reason, in the web UI and the CLI.
+- **Editing an entry whose name starts or ends with a space changed a different entry** with the trimmed name (such names can come from older imports). Edits now match the entry's name exactly.
 - **Restoring or renaming onto a name that was just taken** returns a clear error instead of a server error.
 
 ### Security
