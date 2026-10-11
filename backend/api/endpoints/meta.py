@@ -8,4 +8,6 @@ router = APIRouter(tags=["meta"])
 
 @router.get("", name="meta:get", response_model=MetaResponse)
 def get_meta() -> MetaResponse:
-    return MetaResponse(version=get_api_settings().version)
+    return MetaResponse(
+        version=get_api_settings().version, features=["entry-names-with-slash"]
+    )

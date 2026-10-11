@@ -181,8 +181,6 @@ async def test_unparseable_csv_gets_a_clear_error(
         ({"name": "a", "value": "v", "url": 7}, "url"),
         ({"name": "a\x00b", "value": "v"}, "name"),
         ({"name": "a", "value": "v", "description": "x\x00y"}, "description"),
-        ({"name": "..", "value": "v"}, "name"),
-        ({"name": ".", "value": "v"}, "name"),
     ],
 )
 async def test_backup_entries_the_vault_cannot_store_are_refused(
@@ -227,6 +225,8 @@ LEGACY_ENTRIES = [
         ],
     },
     {"name": "foo", "value": "plain"},
+    {"name": ".", "value": "dot"},
+    {"name": "trash", "value": "reserved now"},
     {"name": "foo ", "value": "trailing space"},
     {"name": "  spaced  ", "value": "  keep surrounding spaces  ", "kind": "note"},
     {
@@ -317,8 +317,8 @@ async def test_editing_a_restored_entry_applies_the_normal_limits(
     assert resp.status_code == 200, resp.text
 
 
-@pytest.mark.parametrize("name", [".", ".."])
-async def test_dot_names_cannot_be_created(
+@pytest.mark.parametrize("name", [".", "..", "trash"])
+async def test_unaddressable_names_cannot_be_created(
     client: httpx.AsyncClient, vault: Headers, name: str
 ) -> None:
     resp = await client.post("/passwords/create", json=entry(name), headers=vault)
@@ -327,7 +327,7 @@ async def test_dot_names_cannot_be_created(
     assert resp.status_code == 400
 
 
-async def test_backup_entries_without_a_name_or_value_are_still_skipped_quietly(
+async def test_backup_entries_without_a_name_or_value_are_reported(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
     resp = await _import_zip(
@@ -343,7 +343,57 @@ async def test_backup_entries_without_a_name_or_value_are_still_skipped_quietly(
         ],
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"imported": 1, "skipped": 0, "overwritten": 0, "total": 1}
+    result = resp.json()
+    assert (result["imported"], result["total"], result["ignored"]) == (1, 1, 5)
+    assert result["ignored_rows"] == [
+        {"where": "entry 1", "name": None, "reason": "no name"},
+        {"where": "entry 2", "name": "no-value", "reason": "no password or note text"},
+        {"where": "entry 3", "name": None, "reason": "no name"},
+        {"where": "entry 4", "name": None, "reason": "not an entry"},
+        {"where": "entry 5", "name": None, "reason": "not an entry"},
+    ]
+
+
+async def test_csv_rows_that_hold_nothing_importable_are_reported_not_dropped(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    rows = [
+        ["type", "name", "password", "notes"],
+        ["login", "kept", "kept-Pass-1", ""],
+        ["login", "", "orphan-Pass-1", ""],
+        ["login", "no password", "", "only a note"],
+        ["note", "empty note", "", "   "],
+        ["note", "", "", "body without a name"],
+        ["identity", "Me", "", ""],
+        ["", "", "", ""],
+        ["note", "recovery", "", "  code-1\ncode-2\n"],
+    ]
+
+    resp = await _import_csv(client, vault, _csv(rows))
+
+    assert resp.status_code == 200, resp.text
+    result = resp.json()
+    assert (result["imported"], result["ignored"]) == (2, 5)
+    assert [(r["where"], r["reason"]) for r in result["ignored_rows"]] == [
+        ("row 3", "no name"),
+        ("row 4", "no password"),
+        ("row 5", "secure note without text"),
+        ("row 6", "secure note without a name"),
+        ("row 7", "'identity' items can't be imported"),
+    ]
+    note = (await client.get("/passwords/recovery", headers=vault)).json()
+    assert note["kind"] == "note"
+    assert note["password_value"] == "  code-1\ncode-2\n"
+    assert note["description"] is None
+
+
+async def test_the_ignored_report_is_bounded(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    rows = [["name", "password"]] + [[f"n{i}", ""] for i in range(250)]
+    resp = await _import_csv(client, vault, _csv(rows))
+    assert resp.json()["ignored"] == 250
+    assert len(resp.json()["ignored_rows"]) == 100
 
 
 async def test_a_vault_poisoned_by_an_older_import_can_be_read_and_repaired(
@@ -421,6 +471,12 @@ THIRD_PARTY_EXPORTS = {
             "folder": "Personal",
             "totp_secret": None,
         },
+        "Secure note": {
+            "kind": "note",
+            "password_value": "note body",
+            "description": None,
+            "username": None,
+        },
     },
     "keepassxc.csv": {
         "Mail": {
@@ -452,7 +508,26 @@ THIRD_PARTY_EXPORTS = {
             "password_value": "Pr-Pass-2",
             "description": "hello",
         },
+        "Shopping list": {"kind": "note", "password_value": "eggs"},
     },
+}
+
+
+THIRD_PARTY_IGNORED = {
+    "bitwarden.csv": [
+        {
+            "where": "row 5",
+            "name": "Visa ending 4242",
+            "reason": "'card' items can't be imported",
+        }
+    ],
+    "protonpass.csv": [
+        {
+            "where": "row 5",
+            "name": "Shop alias",
+            "reason": "'alias' items can't be imported",
+        }
+    ],
 }
 
 
@@ -464,11 +539,15 @@ async def test_supported_third_party_exports_import(
     resp = await _import_csv(client, vault, (CSV_DIR / export).read_bytes())
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["imported"] == len(expected)
+    result = resp.json()
+    assert result["imported"] == len(expected)
+    ignored = THIRD_PARTY_IGNORED.get(export, [])
+    assert result["ignored"] == len(ignored)
+    assert result["ignored_rows"] == ignored
     by_name = {p["password_name"]: p for p in await _listing(client, vault)}
     for name, fields in expected.items():
         got = by_name[name]
-        assert got["kind"] == "login"
+        assert got["kind"] == fields.get("kind", "login")
         for field, value in fields.items():
             assert got[field] == value, (name, field)
 

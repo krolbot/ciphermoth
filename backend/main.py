@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from api.access_log import install_access_log_redaction
 from api.body_limit import BodySizeLimitMiddleware, keep_uploads_in_memory
 from api.exceptions import UnhandledErrorMiddleware
-from api.path_guard import EncodedSlashGuard
+from api.path_guard import EntryNamePaths
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
 from crud.runtime_schema import ensure_runtime_schema
@@ -59,7 +59,7 @@ def get_application() -> FastAPI:
     keep_uploads_in_memory()
     server.add_middleware(UnhandledErrorMiddleware, headers=_SECURITY_HEADERS)
     server.add_middleware(BodySizeLimitMiddleware)
-    server.add_middleware(EncodedSlashGuard)
+    server.add_middleware(EntryNamePaths)
     server.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=settings.cors_origins,

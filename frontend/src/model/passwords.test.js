@@ -113,6 +113,9 @@ describe("backup", () => {
 describe("entry names in URLs", () => {
   it.each([
     ["notes#2024", "/passwords/notes%232024"],
+    ["a/b", "/passwords/a%2Fb"],
+    ["x/purge", "/passwords/x%2Fpurge"],
+    ["../settings", "/passwords/..%2Fsettings"],
     ["what?", "/passwords/what%3F"],
     ["...", "/passwords/..."],
     ["Wi-Fi ключ", "/passwords/Wi-Fi%20%D0%BA%D0%BB%D1%8E%D1%87"],
@@ -122,18 +125,15 @@ describe("entry names in URLs", () => {
     expect(seen[0].url).toBe(path);
   });
 
-  it.each([".", "..", "a/b", "../settings", "x/purge"])(
-    "refuses %s, which a browser would route to another URL",
-    async (name) => {
-      const actions = build({});
-      await expect(actions.remove(name)).rejects.toThrow("rename it");
-      await expect(actions.purge(name)).rejects.toThrow("rename it");
-      await expect(actions.restore(name)).rejects.toThrow("rename it");
-      await expect(actions.toggleFavorite({ passwordName: name, favorite: true })).rejects.toThrow(
-        "rename it"
-      );
-      await expect(actions.fetchAttachments(name)).rejects.toThrow("rename it");
-      expect(seen).toEqual([]);
-    }
-  );
+  it.each([".", ".."])("refuses %s, which a browser would route to another URL", async (name) => {
+    const actions = build({});
+    await expect(actions.remove(name)).rejects.toThrow("rename it");
+    await expect(actions.purge(name)).rejects.toThrow("rename it");
+    await expect(actions.restore(name)).rejects.toThrow("rename it");
+    await expect(actions.toggleFavorite({ passwordName: name, favorite: true })).rejects.toThrow(
+      "rename it"
+    );
+    await expect(actions.fetchAttachments(name)).rejects.toThrow("rename it");
+    expect(seen).toEqual([]);
+  });
 });

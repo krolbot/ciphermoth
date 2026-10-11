@@ -1,0 +1,197 @@
+from urllib.parse import quote
+
+import httpx
+import pytest
+
+from helpers import encrypt
+from tests.support import Headers, auth, create_vault, db_execute, entry
+
+HOSTILE_NAMES = [
+    "a/b",
+    "x/purge",
+    "x/restore",
+    "x/favorite",
+    "x/attachments",
+    "x/attachments/1",
+    "../x",
+    "x/..",
+    "./x",
+    "a/b/c",
+    "/lead",
+    "trail/",
+    "x%2Fpurge",
+    "%2F",
+    "notes#2024?a=1&b",
+    "名前/ü 🦋",
+    "import",
+]
+
+
+def _path(name: str, suffix: str = "") -> str:
+    return f"/passwords/{quote(name, safe='')}{suffix}"
+
+
+@pytest.fixture
+async def vault(client: httpx.AsyncClient) -> Headers:
+    headers = auth(await create_vault(client))
+    for step in (
+        client.post("/passwords/create", json=entry("x", "trashed-x"), headers=headers),
+        client.delete("/passwords/x", headers=headers),
+        client.post("/passwords/create", json=entry("x", "active-x"), headers=headers),
+        client.post(
+            "/passwords/x/attachments",
+            files={"file": ("x.bin", b"decoy attachment", "x/y")},
+            headers=headers,
+        ),
+    ):
+        assert (await step).status_code == 200
+    return headers
+
+
+async def _decoys() -> list[tuple]:
+    return await db_execute(
+        "SELECT p.id, p.password_name, p.password_value, p.favorite, p.deleted, "
+        "a.id, a.content FROM passwords p LEFT JOIN password_attachments a "
+        "ON a.password_id = p.id WHERE p.password_name = 'x' ORDER BY p.id, a.id"
+    )
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_every_operation_reaches_exactly_the_named_entry(
+    client: httpx.AsyncClient, vault: Headers, name: str
+) -> None:
+    resp = await client.post(
+        "/passwords/create", json=entry(name, "target-Value-1"), headers=vault
+    )
+    assert resp.status_code == 200, resp.text
+    decoys = await _decoys()
+
+    got = await client.get(_path(name), headers=vault)
+    assert got.status_code == 200, got.text
+    assert got.json()["password_name"] == name
+    assert got.json()["password_value"] == "target-Value-1"
+
+    resp = await client.patch(
+        _path(name, "/favorite"), json={"favorite": True}, headers=vault
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = await client.post(
+        _path(name, "/attachments"),
+        files={"file": ("t.bin", b"target attachment", "x/y")},
+        headers=vault,
+    )
+    assert resp.status_code == 200, resp.text
+    attachment = resp.json()["id"]
+    listed = await client.get(_path(name, "/attachments"), headers=vault)
+    assert [a["id"] for a in listed.json()] == [attachment]
+    download = await client.get(
+        _path(name, f"/attachments/{attachment}"), headers=vault
+    )
+    assert download.content == b"target attachment"
+    resp = await client.delete(_path(name, f"/attachments/{attachment}"), headers=vault)
+    assert resp.status_code == 200, resp.text
+
+    assert (await client.delete(_path(name), headers=vault)).status_code == 200
+    resp = await client.post(_path(name, "/restore"), headers=vault)
+    assert resp.status_code == 200, resp.text
+    assert (await client.delete(_path(name), headers=vault)).status_code == 200
+    resp = await client.delete(_path(name, "/purge"), headers=vault)
+    assert resp.status_code == 200, resp.text
+
+    assert await _decoys() == decoys
+    assert await db_execute(
+        "SELECT count(*) FROM passwords WHERE password_name = :n", n=name
+    ) == [(0,)]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("DELETE", "/passwords/x%2Fpurge"),
+        ("DELETE", "/passwords/x%2fattachments%2F1"),
+        ("POST", "/passwords/x%2Frestore"),
+        ("PATCH", "/passwords/x%2Ffavorite"),
+        ("GET", "/passwords/..%2Fsettings"),
+    ],
+)
+async def test_a_name_that_does_not_exist_never_falls_through_to_another_route(
+    client: httpx.AsyncClient, vault: Headers, method: str, path: str
+) -> None:
+    decoys = await _decoys()
+
+    resp = await client.request(
+        method,
+        path,
+        json={"favorite": True} if method == "PATCH" else None,
+        headers=vault,
+    )
+
+    assert resp.status_code in (404, 405), resp.text
+    assert await _decoys() == decoys
+
+
+async def test_a_literal_nul_in_the_path_is_refused(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    for path in ("/passwords/x%00", "/passwords/x%00purge/purge", "/passwords/%00"):
+        resp = await client.get(path, headers=vault)
+        assert resp.status_code == 400, (path, resp.text)
+
+
+@pytest.mark.parametrize("name", [".", "..", "trash"])
+async def test_legacy_unaddressable_names_are_readable_and_can_be_renamed(
+    client: httpx.AsyncClient, vault: Headers, name: str
+) -> None:
+    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    await db_execute(
+        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
+        n=name,
+        v=encrypt(key, b"legacy-Value-1"),
+    )
+    listing = (await client.get("/passwords", headers=vault)).json()
+    assert name in [p["password_name"] for p in listing]
+
+    resp = await client.patch(
+        "/passwords/update",
+        json={"password": {"password_name": name}, "new_password": entry(name)},
+        headers=vault,
+    )
+    assert resp.status_code == 422
+    resp = await client.patch(
+        "/passwords/update",
+        json={
+            "password": {"password_name": name},
+            "new_password": entry("renamed", "legacy-Value-1"),
+        },
+        headers=vault,
+    )
+    assert resp.status_code == 200, resp.text
+    got = await client.get("/passwords/renamed", headers=vault)
+    assert got.json()["password_value"] == "legacy-Value-1"
+
+
+async def test_meta_advertises_slash_routing(client: httpx.AsyncClient) -> None:
+    features = (await client.get("/meta")).json()["features"]
+    assert "entry-names-with-slash" in features
+
+
+async def test_a_legacy_entry_named_trash_is_managed_without_touching_the_trash(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    await db_execute(
+        "INSERT INTO passwords (password_name, password_value) VALUES ('trash', :v)",
+        v=encrypt(key, b"legacy-Value-1"),
+    )
+    decoys = await _decoys()
+
+    resp = await client.patch(
+        "/passwords/trash/favorite", json={"favorite": True}, headers=vault
+    )
+    assert resp.status_code == 200, resp.text
+    assert (await client.delete("/passwords/trash", headers=vault)).status_code == 200
+    trash = (await client.get("/passwords/trash", headers=vault)).json()
+    assert sorted(p["password_name"] for p in trash) == ["trash", "x"]
+    assert (await client.delete("/passwords/trash/purge", headers=vault)).is_success
+    assert await _decoys() == decoys

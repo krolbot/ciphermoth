@@ -97,15 +97,34 @@ def _unlock(client: httpx.Client) -> tuple[str, str]:
     return master, key
 
 
+def _entry(resp: httpx.Response, name: str) -> dict:
+    _check(resp)
+    item = resp.json()
+    if not isinstance(item, dict):
+        _die(
+            f"'{name}' can't be opened by name. Rename the entry in the web UI "
+            "to manage it from the CLI."
+        )
+    return item
+
+
 def _hdr(key: str) -> dict[str, str]:
     return {"x-ciphermoth-key-derivation": key}
 
 
-def _entry_path(name: str, suffix: str = "") -> str:
-    if "/" in name:
+def _routes_slash_names(client: httpx.Client) -> bool:
+    try:
+        features = client.get("/meta").json().get("features", [])
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+    return "entry-names-with-slash" in features
+
+
+def _entry_path(client: httpx.Client, name: str, suffix: str = "") -> str:
+    if "/" in name and not _routes_slash_names(client):
         _die(
-            "Entry names containing '/' can't be used from the CLI. "
-            "Rename the entry in the web UI first."
+            "This server can't address entry names containing '/'. "
+            "Update CipherMoth, or rename the entry in the web UI."
         )
     encoded = quote(name, safe="")
     if encoded in (".", ".."):
@@ -219,11 +238,9 @@ def pw_get(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        resp = client.get(_entry_path(name), headers=_hdr(key))
+        resp = client.get(_entry_path(client, name), headers=_hdr(key))
 
-    _check(resp)
-
-    _print_details(resp.json())
+    _print_details(_entry(resp, name))
 
 
 @pw_app.command(
@@ -246,7 +263,8 @@ def pw_create(
         _, key = _unlock(client)
         headers = _hdr(key)
 
-        if client.get(_entry_path(name), headers=headers).is_success:
+        existing = client.get(_entry_path(client, name), headers=headers)
+        if existing.is_success and isinstance(existing.json(), dict):
             _die(f"An entry named '{name}' already exists.")
 
         value = _prompt_secret("Note body" if is_note else "Password value")
@@ -286,11 +304,7 @@ def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
         _, key = _unlock(client)
         headers = _hdr(key)
 
-        current_resp = client.get(_entry_path(name), headers=headers)
-
-        _check(current_resp)
-
-        current = current_resp.json()
+        current = _entry(client.get(_entry_path(client, name), headers=headers), name)
         is_note = current.get("kind") == "note"
 
         secret_label = "New note" if is_note else "New password value"
@@ -358,14 +372,14 @@ def pw_delete(
         _, key = _unlock(client)
         headers = _hdr(key)
 
-        exists = client.get(_entry_path(name), headers=headers)
+        exists = client.get(_entry_path(client, name), headers=headers)
         if exists.status_code == 404:
             _check(exists)
 
         if not yes:
             typer.confirm(f"Move '{name}' to trash?", abort=True)
 
-        resp = client.delete(_entry_path(name), headers=headers)
+        resp = client.delete(_entry_path(client, name), headers=headers)
 
     _check(resp)
 
@@ -410,7 +424,7 @@ def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        resp = client.post(_entry_path(name, "/restore"), headers=_hdr(key))
+        resp = client.post(_entry_path(client, name, "/restore"), headers=_hdr(key))
 
     _check(resp)
 
@@ -433,7 +447,7 @@ def pw_purge(
         base_url=_api_url(), timeout=30, follow_redirects=False
     ) as client:
         _, key = _unlock(client)
-        resp = client.delete(_entry_path(name, "/purge"), headers=_hdr(key))
+        resp = client.delete(_entry_path(client, name, "/purge"), headers=_hdr(key))
 
     _check(resp)
 
@@ -477,6 +491,16 @@ def _report_import(payload: dict) -> None:
         f"[cyan]{payload['overwritten']}[/cyan] overwritten, "
         f"[cyan]{payload['skipped']}[/cyan] skipped"
     )
+    ignored = payload.get("ignored", 0)
+    if not ignored:
+        return
+    _err.print(f"[yellow]![/yellow]  {ignored} record(s) were not imported:")
+    rows = payload.get("ignored_rows", [])
+    for row in rows:
+        name = f" ({row['name']})" if row.get("name") else ""
+        _err.print(f"   {escape(row['where'] + name)}: {escape(row['reason'])}")
+    if ignored > len(rows):
+        _err.print(f"   and {ignored - len(rows)} more")
 
 
 def _read_import_file(file: Path, on_conflict: str) -> bytes:

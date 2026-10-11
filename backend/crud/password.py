@@ -2,6 +2,7 @@ import csv
 import io
 import json
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pyzipper
@@ -22,6 +23,7 @@ from helpers import (
 )
 from models import PasswordAttachmentModel, PasswordModel
 from schemas import (
+    IgnoredImportRow,
     OnConflict,
     Password,
     PasswordCreate,
@@ -40,6 +42,9 @@ _HISTORY_LIMIT = 10
 _CSV_FIELD_SIZE_LIMIT = 16 * 1024 * 1024
 _REPORTED_IMPORT_PROBLEMS = 3
 _SOURCE_KEYS = {"password_name": "name", "password_value": "value"}
+_REPORTED_IGNORED_ROWS = 100
+_CSV_LOGIN_TYPES = ("login", "")
+_CSV_NOTE_TYPES = ("note", "secure note", "securenote", "secure_note")
 
 csv.field_size_limit(_CSV_FIELD_SIZE_LIMIT)
 
@@ -52,6 +57,7 @@ _CSV_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "url": ("url", "uri", "login_uri", "website", "web site", "site", "link"),
     "description": ("notes", "note", "description", "comment", "comments", "extra"),
     "folder": ("folder", "grouping", "group", "category", "collection"),
+    "type": ("type", "item type", "item_type"),
     "totp_secret": (
         "totp",
         "login_totp",
@@ -62,6 +68,15 @@ _CSV_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "totpauth",
     ),
 }
+
+
+@dataclass(frozen=True)
+class _Ignored:
+    name: object
+    reason: str
+
+
+ImportRow = tuple[str, dict[str, object] | _Ignored | None]
 
 
 class PasswordCRUD(BaseCRUD):
@@ -404,20 +419,30 @@ class PasswordCRUD(BaseCRUD):
 
     @staticmethod
     def _validate_import(
-        rows: Iterable[tuple[str, dict[str, object] | None]],
+        rows: Iterable[ImportRow],
         label_for: Callable[[str], str],
         schema: type[Imported] = Password,
-    ) -> list[Imported]:
+    ) -> tuple[list[Imported], list[IgnoredImportRow]]:
         """
         Validate every row before anything is written, so an import either stores
         data the vault can read back or stores nothing. CSV rows use the create
         endpoint's schema; backups use RestoredPassword. Problems name the row and
-        column, never the value.
+        column, never the value. Rows that hold no importable entry (blank rows
+        excepted) are returned as ignored, with the reason, for the report.
         """
         valid: list[Imported] = []
+        ignored: list[IgnoredImportRow] = []
         problems: list[str] = []
         for where, fields in rows:
             if fields is None:
+                continue
+            if isinstance(fields, _Ignored):
+                name = fields.name if isinstance(fields.name, str) else None
+                ignored.append(
+                    IgnoredImportRow(
+                        where=where, name=name and name[:100], reason=fields.reason
+                    )
+                )
                 continue
             try:
                 valid.append(schema.model_validate(fields))
@@ -430,11 +455,12 @@ class PasswordCRUD(BaseCRUD):
             more = len(problems) - _REPORTED_IMPORT_PROBLEMS
             suffix = f"; and {more} more" if more > 0 else ""
             raise TypesMismatchError(f"Nothing was imported. {shown}{suffix}.")
-        return valid
+        return valid, ignored
 
     async def _store_import(
         self,
         passwords: list[Imported],
+        ignored: list[IgnoredImportRow],
         key_derivation: str,
         on_conflict: OnConflict,
     ) -> PasswordImportResult:
@@ -448,15 +474,17 @@ class PasswordCRUD(BaseCRUD):
             "An entry with the same name was added while importing. "
             "Nothing was imported; try again."
         )
-        return self._result(counts)
+        return self._result(counts, ignored)
 
     @classmethod
-    def _backup_fields(cls, item: object) -> dict[str, object] | None:
+    def _backup_fields(cls, item: object) -> dict[str, object] | _Ignored:
         if not isinstance(item, dict):
-            return None
+            return _Ignored(None, "not an entry")
         name, value = item.get("name"), item.get("value")
-        if not name or not value or (isinstance(name, str) and not name.strip()):
-            return None
+        if not name or (isinstance(name, str) and not name.strip()):
+            return _Ignored(None, "no name")
+        if not value:
+            return _Ignored(name, "no password or note text")
         return {
             "password_name": name,
             "password_value": value,
@@ -501,7 +529,7 @@ class PasswordCRUD(BaseCRUD):
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             raise TypesMismatchError("Invalid backup file format.") from e
 
-        passwords = self._validate_import(
+        passwords, ignored = self._validate_import(
             (
                 (f"entry {index}", self._backup_fields(item))
                 for index, item in enumerate(entries, start=1)
@@ -509,16 +537,35 @@ class PasswordCRUD(BaseCRUD):
             label_for=lambda field: _SOURCE_KEYS.get(field, field),
             schema=RestoredPassword,
         )
-        return await self._store_import(passwords, key_derivation, on_conflict)
+        return await self._store_import(passwords, ignored, key_derivation, on_conflict)
 
     @classmethod
     def _csv_fields(
         cls, row: dict[str, str], column_for: dict[str, list[str]]
-    ) -> dict[str, object] | None:
-        name = cls._csv_cell(row, column_for, "name")
-        value = cls._csv_cell(row, column_for, "value", strip=False)
-        if not name or not value:
+    ) -> dict[str, object] | _Ignored | None:
+        if not any(isinstance(cell, str) and cell.strip() for cell in row.values()):
             return None
+        name = cls._csv_cell(row, column_for, "name")
+        item_type = cls._csv_cell(row, column_for, "type") or ""
+        if item_type.lower() in _CSV_NOTE_TYPES:
+            body = cls._csv_cell(row, column_for, "description", strip=False)
+            if not name:
+                return _Ignored(None, "secure note without a name")
+            if not body or not body.strip():
+                return _Ignored(name, "secure note without text")
+            return {
+                "password_name": name,
+                "kind": "note",
+                "password_value": body,
+                "folder": cls._csv_cell(row, column_for, "folder"),
+            }
+        if item_type.lower() not in _CSV_LOGIN_TYPES:
+            return _Ignored(name, f"'{item_type[:40]}' items can't be imported")
+        value = cls._csv_cell(row, column_for, "value", strip=False)
+        if not name:
+            return _Ignored(None, "no name")
+        if not value:
+            return _Ignored(name, "no password")
         return {
             "password_name": name,
             "password_value": value,
@@ -557,7 +604,7 @@ class PasswordCRUD(BaseCRUD):
                 "CSV must have a name/title column and a password column."
             )
 
-        passwords = self._validate_import(
+        passwords, ignored = self._validate_import(
             (
                 (f"row {index}", self._csv_fields(row, column_for))
                 for index, row in enumerate(rows, start=2)
@@ -566,7 +613,7 @@ class PasswordCRUD(BaseCRUD):
                 _SOURCE_KEYS.get(field, field), [field]
             )[0],
         )
-        return await self._store_import(passwords, key_derivation, on_conflict)
+        return await self._store_import(passwords, ignored, key_derivation, on_conflict)
 
     @staticmethod
     def _normalize_custom_fields(raw: object) -> list[dict[str, object]]:
@@ -621,10 +668,14 @@ class PasswordCRUD(BaseCRUD):
             return None
 
     @staticmethod
-    def _result(counts: dict[str, int]) -> PasswordImportResult:
+    def _result(
+        counts: dict[str, int], ignored: list[IgnoredImportRow]
+    ) -> PasswordImportResult:
         return PasswordImportResult(
             imported=counts["imported"],
             skipped=counts["skipped"],
             overwritten=counts["overwritten"],
             total=counts["imported"] + counts["skipped"] + counts["overwritten"],
+            ignored=len(ignored),
+            ignored_rows=ignored[:_REPORTED_IGNORED_ROWS],
         )

@@ -1,10 +1,12 @@
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Path
+from pydantic import AfterValidator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.exceptions import Forbidden
+from api.path_guard import entry_name
 from crud.attachment import AttachmentCRUD
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
@@ -62,6 +64,7 @@ async def get_key_derivation_for_rotation(
 
 
 KeyDerivationDep = Annotated[str, Depends(get_key_derivation)]
+EntryName = Annotated[str, Path(), AfterValidator(entry_name)]
 
 
 async def require_master_password(crud: MasterPasswordCRUDDep) -> None:

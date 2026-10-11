@@ -34,6 +34,7 @@ class SimpleDetailSchema(BaseModel):
 
 class MetaResponse(BaseModel):
     version: str
+    features: list[str] = Field(default_factory=list)
 
 
 class MasterPassword(BaseModel):
@@ -191,9 +192,9 @@ class RestoredPassword(BaseModel):
 
     A backup must restore whatever the vault it came from could hold, and
     vaults written by imports before v1.4.7 can hold values over the input
-    limits, untrimmed names and invalid 2FA secrets, so only what the database
-    cannot store, or the web UI cannot address, is refused. Reads tolerate the
-    rest, and editing the entry applies the normal limits.
+    limits, untrimmed names, invalid 2FA secrets and names such as '.' that new
+    entries may not use, so only what the database cannot store is refused.
+    Reads tolerate the rest, and editing the entry applies the normal rules.
     """
 
     password_name: str = Field(min_length=1)
@@ -217,11 +218,6 @@ class RestoredPassword(BaseModel):
     @classmethod
     def _storable_as_text(cls, value: str | None) -> str | None:
         return reject_nul(value)
-
-    @field_validator("password_name")
-    @classmethod
-    def _addressable(cls, value: str | None) -> str | None:
-        return addressable_name(value)
 
     @field_validator("totp_secret")
     @classmethod
@@ -329,11 +325,19 @@ class OnConflict(StrEnum):
     overwrite = "overwrite"
 
 
+class IgnoredImportRow(BaseModel):
+    where: str
+    name: str | None = None
+    reason: str
+
+
 class PasswordImportResult(BaseModel):
     imported: int
     skipped: int
     overwritten: int
     total: int
+    ignored: int = 0
+    ignored_rows: list[IgnoredImportRow] = Field(default_factory=list)
 
 
 class UpdateApplyPayload(BaseModel):

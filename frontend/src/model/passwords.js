@@ -4,9 +4,9 @@ import apiClient from "../api/client";
 import { errorDetail, triggerDownload } from "../lib/http";
 
 export const entryPath = (passwordName, suffix = "") => {
-  if (passwordName === "." || passwordName === ".." || passwordName.includes("/")) {
+  if (passwordName === "." || passwordName === "..") {
     throw new Error(
-      "This entry's name can't be used in a web address. Edit the entry to rename it, then try again."
+      `Browsers can't address an entry named "${passwordName}". Edit the entry to rename it, then try again.`
     );
   }
   return `/passwords/${encodeURIComponent(passwordName)}${suffix}`;

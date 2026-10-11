@@ -25,7 +25,6 @@ from tests.support import (
     MASTER_PASSWORD,
     WRONG_MASTER_PASSWORD,
     db_execute,
-    db_snapshot,
 )
 
 runner = CliRunner()
@@ -372,36 +371,94 @@ async def test_cli_reaches_exactly_the_named_entry(
     assert rows == [(stored,)]
 
 
-@pytest.mark.parametrize(
-    ("name", "command"),
-    [
-        ("a/b", ["get"]),
-        ("a/b", ["delete", "--yes"]),
-        ("x/purge", ["delete", "--yes"]),
-        ("x/restore", ["restore"]),
-        ("x/attachments/1", ["delete", "--yes"]),
-        ("../x", ["delete", "--yes"]),
-    ],
-)
-async def test_cli_names_with_a_slash_never_reach_another_entry(
-    api: str, key: dict[str, str], name: str, command: list[str]
-) -> None:
+SLASH_NAMES = ["a/b", "x/purge", "x/restore", "x/attachments/1", "../x", "x/.."]
+
+
+async def _slash_vault(api: str, key: dict[str, str], name: str) -> list[tuple]:
+    _api_create(api, key, {"password_name": "x", "password_value": "x-trashed"})
+    assert httpx.delete(f"{api}/passwords/x", headers=key).is_success
     _api_create(api, key, {"password_name": "x", "password_value": "x-Value-1"})
-    httpx.post(
+    resp = httpx.post(
         f"{api}/passwords/x/attachments",
         files={"file": ("f.bin", b"keep me", "application/octet-stream")},
         headers=key,
     )
-    _api_create(api, key, {"password_name": "trashed", "password_value": "t-v"})
-    httpx.delete(f"{api}/passwords/trashed", headers=key)
+    assert resp.status_code == 200
     _api_create(api, key, {"password_name": name, "password_value": "slash-v"})
-    before = await db_snapshot()
+    return await db_execute(
+        "SELECT p.id, p.password_value, p.deleted, a.id FROM passwords p "
+        "LEFT JOIN password_attachments a ON a.password_id = p.id "
+        "WHERE p.password_name = 'x' ORDER BY p.id"
+    )
 
-    result = cli(api, "password", command[0], name, *command[1:])
 
-    assert result.exit_code == 1, result.output
-    assert "contain" in result.output and "/" in result.output
-    assert await db_snapshot() == before
+@pytest.mark.parametrize("name", SLASH_NAMES)
+async def test_cli_manages_names_with_a_slash_without_touching_others(
+    api: str, key: dict[str, str], name: str
+) -> None:
+    decoys = await _slash_vault(api, key, name)
+
+    assert "slash-v" in ok(cli(api, "password", "get", name))
+    ok(cli(api, "password", "delete", name, "--yes"))
+    ok(cli(api, "password", "restore", name))
+    ok(cli(api, "password", "delete", name, "--yes"))
+    ok(cli(api, "password", "purge", name, "--yes"))
+
+    assert (
+        await db_execute(
+            "SELECT p.id, p.password_value, p.deleted, a.id FROM passwords p "
+            "LEFT JOIN password_attachments a ON a.password_id = p.id "
+            "WHERE p.password_name = 'x' ORDER BY p.id"
+        )
+        == decoys
+    )
+    assert await db_execute(
+        "SELECT count(*) FROM passwords WHERE password_name = :n", n=name
+    ) == [(0,)]
+
+
+@pytest.mark.parametrize("command", [["get"], ["delete", "--yes"], ["purge", "--yes"]])
+def test_cli_refuses_slash_names_against_a_server_that_would_misroute_them(
+    command: list[str],
+) -> None:
+    def respond(handler: _Recorder) -> None:
+        if handler.path.endswith("/master_password/check"):
+            handler.send(200, {"valid": True, "key_derivation": "K" * 43 + "="})
+        elif handler.path.endswith("/meta"):
+            handler.send(200, {"version": "1.4.6"})
+        else:
+            handler.send(200, {})
+
+    with _fake_server(respond) as (api, requests):
+        result = runner.invoke(
+            cli_app,
+            ["password", command[0], "x/purge", *command[1:]],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": api},
+        )
+
+    assert result.exit_code == 1
+    assert "Update CipherMoth" in result.output
+    assert [path for _, path, _ in requests if "/passwords" in path] == []
+
+
+async def test_cli_explains_an_entry_it_cannot_open_by_name(
+    api: str, key: dict[str, str]
+) -> None:
+    await db_execute(
+        "INSERT INTO passwords (password_name, password_value) VALUES ('trash', :v)",
+        v=encrypt(key["x-ciphermoth-key-derivation"], b"legacy-v"),
+    )
+    for command in ("get", "update"):
+        result = cli(api, "password", command, "trash")
+        assert result.exit_code == 1
+        assert "can't be opened by name" in result.output
+        assert "Traceback" not in result.output
+    ok(cli(api, "password", "delete", "trash", "--yes"))
+    assert await db_execute(
+        "SELECT count(*) FROM passwords WHERE password_name = 'trash' "
+        "AND deleted IS NOT NULL"
+    ) == [(1,)]
 
 
 async def test_cli_prints_markup_in_stored_values_literally(
@@ -661,3 +718,13 @@ def test_cip_refuses_when_the_backend_is_not_running(tmp_path: Path) -> None:
     assert code == 1
     assert "isn't running" in stderr
     assert calls == []
+
+
+async def test_cli_reports_records_that_were_not_imported(api: str) -> None:
+    export = Path(__file__).resolve().parents[2] / "testdata" / "csv" / "bitwarden.csv"
+
+    output = ok(cli(api, "import-csv", str(export)))
+
+    assert "3 added" in output
+    assert "1 record(s) were not imported" in output
+    assert "row 5 (Visa ending 4242): 'card' items can't be imported" in output

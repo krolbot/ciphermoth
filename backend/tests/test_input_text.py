@@ -115,11 +115,13 @@ async def test_master_password_change_rejects_unpaired_surrogates(
         ("GET", "/attachments"),
     ],
 )
-async def test_entry_names_with_nul_in_the_path_are_not_found(
+async def test_entry_names_with_nul_in_the_path_are_refused(
     client: httpx.AsyncClient, vault: Headers, method: str, suffix: str
 ) -> None:
+    before = await db_snapshot()
     resp = await client.request(method, f"/passwords/box%00{suffix}", headers=vault)
-    assert resp.status_code == 404, resp.text
+    assert resp.status_code == 400, resp.text
+    assert await db_snapshot() == before
 
 
 async def test_update_identifies_the_entry_by_name_only(

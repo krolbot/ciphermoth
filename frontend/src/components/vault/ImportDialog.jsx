@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -21,8 +22,33 @@ import PasswordField from "../PasswordField";
 
 const plural = (n) => (n !== 1 ? "s" : "");
 
+const IgnoredRows = ({ result }) => {
+  const rows = result.ignored_rows ?? [];
+  const hidden = result.ignored - rows.length;
+  return (
+    <>
+      <Typography variant="body2" sx={{ color: "warning.main", mt: 1 }}>
+        <strong>{result.ignored}</strong> record{plural(result.ignored)} not imported:
+      </Typography>
+      <Box component="ul" sx={{ m: 0, pl: 2.5, maxHeight: 160, overflowY: "auto" }}>
+        {rows.map((row) => (
+          <Typography component="li" variant="body2" key={row.where}>
+            {row.where}
+            {row.name ? ` (${row.name})` : ""}: {row.reason}
+          </Typography>
+        ))}
+        {hidden > 0 && (
+          <Typography component="li" variant="body2">
+            and {hidden} more
+          </Typography>
+        )}
+      </Box>
+    </>
+  );
+};
+
 const ImportResult = ({ result }) => {
-  if (result.total === 0) {
+  if (result.total === 0 && !result.ignored) {
     return (
       <Typography variant="body2" sx={{ color: "text.secondary" }}>
         No passwords found in the file.
@@ -33,20 +59,20 @@ const ImportResult = ({ result }) => {
     <>
       {result.imported > 0 && (
         <Typography variant="body2">
-          <strong>{result.imported}</strong> password{plural(result.imported)} added.
+          <strong>{result.imported}</strong> item{plural(result.imported)} added.
         </Typography>
       )}
       {result.overwritten > 0 && (
         <Typography variant="body2">
-          <strong>{result.overwritten}</strong> password{plural(result.overwritten)} overwritten.
+          <strong>{result.overwritten}</strong> item{plural(result.overwritten)} overwritten.
         </Typography>
       )}
       {result.skipped > 0 && (
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          <strong>{result.skipped}</strong> password{plural(result.skipped)} skipped (already
-          exist).
+          <strong>{result.skipped}</strong> item{plural(result.skipped)} skipped (already exist).
         </Typography>
       )}
+      {result.ignored > 0 && <IgnoredRows result={result} />}
     </>
   );
 };

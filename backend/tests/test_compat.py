@@ -44,7 +44,10 @@ async def _get(client: httpx.AsyncClient, key: str, name: str) -> dict:
 async def test_vault_lifecycle_and_unlock(client: httpx.AsyncClient) -> None:
     resp = await client.get("/master_password/status")
     assert resp.json() == {"initialized": False}
-    assert (await client.get("/meta")).json() == {"version": get_api_settings().version}
+    assert (await client.get("/meta")).json() == {
+        "version": get_api_settings().version,
+        "features": ["entry-names-with-slash"],
+    }
 
     resp = await client.post(
         "/master_password/create", json={"master_password": "short"}
@@ -213,7 +216,14 @@ async def test_csv_import_skip_and_overwrite(client: httpx.AsyncClient) -> None:
         files={"file": ("x.csv", csv_bytes, "text/csv")},
         headers=headers,
     )
-    assert resp.json() == {"imported": 1, "skipped": 1, "overwritten": 0, "total": 2}
+    assert resp.json() == {
+        "imported": 1,
+        "skipped": 1,
+        "overwritten": 0,
+        "total": 2,
+        "ignored": 0,
+        "ignored_rows": [],
+    }
     assert (await _get(client, key, "mail"))["password_value"] == "old-1"
 
     resp = await client.post(

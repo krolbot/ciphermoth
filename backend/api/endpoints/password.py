@@ -14,6 +14,7 @@ from starlette.responses import StreamingResponse
 
 from api.endpoints.deps import (
     AttachmentCRUDDep,
+    EntryName,
     KeyDerivationDep,
     PasswordCRUDDep,
     get_key_derivation,
@@ -101,7 +102,7 @@ async def get_trash(
     ),
 )
 async def get_password(
-    password_name: str,
+    password_name: EntryName,
     crud: PasswordCRUDDep,
     key_derivation: KeyDerivationDep,
 ) -> PasswordResponse:
@@ -166,7 +167,7 @@ async def update_password(
     ),
 )
 async def set_favorite(
-    password_name: str,
+    password_name: EntryName,
     body: FavoriteUpdatePayload,
     crud: PasswordCRUDDep,
 ) -> PasswordUpdate:
@@ -186,7 +187,7 @@ async def set_favorite(
     ),
 )
 async def delete_password(
-    password_name: str,
+    password_name: EntryName,
     crud: PasswordCRUDDep,
 ) -> PasswordDelete:
     return await crud.delete_password(password_name)
@@ -206,7 +207,7 @@ async def delete_password(
     ),
 )
 async def restore_password(
-    password_name: str,
+    password_name: EntryName,
     crud: PasswordCRUDDep,
 ) -> PasswordUpdate:
     return await crud.restore_password(password_name)
@@ -225,7 +226,7 @@ async def restore_password(
     ),
 )
 async def purge_password(
-    password_name: str,
+    password_name: EntryName,
     crud: PasswordCRUDDep,
 ) -> PasswordDelete:
     return await crud.purge_password(password_name)
@@ -244,7 +245,7 @@ async def purge_password(
     ),
 )
 async def list_attachments(
-    password_name: str,
+    password_name: EntryName,
     crud: AttachmentCRUDDep,
     key_derivation: KeyDerivationDep,
 ) -> list[AttachmentResponse]:
@@ -268,7 +269,7 @@ async def list_attachments(
 @limiter.limit(rate("60/hour"))
 async def add_attachment(
     request: Request,
-    password_name: str,
+    password_name: EntryName,
     file: UploadFile,
     crud: AttachmentCRUDDep,
     key_derivation: KeyDerivationDep,
@@ -297,7 +298,7 @@ async def add_attachment(
     ),
 )
 async def download_attachment(
-    password_name: str,
+    password_name: EntryName,
     attachment_id: int,
     crud: AttachmentCRUDDep,
     key_derivation: KeyDerivationDep,
@@ -325,7 +326,7 @@ async def download_attachment(
     ),
 )
 async def delete_attachment(
-    password_name: str,
+    password_name: EntryName,
     attachment_id: int,
     crud: AttachmentCRUDDep,
 ) -> PasswordDelete:

@@ -61,12 +61,14 @@ def reject_nul(value: str | None) -> str | None:
 
 def addressable_name(value: str | None) -> str | None:
     """
-    Browsers resolve '.' and '..' path segments (also when percent-encoded)
-    before sending a request, so an entry with such a name would be routed to a
-    different URL by the web UI.
+    Refuse names a URL cannot address. Browsers resolve '.' and '..' path
+    segments (also when percent-encoded) before sending a request, and
+    GET /passwords/trash is the trash listing, not an entry.
     """
     if value in (".", ".."):
         raise ValueError("cannot be '.' or '..'")
+    if value == "trash":
+        raise ValueError("'trash' is reserved, choose another name")
     return value
 
 
