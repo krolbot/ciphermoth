@@ -3,16 +3,25 @@ import base64
 import os
 import subprocess
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
 import asyncpg
 import httpx
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
+from api.endpoints.deps import get_session
 from crud.runtime_schema import ensure_runtime_schema
 from crud.session import engine
+from main import app
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -162,3 +171,53 @@ def run_alembic(*args: str, database: str | None = None) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"alembic {' '.join(args)} failed:\n{output}")
     return output
+
+
+async def ensure_database(database: str) -> None:
+    conn = await admin_connection()
+    try:
+        if not await conn.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1", database
+        ):
+            await conn.execute(f'CREATE DATABASE "{database}"')
+    finally:
+        await conn.close()
+
+
+@asynccontextmanager
+async def database_engine(database: str) -> AsyncIterator[AsyncEngine]:
+    other = create_async_engine(engine_url(database))
+    try:
+        yield other
+    finally:
+        await other.dispose()
+
+
+@asynccontextmanager
+async def client_for_database(database: str) -> AsyncIterator[httpx.AsyncClient]:
+    """An API client whose requests run against ``database`` instead of the
+    default test database, committing and rolling back like get_session."""
+    async with database_engine(database) as other:
+        sessions = async_sessionmaker(
+            other, expire_on_commit=False, class_=AsyncSession
+        )
+
+        async def session() -> AsyncIterator[AsyncSession]:
+            async with sessions() as db_session:
+                try:
+                    yield db_session
+                    await db_session.commit()
+                except Exception:
+                    await db_session.rollback()
+                    raise
+
+        app.dependency_overrides[get_session] = session
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver/api",
+                timeout=60,
+            ) as http:
+                yield http
+        finally:
+            app.dependency_overrides.pop(get_session, None)

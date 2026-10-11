@@ -5,23 +5,21 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from api.endpoints.deps import get_session
 from helpers import (
     encrypt,
     generate_key_derivation,
     hash_master_password,
     verify_key_check,
 )
-from main import app
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     admin_connection,
     apply_runtime_schema,
     auth,
-    engine_url,
+    client_for_database,
+    ensure_database,
     reset_schema,
     run_alembic,
     unlock,
@@ -85,14 +83,7 @@ async def _seed_v145_vault(conn) -> tuple[str, bytes]:
 
 @pytest.fixture
 async def legacy_db() -> AsyncIterator[str]:
-    conn = await admin_connection()
-    try:
-        if not await conn.fetchval(
-            "SELECT 1 FROM pg_database WHERE datname = $1", MIGRATION_DB
-        ):
-            await conn.execute(f'CREATE DATABASE "{MIGRATION_DB}"')
-    finally:
-        await conn.close()
+    await ensure_database(MIGRATION_DB)
     await asyncio.to_thread(reset_schema, MIGRATION_DB)
     await _alembic("upgrade", "head")
     yield MIGRATION_DB
@@ -100,31 +91,8 @@ async def legacy_db() -> AsyncIterator[str]:
 
 @pytest.fixture
 async def legacy_client(legacy_db: str) -> AsyncIterator[httpx.AsyncClient]:
-    legacy_engine = create_async_engine(engine_url(legacy_db))
-    sessions = async_sessionmaker(
-        legacy_engine, expire_on_commit=False, class_=AsyncSession
-    )
-
-    async def legacy_session() -> AsyncIterator[AsyncSession]:
-        async with sessions() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-
-    app.dependency_overrides[get_session] = legacy_session
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver/api",
-            timeout=60,
-        ) as http:
-            yield http
-    finally:
-        app.dependency_overrides.pop(get_session, None)
-        await legacy_engine.dispose()
+    async with client_for_database(legacy_db) as http:
+        yield http
 
 
 async def test_release_keeps_the_v145_alembic_head() -> None:
