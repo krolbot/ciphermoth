@@ -728,3 +728,12 @@ async def test_cli_reports_records_that_were_not_imported(api: str) -> None:
     assert "3 added" in output
     assert "1 record(s) were not imported" in output
     assert "row 5 (Visa ending 4242): 'card' items can't be imported" in output
+
+
+async def test_cli_reports_renamed_records(api: str, tmp_path: Path) -> None:
+    export = tmp_path / "dupes.csv"
+    export.write_text("name,password\nsite,a\nsite,b\n")
+    output = ok(cli(api, "import-csv", str(export)))
+    assert "2 added" in output
+    assert "1 record(s) were imported under a new name" in output
+    assert "row 3 (site): imported as 'site (2)'" in output

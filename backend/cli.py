@@ -491,16 +491,20 @@ def _report_import(payload: dict) -> None:
         f"[cyan]{payload['overwritten']}[/cyan] overwritten, "
         f"[cyan]{payload['skipped']}[/cyan] skipped"
     )
-    ignored = payload.get("ignored", 0)
-    if not ignored:
-        return
-    _err.print(f"[yellow]![/yellow]  {ignored} record(s) were not imported:")
-    rows = payload.get("ignored_rows", [])
-    for row in rows:
-        name = f" ({row['name']})" if row.get("name") else ""
-        _err.print(f"   {escape(row['where'] + name)}: {escape(row['reason'])}")
-    if ignored > len(rows):
-        _err.print(f"   and {ignored - len(rows)} more")
+    for key, title in (
+        ("renamed", "were imported under a new name"),
+        ("ignored", "were not imported"),
+    ):
+        count = payload.get(key, 0)
+        if not count:
+            continue
+        _err.print(f"[yellow]![/yellow]  {count} record(s) {title}:")
+        rows = payload.get(f"{key}_rows", [])
+        for row in rows:
+            name = f" ({row['name']})" if row.get("name") else ""
+            _err.print(f"   {escape(row['where'] + name)}: {escape(row['reason'])}")
+        if count > len(rows):
+            _err.print(f"   and {count - len(rows)} more")
 
 
 def _read_import_file(file: Path, on_conflict: str) -> bytes:

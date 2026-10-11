@@ -22,13 +22,12 @@ import PasswordField from "../PasswordField";
 
 const plural = (n) => (n !== 1 ? "s" : "");
 
-const IgnoredRows = ({ result }) => {
-  const rows = result.ignored_rows ?? [];
-  const hidden = result.ignored - rows.length;
+const ReportedRows = ({ rows = [], count, title, color }) => {
+  const hidden = count - rows.length;
   return (
     <>
-      <Typography variant="body2" sx={{ color: "warning.main", mt: 1 }}>
-        <strong>{result.ignored}</strong> record{plural(result.ignored)} not imported:
+      <Typography variant="body2" sx={{ color, mt: 1 }}>
+        <strong>{count}</strong> {title}
       </Typography>
       <Box component="ul" sx={{ m: 0, pl: 2.5, maxHeight: 160, overflowY: "auto" }}>
         {rows.map((row) => (
@@ -72,7 +71,22 @@ const ImportResult = ({ result }) => {
           <strong>{result.skipped}</strong> item{plural(result.skipped)} skipped (already exist).
         </Typography>
       )}
-      {result.ignored > 0 && <IgnoredRows result={result} />}
+      {result.renamed > 0 && (
+        <ReportedRows
+          rows={result.renamed_rows}
+          count={result.renamed}
+          title={`item${plural(result.renamed)} renamed:`}
+          color="text.secondary"
+        />
+      )}
+      {result.ignored > 0 && (
+        <ReportedRows
+          rows={result.ignored_rows}
+          count={result.ignored}
+          title={`record${plural(result.ignored)} not imported:`}
+          color="warning.main"
+        />
+      )}
     </>
   );
 };

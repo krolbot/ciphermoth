@@ -223,6 +223,8 @@ async def test_csv_import_skip_and_overwrite(client: httpx.AsyncClient) -> None:
         "total": 2,
         "ignored": 0,
         "ignored_rows": [],
+        "renamed": 0,
+        "renamed_rows": [],
     }
     assert (await _get(client, key, "mail"))["password_value"] == "old-1"
 

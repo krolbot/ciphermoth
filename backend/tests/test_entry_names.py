@@ -195,3 +195,46 @@ async def test_a_legacy_entry_named_trash_is_managed_without_touching_the_trash(
     assert sorted(p["password_name"] for p in trash) == ["trash", "x"]
     assert (await client.delete("/passwords/trash/purge", headers=vault)).is_success
     assert await _decoys() == decoys
+
+
+@pytest.mark.parametrize("legacy", [" foo", "foo ", "  foo  "])
+async def test_editing_a_name_with_surrounding_spaces_never_touches_another_entry(
+    client: httpx.AsyncClient, vault: Headers, legacy: str
+) -> None:
+    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    await client.post(
+        "/passwords/create",
+        json=entry("foo", "real-foo", username="real"),
+        headers=vault,
+    )
+    await db_execute(
+        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
+        n=legacy,
+        v=encrypt(key, b"legacy-foo"),
+    )
+    real_before = (await client.get("/passwords/foo", headers=vault)).json()
+
+    resp = await client.patch(
+        "/passwords/update",
+        json={
+            "password": {"password_name": legacy},
+            "new_password": entry(legacy, "edited", username="edited"),
+        },
+        headers=vault,
+    )
+    assert resp.status_code == 400, resp.text
+    assert (await client.get("/passwords/foo", headers=vault)).json() == real_before
+
+    resp = await client.patch(
+        "/passwords/update",
+        json={
+            "password": {"password_name": legacy},
+            "new_password": entry("foo renamed", "edited"),
+        },
+        headers=vault,
+    )
+    assert resp.status_code == 200, resp.text
+    assert (await client.get("/passwords/foo", headers=vault)).json() == real_before
+    renamed = (await client.get("/passwords/foo%20renamed", headers=vault)).json()
+    assert renamed["password_value"] == "edited"
+    assert [h["value"] for h in renamed["password_history"]] == ["legacy-foo"]

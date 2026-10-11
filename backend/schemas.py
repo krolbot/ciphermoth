@@ -284,8 +284,6 @@ class PasswordDelete(BaseModel):
 class PasswordRef(BaseModel):
     password_name: str = Field(min_length=1)
 
-    model_config = ConfigDict(str_strip_whitespace=True)
-
     @field_validator("*")
     @classmethod
     def _unicode(cls, value: object) -> object:
@@ -325,7 +323,7 @@ class OnConflict(StrEnum):
     overwrite = "overwrite"
 
 
-class IgnoredImportRow(BaseModel):
+class ImportRowReport(BaseModel):
     where: str
     name: str | None = None
     reason: str
@@ -337,7 +335,9 @@ class PasswordImportResult(BaseModel):
     overwritten: int
     total: int
     ignored: int = 0
-    ignored_rows: list[IgnoredImportRow] = Field(default_factory=list)
+    ignored_rows: list[ImportRowReport] = Field(default_factory=list)
+    renamed: int = 0
+    renamed_rows: list[ImportRowReport] = Field(default_factory=list)
 
 
 class UpdateApplyPayload(BaseModel):

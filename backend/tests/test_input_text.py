@@ -130,7 +130,7 @@ async def test_update_identifies_the_entry_by_name_only(
     resp = await client.patch(
         "/passwords/update",
         json={
-            "password": {"password_name": " box "},
+            "password": {"password_name": "box"},
             "new_password": entry("box", "changed-Value-2"),
         },
         headers=vault,

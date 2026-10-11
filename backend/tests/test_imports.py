@@ -174,7 +174,6 @@ async def test_unparseable_csv_gets_a_clear_error(
     ("bad_entry", "where"),
     [
         ({"name": "a", "value": "v", "tags": "not-a-list"}, "tags"),
-        ({"name": "a", "value": "v", "tags": [1, 2]}, "tags"),
         ({"name": "a", "value": 12345}, "value"),
         ({"name": ["a"], "value": "v"}, "name"),
         ({"name": "a", "value": "v", "username": {"nested": True}}, "username"),
@@ -700,3 +699,103 @@ async def test_secrets_stored_by_older_imports_still_produce_codes(
     ]
     assert got["totp_secret"] == "JBSWY3DPEHPK3PXP"
     assert got["folder"] is None
+
+
+async def test_accounts_sharing_a_name_in_one_file_are_all_imported(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    rows = [
+        ["name", "url", "username", "password"],
+        ["accounts.google.com", "https://accounts.google.com", "alice", "alice-Pass-1"],
+        ["accounts.google.com", "https://accounts.google.com", "bob", "bob-Pass-2"],
+        [
+            "accounts.google.com ",
+            "https://accounts.google.com",
+            "carol",
+            "carol-Pass-3",
+        ],
+    ]
+
+    resp = await _import_csv(client, vault, _csv(rows))
+
+    assert resp.status_code == 200, resp.text
+    result = resp.json()
+    assert (result["imported"], result["skipped"], result["renamed"]) == (3, 0, 2)
+    assert [(r["where"], r["name"]) for r in result["renamed_rows"]] == [
+        ("row 3", "accounts.google.com"),
+        ("row 4", "accounts.google.com"),
+    ]
+    assert "accounts.google.com (2)" in result["renamed_rows"][0]["reason"]
+    by_name = {p["password_name"]: p for p in await _listing(client, vault)}
+    assert by_name["accounts.google.com"]["username"] == "alice"
+    assert by_name["accounts.google.com (2)"]["username"] == "bob"
+    assert by_name["accounts.google.com (3)"]["username"] == "carol"
+
+
+async def test_renamed_rows_never_collide_with_existing_entries(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    for name in ("site", "site (2)"):
+        resp = await client.post("/passwords/create", json=entry(name), headers=vault)
+        assert resp.status_code == 200
+    rows = [["name", "password"], ["site", "first"], ["site", "second"]]
+
+    resp = await _import_csv(client, vault, _csv(rows), on_conflict="overwrite")
+
+    result = resp.json()
+    assert (result["overwritten"], result["imported"], result["renamed"]) == (1, 1, 1)
+    by_name = {p["password_name"]: p for p in await _listing(client, vault)}
+    assert by_name["site"]["password_value"] == "first"
+    assert by_name["site (2)"]["password_value"] == "s3cret-Value!"
+    assert by_name["site (3)"]["password_value"] == "second"
+
+
+async def test_renamed_long_names_stay_within_the_name_limit(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    name = "n" * 255
+    rows = [["name", "password"], [name, "a"], [name, "b"]]
+    resp = await _import_csv(client, vault, _csv(rows))
+    assert resp.json()["renamed"] == 1
+    names = [p["password_name"] for p in await _listing(client, vault)]
+    assert "n" * 251 + " (2)" in names
+    assert max(len(n) for n in names) == 255
+
+
+@pytest.mark.parametrize(
+    ("item_type", "password", "outcome"),
+    [
+        ("password", "p-1", "imported"),
+        ("Login", "p-1", "imported"),
+        ("website", "p-1", "imported"),
+        ("password", "", "no password"),
+        ("creditCard", "", "'creditCard' items can't be imported"),
+        ("sshKey", "", "'sshKey' items can't be imported"),
+    ],
+)
+async def test_csv_item_types_other_than_known_non_logins_import_as_logins(
+    client: httpx.AsyncClient,
+    vault: Headers,
+    item_type: str,
+    password: str,
+    outcome: str,
+) -> None:
+    rows = [["type", "name", "password"], [item_type, "item", password]]
+    resp = await _import_csv(client, vault, _csv(rows))
+    result = resp.json()
+    if outcome == "imported":
+        assert result["imported"] == 1, result
+    else:
+        assert result["imported"] == 0
+        assert result["ignored_rows"][0]["reason"] == outcome
+
+
+async def test_backup_tags_that_are_not_strings_restore_as_text(
+    client: httpx.AsyncClient, vault: Headers
+) -> None:
+    resp = await _import_zip(
+        client, vault, [{"name": "tagged", "value": "v", "tags": [1, None, "a", 2.5]}]
+    )
+    assert resp.status_code == 200, resp.text
+    got = (await client.get("/passwords/tagged", headers=vault)).json()
+    assert got["tags"] == ["1", "a", "2.5"]

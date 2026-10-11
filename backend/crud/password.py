@@ -23,7 +23,7 @@ from helpers import (
 )
 from models import PasswordAttachmentModel, PasswordModel
 from schemas import (
-    IgnoredImportRow,
+    ImportRowReport,
     OnConflict,
     Password,
     PasswordCreate,
@@ -43,8 +43,18 @@ _CSV_FIELD_SIZE_LIMIT = 16 * 1024 * 1024
 _REPORTED_IMPORT_PROBLEMS = 3
 _SOURCE_KEYS = {"password_name": "name", "password_value": "value"}
 _REPORTED_IGNORED_ROWS = 100
-_CSV_LOGIN_TYPES = ("login", "")
 _CSV_NOTE_TYPES = ("note", "secure note", "securenote", "secure_note")
+_CSV_UNSUPPORTED_TYPES = (
+    "card",
+    "creditcard",
+    "credit card",
+    "identity",
+    "alias",
+    "sshkey",
+    "ssh key",
+    "ssh_key",
+)
+_MAX_NAME_LENGTH = 255
 
 csv.field_size_limit(_CSV_FIELD_SIZE_LIMIT)
 
@@ -422,7 +432,7 @@ class PasswordCRUD(BaseCRUD):
         rows: Iterable[ImportRow],
         label_for: Callable[[str], str],
         schema: type[Imported] = Password,
-    ) -> tuple[list[Imported], list[IgnoredImportRow]]:
+    ) -> tuple[list[tuple[str, Imported]], list[ImportRowReport]]:
         """
         Validate every row before anything is written, so an import either stores
         data the vault can read back or stores nothing. CSV rows use the create
@@ -430,8 +440,8 @@ class PasswordCRUD(BaseCRUD):
         column, never the value. Rows that hold no importable entry (blank rows
         excepted) are returned as ignored, with the reason, for the report.
         """
-        valid: list[Imported] = []
-        ignored: list[IgnoredImportRow] = []
+        valid: list[tuple[str, Imported]] = []
+        ignored: list[ImportRowReport] = []
         problems: list[str] = []
         for where, fields in rows:
             if fields is None:
@@ -439,13 +449,13 @@ class PasswordCRUD(BaseCRUD):
             if isinstance(fields, _Ignored):
                 name = fields.name if isinstance(fields.name, str) else None
                 ignored.append(
-                    IgnoredImportRow(
+                    ImportRowReport(
                         where=where, name=name and name[:100], reason=fields.reason
                     )
                 )
                 continue
             try:
-                valid.append(schema.model_validate(fields))
+                valid.append((where, schema.model_validate(fields)))
             except ValidationError as e:
                 error = e.errors()[0]
                 field = str(error["loc"][0]) if error["loc"] else "entry"
@@ -459,14 +469,36 @@ class PasswordCRUD(BaseCRUD):
 
     async def _store_import(
         self,
-        passwords: list[Imported],
-        ignored: list[IgnoredImportRow],
+        passwords: list[tuple[str, Imported]],
+        ignored: list[ImportRowReport],
         key_derivation: str,
         on_conflict: OnConflict,
     ) -> PasswordImportResult:
+        """
+        Store validated rows. A name that appears again later in the same file is
+        imported under a unique name ('name (2)') and reported, so two exported
+        accounts for one site never collapse into one entry.
+        """
         existing = await self._load_existing()
+        taken = set(existing)
+        seen: set[str] = set()
+        renamed: list[ImportRowReport] = []
         counts = {"imported": 0, "skipped": 0, "overwritten": 0}
-        for password in passwords:
+        for where, password in passwords:
+            name = password.password_name
+            if name in seen:
+                unique = self._unique_name(name, taken)
+                renamed.append(
+                    ImportRowReport(
+                        where=where,
+                        name=name[:100],
+                        reason=f"imported as '{unique[:120]}' because the file "
+                        "has another entry with this name",
+                    )
+                )
+                password = password.model_copy(update={"password_name": unique})
+            seen.add(password.password_name)
+            taken.add(password.password_name)
             counts[
                 self._upsert_entry(existing, key_derivation, on_conflict, password)
             ] += 1
@@ -474,7 +506,24 @@ class PasswordCRUD(BaseCRUD):
             "An entry with the same name was added while importing. "
             "Nothing was imported; try again."
         )
-        return self._result(counts, ignored)
+        return self._result(counts, ignored, renamed)
+
+    @staticmethod
+    def _unique_name(name: str, taken: set[str]) -> str:
+        limit = max(_MAX_NAME_LENGTH, len(name))
+        number = 2
+        while True:
+            suffix = f" ({number})"
+            candidate = name[: limit - len(suffix)] + suffix
+            if candidate not in taken:
+                return candidate
+            number += 1
+
+    @staticmethod
+    def _backup_tags(raw: object) -> object:
+        if not isinstance(raw, list):
+            return raw or []
+        return [str(tag) for tag in raw if tag is not None]
 
     @classmethod
     def _backup_fields(cls, item: object) -> dict[str, object] | _Ignored:
@@ -493,7 +542,7 @@ class PasswordCRUD(BaseCRUD):
             "url": item.get("url"),
             "totp_secret": item.get("totp_secret"),
             "description": item.get("description"),
-            "tags": item.get("tags") or [],
+            "tags": cls._backup_tags(item.get("tags")),
             "custom_fields": cls._normalize_custom_fields(item.get("custom_fields")),
             "folder": item.get("folder"),
             "favorite": bool(item.get("favorite", False)),
@@ -559,7 +608,7 @@ class PasswordCRUD(BaseCRUD):
                 "password_value": body,
                 "folder": cls._csv_cell(row, column_for, "folder"),
             }
-        if item_type.lower() not in _CSV_LOGIN_TYPES:
+        if item_type.lower() in _CSV_UNSUPPORTED_TYPES:
             return _Ignored(name, f"'{item_type[:40]}' items can't be imported")
         value = cls._csv_cell(row, column_for, "value", strip=False)
         if not name:
@@ -669,7 +718,9 @@ class PasswordCRUD(BaseCRUD):
 
     @staticmethod
     def _result(
-        counts: dict[str, int], ignored: list[IgnoredImportRow]
+        counts: dict[str, int],
+        ignored: list[ImportRowReport],
+        renamed: list[ImportRowReport],
     ) -> PasswordImportResult:
         return PasswordImportResult(
             imported=counts["imported"],
@@ -678,4 +729,6 @@ class PasswordCRUD(BaseCRUD):
             total=counts["imported"] + counts["skipped"] + counts["overwritten"],
             ignored=len(ignored),
             ignored_rows=ignored[:_REPORTED_IGNORED_ROWS],
+            renamed=len(renamed),
+            renamed_rows=renamed[:_REPORTED_IGNORED_ROWS],
         )
