@@ -113,13 +113,27 @@ describe("backup", () => {
 describe("entry names in URLs", () => {
   it.each([
     ["notes#2024", "/passwords/notes%232024"],
-    ["a/b", "/passwords/a%2Fb"],
     ["what?", "/passwords/what%3F"],
-    ["../settings", "/passwords/..%2Fsettings"],
+    ["...", "/passwords/..."],
     ["Wi-Fi ключ", "/passwords/Wi-Fi%20%D0%BA%D0%BB%D1%8E%D1%87"],
   ])("encodes %s", async (name, path) => {
     const actions = build({ [`DELETE ${path}`]: [200, { deleted: true }] });
     await actions.remove(name);
     expect(seen[0].url).toBe(path);
   });
+
+  it.each([".", "..", "a/b", "../settings", "x/purge"])(
+    "refuses %s, which a browser would route to another URL",
+    async (name) => {
+      const actions = build({});
+      await expect(actions.remove(name)).rejects.toThrow("rename it");
+      await expect(actions.purge(name)).rejects.toThrow("rename it");
+      await expect(actions.restore(name)).rejects.toThrow("rename it");
+      await expect(actions.toggleFavorite({ passwordName: name, favorite: true })).rejects.toThrow(
+        "rename it"
+      );
+      await expect(actions.fetchAttachments(name)).rejects.toThrow("rename it");
+      expect(seen).toEqual([]);
+    }
+  );
 });

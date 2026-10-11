@@ -3,6 +3,15 @@ import { action, thunk } from "easy-peasy";
 import apiClient from "../api/client";
 import { errorDetail, triggerDownload } from "../lib/http";
 
+export const entryPath = (passwordName, suffix = "") => {
+  if (passwordName === "." || passwordName === ".." || passwordName.includes("/")) {
+    throw new Error(
+      "This entry's name can't be used in a web address. Edit the entry to rename it, then try again."
+    );
+  }
+  return `/passwords/${encodeURIComponent(passwordName)}${suffix}`;
+};
+
 const Passwords = {
   error: null,
   loading: false,
@@ -54,8 +63,9 @@ const Passwords = {
   }),
 
   remove: thunk(async (actions, passwordName) => {
+    const path = entryPath(passwordName);
     try {
-      await apiClient.delete(`/passwords/${encodeURIComponent(passwordName)}`);
+      await apiClient.delete(path);
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -73,8 +83,9 @@ const Passwords = {
   }),
 
   restore: thunk(async (actions, passwordName) => {
+    const path = entryPath(passwordName, "/restore");
     try {
-      await apiClient.post(`/passwords/${encodeURIComponent(passwordName)}/restore`);
+      await apiClient.post(path);
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -83,8 +94,9 @@ const Passwords = {
   }),
 
   purge: thunk(async (actions, passwordName) => {
+    const path = entryPath(passwordName, "/purge");
     try {
-      await apiClient.delete(`/passwords/${encodeURIComponent(passwordName)}/purge`);
+      await apiClient.delete(path);
       await actions.getTrash();
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to delete password."));
@@ -92,8 +104,9 @@ const Passwords = {
   }),
 
   toggleFavorite: thunk(async (actions, { passwordName, favorite }) => {
+    const path = entryPath(passwordName, "/favorite");
     try {
-      await apiClient.patch(`/passwords/${encodeURIComponent(passwordName)}/favorite`, {
+      await apiClient.patch(path, {
         favorite,
       });
       await actions.get();
@@ -103,10 +116,9 @@ const Passwords = {
   }),
 
   fetchAttachments: thunk(async (actions, passwordName) => {
+    const path = entryPath(passwordName, "/attachments");
     try {
-      const { data } = await apiClient.get(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments`
-      );
+      const { data } = await apiClient.get(path);
       return data;
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to load attachments."));
@@ -114,13 +126,11 @@ const Passwords = {
   }),
 
   uploadAttachment: thunk(async (actions, { passwordName, file }) => {
+    const path = entryPath(passwordName, "/attachments");
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const { data } = await apiClient.post(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments`,
-        formData
-      );
+      const { data } = await apiClient.post(path, formData);
       await actions.get();
       return data;
     } catch (err) {
@@ -129,11 +139,9 @@ const Passwords = {
   }),
 
   downloadAttachment: thunk(async (actions, { passwordName, attachmentId, filename }) => {
+    const path = entryPath(passwordName, `/attachments/${attachmentId}`);
     try {
-      const response = await apiClient.get(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments/${attachmentId}`,
-        { responseType: "blob" }
-      );
+      const response = await apiClient.get(path, { responseType: "blob" });
       triggerDownload(response.data, filename || "attachment");
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to download attachment."));
@@ -141,10 +149,9 @@ const Passwords = {
   }),
 
   deleteAttachment: thunk(async (actions, { passwordName, attachmentId }) => {
+    const path = entryPath(passwordName, `/attachments/${attachmentId}`);
     try {
-      await apiClient.delete(
-        `/passwords/${encodeURIComponent(passwordName)}/attachments/${attachmentId}`
-      );
+      await apiClient.delete(path);
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to delete attachment."));
