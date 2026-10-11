@@ -102,7 +102,15 @@ def _hdr(key: str) -> dict[str, str]:
 
 
 def _entry_path(name: str, suffix: str = "") -> str:
-    return f"/passwords/{quote(name, safe='')}{suffix}"
+    if "/" in name:
+        _die(
+            "Entry names containing '/' can't be used from the CLI. "
+            "Rename the entry in the web UI first."
+        )
+    encoded = quote(name, safe="")
+    if encoded in (".", ".."):
+        encoded = encoded.replace(".", "%2E")
+    return f"/passwords/{encoded}{suffix}"
 
 
 def _optional(label: str, current: str | None = None) -> str | None:

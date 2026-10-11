@@ -292,3 +292,34 @@ async def test_names_differing_only_in_case_or_surrounding_space_are_distinct_or
     ]
     assert names.count("box") == 1 and "BOX" in names
     assert json.dumps(names)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("DELETE", "/passwords/trashed%2Fpurge"),
+        ("DELETE", "/passwords/box%2fattachments%2F1"),
+        ("POST", "/passwords/trashed%2Frestore"),
+        ("PATCH", "/passwords/box%2Ffavorite"),
+        ("GET", "/passwords/..%2Fsettings"),
+    ],
+)
+async def test_encoded_slashes_are_never_routed_to_another_entry(
+    client: httpx.AsyncClient, vault: Headers, method: str, path: str
+) -> None:
+    await client.post("/passwords/create", json=entry("trashed"), headers=vault)
+    await client.delete("/passwords/trashed", headers=vault)
+    await _upload(client, vault, "keep.bin")
+    before = await db_snapshot()
+
+    resp = await client.request(
+        method,
+        path,
+        json={"favorite": True} if method == "PATCH" else None,
+        headers=vault,
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "'/'" in resp.json()["detail"]
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert await db_snapshot() == before
