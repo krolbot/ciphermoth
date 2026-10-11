@@ -20,7 +20,9 @@ RUN addgroup -S ciphermoth && adduser -S ciphermoth -G ciphermoth
 
 WORKDIR /app
 
-RUN npm install -g serve
+COPY docker/frontend/serve/package.json docker/frontend/serve/package-lock.json ./server/
+RUN npm ci --prefix /app/server --omit=dev && npm cache clean --force
+ENV PATH="/app/server/node_modules/.bin:$PATH"
 
 COPY --from=builder --chown=ciphermoth:ciphermoth /app/dist ./dist
 COPY --from=builder /app/serve.json ./serve.json
