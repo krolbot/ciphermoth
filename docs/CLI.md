@@ -147,7 +147,7 @@ It follows the same zero-trust rules as the web UI, and it's small enough to rea
 - **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password. The ZIP format turns that password into a key with PBKDF2-SHA1 at 1,000 iterations, which is much weaker than the vault's Argon2id, so treat the file itself as sensitive and keep it somewhere safe. It holds your active entries, not the trash, password history, attachments or settings.
 - **You get warned about plaintext transport.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI says so before prompting, because your master password would cross the network unencrypted. Put the API behind HTTPS, or reach it over a VPN or SSH tunnel.
 
-A note on entry names: names containing a `/` can be created in the web UI but can't be addressed from the CLI, because the API routes on the name. The CLI reports a plain "no password found" for those rather than acting on a different entry. Rename them if you want to reach them from the terminal.
+A note on entry names: names containing a `/` can be created in the web UI but can't be addressed by name from the CLI, because the API routes on the name. The CLI refuses such a name before sending anything, and the server refuses any request that would route one elsewhere, so a command can never act on a different entry. Rename the entry (edit it in the web UI) if you want to reach it from the terminal. Names that are just `.` or `..` work from the CLI.
 
 ## Rate limits
 

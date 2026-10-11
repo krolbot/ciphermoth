@@ -139,6 +139,7 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** - hacking on CipherMoth, self-hosting on a server, configuration, and updates
 - **[docs/CLI.md](./docs/CLI.md)** - the `ciphermoth` command-line reference. A plain Docker install already has it: `install.sh` leaves a `cip` script in your CipherMoth folder, so `./cip password list` just works (no Python, no clone)
 - **[SECURITY.md](./SECURITY.md)** - reporting a vulnerability
+- **[testdata/golden](./testdata/golden/README.md)** - which older versions' vaults and backups open in this release, proven by tests against vaults those versions created
 - Logo, wordmark, and favicon live in [`docs/brand/`](./docs/brand)
 
 ## License
