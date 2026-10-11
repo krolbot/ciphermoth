@@ -11,6 +11,7 @@ from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     Headers,
+    admin_connection,
     auth,
     create_vault,
     db_execute,
@@ -242,21 +243,50 @@ async def test_concurrent_uploads_cannot_exceed_the_attachment_cap(
             "/passwords/alpha/attachments", headers=headers, **_upload(f"f{i}.bin")
         )
         assert resp.status_code == 200
-
-    responses = await asyncio.gather(
-        *(
-            client.post(
-                "/passwords/alpha/attachments",
-                headers=headers,
-                **_upload(f"race{i}.bin"),
-            )
-            for i in range(6)
+    blocker = await admin_connection()
+    try:
+        await blocker.execute("BEGIN")
+        await blocker.execute(
+            "SELECT 1 FROM passwords WHERE password_name = 'alpha' FOR UPDATE"
         )
-    )
+        uploads = asyncio.gather(
+            *(
+                client.post(
+                    "/passwords/alpha/attachments",
+                    headers=headers,
+                    **_upload(f"race{i}.bin"),
+                )
+                for i in range(6)
+            )
+        )
+        await _wait_for_blocked_sessions(6)
+        await blocker.execute("ROLLBACK")
+        responses = await uploads
+    finally:
+        await blocker.close()
 
     assert sorted(r.status_code for r in responses) == [200, 400, 400, 400, 400, 400]
     rows = await db_execute("SELECT count(*) FROM password_attachments")
     assert rows == [(20,)]
+
+
+async def _wait_for_blocked_sessions(count: int, timeout: float = 30) -> None:
+    observer = await admin_connection()
+    try:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            blocked = await observer.fetchval(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+            )
+            if blocked >= count:
+                return
+            assert asyncio.get_running_loop().time() < deadline, (
+                f"only {blocked} of {count} requests waited on the entry lock"
+            )
+            await asyncio.sleep(0.05)
+    finally:
+        await observer.close()
 
 
 async def test_concurrent_uploads_cannot_exceed_the_size_cap(

@@ -144,14 +144,19 @@ class _Reader:
         self.problems.append(Problem(table, row_id, column, reason))
 
     def raw(self, table: str, row_id: object, column: str, token: object) -> bytes:
+        return self.raw_or_none(table, row_id, column, token) or b""
+
+    def raw_or_none(
+        self, table: str, row_id: object, column: str, token: object
+    ) -> bytes | None:
         if not isinstance(token, bytes):
             self.flag(table, row_id, column, "missing or not bytes")
-            return b""
+            return None
         try:
             return self.fernet.decrypt(token)
         except InvalidToken:
             self.flag(table, row_id, column, "token does not decrypt")
-            return b""
+            return None
 
     def text(self, table: str, row_id: object, column: str, token: object) -> str:
         data = self.raw(table, row_id, column, token)
@@ -224,6 +229,7 @@ def _check_master(
     rows: list[dict[str, Any]],
     key: str,
     master_password: str | None,
+    require_key_check: bool,
 ) -> str:
     if not rows:
         reader.flag("master_password", None, "*", "no master password row")
@@ -236,6 +242,8 @@ def _check_master(
     ):
         reader.flag("master_password", first["id"], "hash_key", "password rejected")
     if first.get("key_check") is None:
+        if require_key_check:
+            reader.flag("master_password", first["id"], "key_check", "absent")
         return "absent"
     if verify_key_check(key, first["key_check"], first["salt"]):
         return "valid"
@@ -249,11 +257,12 @@ def _attachments(
     table = "password_attachments"
     by_entry: dict[int, list[Attachment]] = {}
     for row_id, row in rows.items():
-        content = reader.raw(table, row_id, "content", row["content"])
+        content = reader.raw_or_none(table, row_id, "content", row["content"])
         if row["password_id"] not in entry_ids:
             reader.flag(table, row_id, "password_id", "no such entry")
-        if content and len(content) != row["size_bytes"]:
+        if content is not None and len(content) != row["size_bytes"]:
             reader.flag(table, row_id, "size_bytes", "does not match the content")
+        content = content or b""
         by_entry.setdefault(row["password_id"], []).append(
             Attachment(
                 id=row_id,
@@ -278,7 +287,7 @@ def _entries(
     entries = []
     active_names: set[str] = set()
     for row_id, row in rows.items():
-        kind = row.get("kind") or "login"
+        kind = row.get("kind", "login")
         if kind not in KINDS:
             reader.flag(table, row_id, "kind", f"unknown kind {kind!r}")
         if row.get("deleted") is None:
@@ -323,6 +332,7 @@ async def read_vault(
     *,
     master_password: str | None = None,
     known_revisions: Iterable[str] | None = None,
+    require_key_check: bool = False,
     strict: bool = True,
 ) -> VaultContents:
     """
@@ -332,12 +342,19 @@ async def read_vault(
 
     Unlike the application's read path nothing is silently replaced: a token
     that does not decrypt, text that is not UTF-8 or JSON of the wrong shape is
-    a problem. With ``strict`` any problem raises VaultIntegrityError.
+    a problem. With ``strict`` any problem raises VaultIntegrityError. A vault
+    from before v1.4.6 has no key check; pass ``require_key_check`` for vaults
+    that must have one. Columns missing from older schemas read as their later
+    defaults, but a NULL where the current schema has a value is a problem.
     """
     reader = _Reader(key)
     raw = await raw_vault(conn)
     key_check = _check_master(
-        reader, list(raw["master_password"].values()), key, master_password
+        reader,
+        list(raw["master_password"].values()),
+        key,
+        master_password,
+        require_key_check,
     )
 
     revision = None

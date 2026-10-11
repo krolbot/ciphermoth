@@ -342,3 +342,17 @@ async def test_diff_rejects_unknown_fields() -> None:
     with pytest.raises(ValueError, match="nonsense"):
         diff_vaults(empty, empty, compare=["nonsense"])
     assert json.dumps(diff_vaults(empty, empty)) == "[]"
+
+
+async def test_strictness_options_report_what_the_app_tolerates(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await _rich_vault(client)
+    await db_execute("UPDATE master_password SET key_check = NULL")
+    assert (await _scan(key)).key_check == "absent"
+    with pytest.raises(VaultIntegrityError, match="key_check: absent"):
+        await _scan(key, require_key_check=True)
+
+    await db_execute("UPDATE passwords SET kind = '' WHERE password_name = 'Old'")
+    with pytest.raises(VaultIntegrityError, match="kind"):
+        await _scan(key)

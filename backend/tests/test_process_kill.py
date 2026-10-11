@@ -155,7 +155,12 @@ async def test_killing_the_server_mid_import_writes_nothing(tmp_path: Path) -> N
         before = await _state()
         rows = "\n".join(f"import-{i:04d},pass-{i}" for i in range(2000))
         csv = f"name,password\nentry-004,overwritten\n{rows}\n".encode()
-        blocker = await _lock_row("entry-004")
+        blocker = await admin_connection()
+        await blocker.execute("BEGIN")
+        await blocker.execute(
+            "INSERT INTO passwords (password_name, password_value) "
+            "VALUES ('import-1999', 'x')"
+        )
         try:
             async with httpx.AsyncClient(base_url=server.base_url, timeout=60) as http:
                 await _send_and_kill_when_blocked(
@@ -167,7 +172,7 @@ async def test_killing_the_server_mid_import_writes_nothing(tmp_path: Path) -> N
                         files={"file": ("x.csv", csv, "text/csv")},
                         headers={KEY_HEADER: key},
                     ),
-                    "UPDATE passwords",
+                    "INSERT INTO passwords",
                 )
         finally:
             await blocker.close()
