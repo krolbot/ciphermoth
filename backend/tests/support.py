@@ -1,10 +1,13 @@
 import asyncio
 import base64
 import os
+import socket
 import subprocess
 import sys
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import time
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
@@ -221,3 +224,50 @@ async def client_for_database(database: str) -> AsyncIterator[httpx.AsyncClient]
                 yield http
         finally:
             app.dependency_overrides.pop(get_session, None)
+
+
+@dataclass
+class ApiServer:
+    process: subprocess.Popen
+    base_url: str
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@contextmanager
+def api_server(log_path: Path) -> Iterator[ApiServer]:
+    """A real uvicorn process serving the app against the test database."""
+    port = _free_port()
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "main:app", "--port", str(port)],
+            cwd=BACKEND_DIR,
+            env=dict(os.environ),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+        base_url = f"http://127.0.0.1:{port}/api"
+        try:
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    if httpx.get(f"{base_url}/meta", timeout=1).status_code == 200:
+                        break
+                except httpx.TransportError:
+                    pass
+                if process.poll() is not None or time.monotonic() > deadline:
+                    output = log_path.read_text(errors="replace")
+                    raise RuntimeError(f"Test API server did not start:\n{output}")
+                time.sleep(0.2)
+            yield ApiServer(process, base_url)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
