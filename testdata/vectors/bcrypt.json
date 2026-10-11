@@ -1,0 +1,54 @@
+{
+  "format": "ciphermoth-test-vectors/1",
+  "name": "bcrypt",
+  "description": "master_password.hash_key = bcrypt(base64(SHA-256(password_utf8))), the standard (not URL-safe) base64 of the 32-byte digest, 44 ASCII bytes. Any cost and the $2a$/$2b$ prefixes must verify; new hashes use $2b$ with cost 12.",
+  "vectors": [
+    {
+      "password": "Moth-Test-Vault-2026!",
+      "hash": "$2b$12$OGyGkYrUzOlOtUhcm7c8Wej0zrJLrP6WsNy15Cg7iwuEn8LqZgB82",
+      "note": "production cost"
+    },
+    {
+      "password": "Mölle-Stern-2026",
+      "hash": "$2b$04$WSo4z8ANLkVRgD1AJxsIbe70/SQXX3XamvnoFYv2lvfMmw0uU1bgq",
+      "note": "non-ASCII"
+    },
+    {
+      "password": "🦋 moth 🦋 2026",
+      "hash": "$2b$04$1fC2ZAfZpi8u6/1Y8B5b0OP21DcFZftwwgu5JGMBdUv3kTWzG7lt2",
+      "note": "emoji"
+    },
+    {
+      "password": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp-tail-A",
+      "hash": "$2b$04$jy4W26X1lYTxkSy2KHl5feWdXCqHApoVF3T6.qK2nQpTfUcsfp46a",
+      "note": "longer than bcrypt's 72-byte limit"
+    },
+    {
+      "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx!",
+      "hash": "$2b$04$ZiOmNWq7yh8xZt0X/56ZUeipTqywKrCJRubgo.vA6lgN5bzwIDi2O",
+      "note": "1024 characters"
+    }
+  ],
+  "mismatches": [
+    {
+      "password": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp-tail-B",
+      "hash": "$2b$04$jy4W26X1lYTxkSy2KHl5feWdXCqHApoVF3T6.qK2nQpTfUcsfp46a",
+      "note": "same first 72 bytes: must not verify thanks to the SHA-256 pre-hash"
+    },
+    {
+      "password": "Moth-Test-Vault-2026?",
+      "hash": "$2b$12$OGyGkYrUzOlOtUhcm7c8Wej0zrJLrP6WsNy15Cg7iwuEn8LqZgB82",
+      "note": "wrong password"
+    },
+    {
+      "password": "Mölle-Stern-2026",
+      "hash": "$2b$04$WSo4z8ANLkVRgD1AJxsIbe70/SQXX3XamvnoFYv2lvfMmw0uU1bgq",
+      "note": "NFD form of the NFC password"
+    },
+    {
+      "password": "Moth-Test-Vault-2026!",
+      "hash": "$2b$04$OGyGkYrUzOlOtUhcm7c8WeYHNVT9fDYnv788RfnL9YbiotJevP0fu",
+      "note": "plain bcrypt without the pre-hash, as before v0.3.0: unsupported"
+    }
+  ]
+}

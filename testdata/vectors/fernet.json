@@ -1,0 +1,120 @@
+{
+  "format": "ciphermoth-test-vectors/1",
+  "name": "fernet",
+  "description": "Every encrypted column (and the key check) is a Fernet token, spec version 0x80: base64url(0x80 || timestamp u64 BE || IV(16) || AES-128-CBC(key[16:32], PKCS7(plaintext)) || HMAC-SHA256(key[0:16], all previous bytes)), stored as the ASCII bytes of that string. Text columns hold UTF-8; JSON columns hold UTF-8 JSON; attachment content holds raw bytes. Tokens never expire (no TTL is checked).",
+  "vectors": [
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "",
+      "plaintext_hex": "",
+      "iv_hex": "000102030405060708090a0b0c0d0e0f",
+      "timestamp": 1760000000,
+      "token": "gAAAAABo53gAAAECAwQFBgcICQoLDA0OD3oBajpqiUu3_XBBe8scdNTG1T7HRCiH1ODJp99CsWbplYZapEu2G7z83PuPCafxNA==",
+      "note": "empty plaintext"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "s3cret-Value!",
+      "plaintext_hex": "7333637265742d56616c756521",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "timestamp": 1760000001,
+      "token": "gAAAAABo53gBEBESExQVFhcYGRobHB0eH6p8tUxXNXUARAp0vtOSFS4xnmco9uqZgpeMIwYLXouJh7E4rFzYzSe00Jyedos5hw==",
+      "note": "ASCII password"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "  line one\n\tline two\n\n",
+      "plaintext_hex": "20206c696e65206f6e650a096c696e652074776f0a0a",
+      "iv_hex": "202122232425262728292a2b2c2d2e2f",
+      "timestamp": 1760000002,
+      "token": "gAAAAABo53gCICEiIyQlJicoKSorLC0uL8lCDM71agBoFtVmehffJsHESMW5C2BldUjDfTn1uRNKaIH8gUnEUlDgKP43FdwF3p9J9ToCHwBqnzlJhbmJ57E=",
+      "note": "note with surrounding whitespace"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "ключ 🦋 パス",
+      "plaintext_hex": "d0bad0bbd18ed18720f09fa68b20e38391e382b9",
+      "iv_hex": "303132333435363738393a3b3c3d3e3f",
+      "timestamp": 1760000003,
+      "token": "gAAAAABo53gDMDEyMzQ1Njc4OTo7PD0-PyLOmBW6UZbqx8pyJb4yGN27zT2MZS7IY2HBJvd-QozyQUDdRHPTr55RW-xd2CvCfcxGBBeuv-0GdVIh1LmlLhk=",
+      "note": "multi-byte UTF-8"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "xxxxxxxxxxxxxxxx",
+      "plaintext_hex": "78787878787878787878787878787878",
+      "iv_hex": "404142434445464748494a4b4c4d4e4f",
+      "timestamp": 1760000004,
+      "token": "gAAAAABo53gEQEFCQ0RFRkdISUpLTE1OT4dhmXG7LipmRrXeyyQENRzwiCAvB8sDPqw3bOqqCmzscEhXOV18tb-ml-tdIWDgQEFR-XDz3wnQ7h2TN1SsoFc=",
+      "note": "exactly one AES block, padded with a full block"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "[\"dev\",\"ops\"]",
+      "plaintext_hex": "5b22646576222c226f7073225d",
+      "iv_hex": "505152535455565758595a5b5c5d5e5f",
+      "timestamp": 1760000005,
+      "token": "gAAAAABo53gFUFFSU1RVVldYWVpbXF1eX2XE0MAGg2MWugFb-N7VgkuN-tW0Er3_JXXwufvSiVUN_3ZO7EpJFV_AdCPYAYOTZw==",
+      "note": "tags JSON as stored"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "[{\"label\": \"PIN\", \"value\": \"1234\", \"hidden\": true}]",
+      "plaintext_hex": "5b7b226c6162656c223a202250494e222c202276616c7565223a202231323334222c202268696464656e223a20747275657d5d",
+      "iv_hex": "606162636465666768696a6b6c6d6e6f",
+      "timestamp": 1760000006,
+      "token": "gAAAAABo53gGYGFiY2RlZmdoaWprbG1ub_CUFLVocNsPGiNgzRfHyqwFVPNn7u3UQynexmtAq8yj5xK_bj-g3GZhGVBFKOAWu_4JsBR7URdIDoDUEusI9-7SahJsVSBMTwUd0mR5p78bhXT95UftV1ImEs2sap4q5w==",
+      "note": "custom fields JSON as stored"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": "[{\"value\": \"old\", \"changed_at\": \"2026-01-01T00:00:00+00:00\"}]",
+      "plaintext_hex": "5b7b2276616c7565223a20226f6c64222c20226368616e6765645f6174223a2022323032362d30312d30315430303a30303a30302b30303a3030227d5d",
+      "iv_hex": "707172737475767778797a7b7c7d7e7f",
+      "timestamp": 1760000007,
+      "token": "gAAAAABo53gHcHFyc3R1dnd4eXp7fH1-fzmeYnTWBeoTicg0JfiRCWvdc_GWfY_6ndwP_zCS_vAS8EX6QAzoU2-NgIAsJQmdC8aMYuj5PyTN7XwX3wm56jfQy5bO5gp9HJEcgYUJ8Iaj_yPtUoLLh3wIoo4UOZh-uw==",
+      "note": "password history JSON as stored"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "plaintext": null,
+      "plaintext_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfefffffe0080",
+      "iv_hex": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+      "timestamp": 1760000100,
+      "token": "gAAAAABo53hk8PDw8PDw8PDw8PDw8PDw8NfeZfCT26rqt-guZoypi6ui9r38OSeIX8zDNC7LEYRktj5GxENmy7Nu2UKyJ3RjdfqfQBvMBSdjtQQ1-Tj0QGE5_dpI5yLHWaaRJ9FLjH9tIubIeRXRTcJ_wSGZ-fS9eNTBAL_fmcyCAiorBrOvXD7x0WEsqk240Xt4WuDGFPFvLqE_jX_3v1mVMCizaAUreNb0wAfDlnh-l00vfgOAKH2NgetJnFlCjTB_3OWAptPwf6iUddTIYrMgl4YkQw5-bIhn4DiztTbvwyiNb8fTAkpd22vWG3Y7rOwQ462IXLKeDDGHlbut-rZgYcQnwf3yyH32vJBK3en0NsSq0klbpPomcKXDb8MWXwaDMjByxXff_Ph2n3C6f_zjUqP698Pwi7PyII0lIVCV2EnYolm4zgY=",
+      "note": "attachment content: arbitrary bytes, not UTF-8"
+    }
+  ],
+  "invalid": [
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "token": "gAAAAABo53gBEBESExQVFhcYGRobHB0eH6p8tUxXNXUARAp0vtOSFS4xnmco9uqZgpeMIwYLXouJh7E4rFzYzSe00Jyedos5",
+      "note": "truncated"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "token": "gAAAAABo53gBEBESExQVFhcYGRobHB0eH6p8tUxXNHUARAp0vtOSFS4xnmco9uqZgpeMIwYLXouJh7E4rFzYzSe00Jyedos5hw==",
+      "note": "one ciphertext bit flipped"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "token": "gAAAAABo53gBEBESExQVFhcYGRobHB0eH6p8tUxXNXUARAp0vtOSFS4xnmco9uqZgpeMIwYLXouJh7E4rFzYzSe00Jyedos5hg==",
+      "note": "one MAC bit flipped"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "token": "gQAAAABo53gBEBESExQVFhcYGRobHB0eH6p8tUxXNXUARAp0vtOSFS4xnmco9uqZgpeMIwYLXouJh7E4rFzYzSe00Jyedos5hw==",
+      "note": "version byte 0x81"
+    },
+    {
+      "key": "mHOuf-P6mu2ECSRy_oRMVbuG2qquYwwkows-hldq5ME=",
+      "token": "gAAAAABo53gBEBESExQVFhcYGRobHB0eH6p8tUxXNXUARAp0vtOSFS4xnmco9uqZgpeMIwYLXouJh7E4rFzYzSe00Jyedos5hw==",
+      "note": "key derived from a different password"
+    },
+    {
+      "key": "hPnhuNwRyWHS9yen4ewb1MPCDJr_bYKWfMSMRqRhdGE=",
+      "token": "",
+      "note": "empty token"
+    }
+  ]
+}
