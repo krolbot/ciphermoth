@@ -319,3 +319,53 @@ def test_real_cosign_accepts_the_official_signature_only(images) -> None:
     assert "signature verified" in official.stderr
     assert unsigned_platform.returncode != 0
     assert other_identity.returncode != 0
+
+
+def test_a_snapshot_that_does_not_restore_stops_the_update(stacks) -> None:
+    stack = stacks("corrupt-snapshot", fault="corrupt:snapshot")
+    token = stack.unlock(MASTER)
+    before = stack.vault(KEY, MASTER)
+
+    status = stack.wait_result(_apply(stack, token, "v1.5.3"))
+
+    assert status["state"] == "failed", status
+    assert "snapshot" in status["detail"]
+    assert "Nothing was changed" in status["detail"]
+    _healthy_on(stack, CANDIDATE)
+    assert stack.revision() == BASE_HEAD
+    _identical(stack, before)
+    assert not [f for f in stack.backups() if "/snapshots/" in f]
+
+
+def test_a_release_that_cannot_be_pulled_changes_nothing(stacks) -> None:
+    stack = stacks("missing-release")
+    token = stack.unlock(MASTER)
+    before = stack.vault(KEY, MASTER)
+
+    status = stack.wait_result(_apply(stack, token, "v1.9.9"))
+
+    assert status["state"] == "failed", status
+    assert "could not pull" in status["detail"]
+    _healthy_on(stack, CANDIDATE)
+    _identical(stack, before)
+
+
+def test_a_crash_during_the_restore_still_restores_the_vault(stacks) -> None:
+    stack = stacks("killed-in-restore", fault="kill:restore_created")
+    token = stack.unlock(MASTER)
+    assert stack.add_entry(token, "written just before").status_code == 200
+    before = stack.vault(KEY, MASTER)
+    tables = stack.tables()
+
+    status = stack.wait_result(_apply(stack, token, "v1.5.4"))
+
+    assert status["state"] == "rolled_back", status
+    assert stack.container("updater")["RestartCount"] >= 1
+    _healthy_on(stack, CANDIDATE)
+    assert stack.revision() == BASE_HEAD
+    assert stack.tables() == tables
+    _identical(stack, before)
+    databases = stack.query("SELECT datname FROM pg_database ORDER BY 1")
+    assert [row[0] for row in databases if row[0].startswith("ciphermoth")] == [
+        "ciphermoth"
+    ]

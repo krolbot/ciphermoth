@@ -114,6 +114,12 @@ test:
 	cd frontend && npm test
 	node --test docker/frontend/runtime-config.test.mjs
 
+# Builds release candidate and synthetic future images, then drives real one-click
+# updates and rollbacks in isolated Compose projects (cm-e2e-*), never the real vault.
+.PHONY: test-updater-e2e
+test-updater-e2e:
+	cd backend && uv run pytest e2e -p no:cacheprovider -v
+
 # Builds the frontend image and checks its Content-Security-Policy in Chromium.
 .PHONY: test-browser
 test-browser:

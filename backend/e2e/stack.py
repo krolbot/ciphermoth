@@ -475,7 +475,7 @@ class Stack:
 
     def add_entry(self, token: str, name: str) -> httpx.Response:
         return self.api.post(
-            "/passwords",
+            "/passwords/create",
             headers=self.headers(token),
             json={"password_name": name, "password_value": f"{name}-Value-1!"},
         )
