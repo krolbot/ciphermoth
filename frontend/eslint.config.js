@@ -31,6 +31,25 @@ export default [
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       // The app uses runtime prop shapes, not PropTypes.
       "react/prop-types": "off",
+      "react/no-danger": "error",
+      "no-eval": "error",
+      "no-implied-eval": "error",
+      "no-new-func": "error",
+      "no-script-url": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name=/^(innerHTML|outerHTML)$/]",
+          message:
+            "Render text through React; HTML sinks would let injected markup read the session token.",
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name='insertAdjacentHTML'], CallExpression[callee.object.name='document'][callee.property.name=/^write(ln)?$/]",
+          message:
+            "Render text through React; HTML sinks would let injected markup read the session token.",
+        },
+      ],
     },
   },
   {
