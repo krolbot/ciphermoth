@@ -6,6 +6,7 @@ import io
 import json
 import re
 import struct
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +26,7 @@ _KDF_WORKERS = 2
 _KDF_POOL = ThreadPoolExecutor(
     max_workers=_KDF_WORKERS, thread_name_prefix="ciphermoth-kdf"
 )
+_ARGON2_ALONE = threading.Lock()
 
 _KEY_CHECK_PREFIX = b"ciphermoth-key-check-v1:"
 _CANONICAL_KEY = re.compile(r"[A-Za-z0-9_-]{43}=", re.ASCII)
@@ -51,14 +53,18 @@ def generate_key_derivation(salt: bytes, master_password: str) -> bytes:
         lanes=_ARGON2_LANES,
         memory_cost=_ARGON2_MEMORY_COST,
     )
-    return base64.urlsafe_b64encode(kdf.derive(master_password.encode()))
+    with _ARGON2_ALONE:
+        derived = kdf.derive(master_password.encode())
+    return base64.urlsafe_b64encode(derived)
 
 
 async def _off_the_event_loop[T](function: Callable[..., T], *args: object) -> T:
     """
     Run a deliberately slow KDF in a small dedicated pool, so other requests
-    keep being served while it runs and at most two Argon2id derivations (64 MiB
-    each) are in memory at once, however many unlocks arrive together.
+    keep being served while it runs. Argon2id derivations still run one at a
+    time (``_ARGON2_ALONE``): two at once deadlocked inside OpenSSL on x86_64
+    Linux, and one at a time also keeps their memory at 64 MiB however many
+    unlocks arrive together. bcrypt checks may overlap with them.
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_KDF_POOL, function, *args)

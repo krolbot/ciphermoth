@@ -8,6 +8,7 @@ from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -851,7 +852,7 @@ async def test_unlocks_waiting_for_the_kdf_hold_no_database_connection(
     assert waited < 0.15
 
 
-async def test_concurrent_unlocks_derive_at_most_two_keys_at_once(
+async def test_argon2id_derivations_never_overlap(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import helpers
@@ -860,23 +861,36 @@ async def test_concurrent_unlocks_derive_at_most_two_keys_at_once(
     running = 0
     peak = 0
     lock = threading.Lock()
-    original = helpers.generate_key_derivation
+    original = helpers.Argon2id
 
-    def counted(salt: bytes, password: str) -> bytes:
-        nonlocal running, peak
-        with lock:
-            running += 1
-            peak = max(peak, running)
-        try:
-            return original(salt, password)
-        finally:
+    class Counted:
+        def __init__(self, **kwargs: Any) -> None:
+            self._kdf = original(**kwargs)
+
+        def derive(self, data: bytes) -> bytes:
+            nonlocal running, peak
             with lock:
-                running -= 1
+                running += 1
+                peak = max(peak, running)
+            try:
+                time.sleep(0.05)
+                return self._kdf.derive(data)
+            finally:
+                with lock:
+                    running -= 1
 
-    monkeypatch.setattr(helpers, "generate_key_derivation", counted)
-    tokens = await asyncio.gather(*(unlock(client) for _ in range(6)))
+    monkeypatch.setattr(helpers, "Argon2id", Counted)
+    derive_on_loop = asyncio.to_thread(
+        helpers.generate_key_derivation, b"s" * 16, MASTER_PASSWORD
+    )
+    tokens, _ = await asyncio.wait_for(
+        asyncio.gather(
+            asyncio.gather(*(unlock(client) for _ in range(6))), derive_on_loop
+        ),
+        timeout=120,
+    )
     assert len(set(tokens)) == 6
-    assert peak <= 2
+    assert peak == 1
 
 
 async def test_sessions_are_bounded(client: httpx.AsyncClient) -> None:
