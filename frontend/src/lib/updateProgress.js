@@ -38,7 +38,7 @@ export const progressOutcome = ({ status, requestId, live, boot, target, protoco
   if (protocol >= 2) {
     const state = status?.state;
     if (!state || !DONE_STATES.has(state)) return "waiting";
-    if (status.id && requestId && status.id !== requestId) return "waiting";
+    if (!requestId || status.id !== requestId) return "waiting";
     return state === "success" ? "success" : "failed";
   }
   const current = stripV(live);

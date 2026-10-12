@@ -162,7 +162,6 @@ def request_update(target: str, current_version: str) -> dict:
     if _request_file().exists():
         raise Forbidden("An update request is already waiting.")
     request_id = uuid.uuid4().hex
-    _result_file().unlink(missing_ok=True)
     _publish_request(
         {
             "target": target,
@@ -170,4 +169,6 @@ def request_update(target: str, current_version: str) -> dict:
             "requested_at": datetime.now(UTC).isoformat(),
         }
     )
+    if _read_json(_result_file()).get("state") in _TERMINAL:
+        _result_file().unlink(missing_ok=True)
     return {**get_apply_status(), "request_id": request_id}

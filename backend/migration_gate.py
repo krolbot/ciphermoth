@@ -12,9 +12,10 @@ from crud.engine import create_engine
 from crud.health import migration_heads
 from settings import get_api_settings
 from update_protocol import (
+    FIRST_PROTOCOL_2_RELEASE,
     LEGACY_UPDATER_WINDOW_SECONDS,
-    RECREATE_UPDATER_COMMAND,
     REQUIRED_UPDATER_PROTOCOL,
+    UNREADABLE_RESULT_WINDOW_SECONDS,
 )
 
 REFUSED_EXIT = 78
@@ -22,9 +23,11 @@ REFUSED_EXIT = 78
 LEGACY_UPDATER = (
     "the one-click updater applying it predates updater protocol "
     f"{REQUIRED_UPDATER_PROTOCOL} and could not restore the database if the update "
-    "failed. The database was not touched and the updater will roll back. Update "
-    f"the updater first ({RECREATE_UPDATER_COMMAND}) or update by hand after "
-    "taking a backup"
+    "failed. The database was not touched and the updater will roll back. Either "
+    f"set CIPHERMOTH_VERSION={FIRST_PROTOCOL_2_RELEASE} in .env and run 'docker "
+    "compose -f docker-compose.prod.yml --profile autoupdate pull' and '... "
+    "--profile autoupdate up -d' (that release changes no schema and brings the "
+    "new updater), then update with one click; or back up and update by hand"
 )
 
 
@@ -75,7 +78,8 @@ def decide(pending: bool, control: Path, version: str, now: float) -> str | None
     try:
         data = json.loads(result.read_text())
     except PermissionError:
-        return LEGACY_UPDATER
+        recent = now - modified <= UNREADABLE_RESULT_WINDOW_SECONDS
+        return LEGACY_UPDATER if recent else None
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("protocol"):

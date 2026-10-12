@@ -20,10 +20,12 @@ from tests.support import (
     run_alembic,
 )
 from update_protocol import (
+    FIRST_PROTOCOL_2_RELEASE,
     LEGACY_UPDATER_WINDOW_SECONDS,
     MIN_UPDATER_PROTOCOL_LABEL,
     RECREATE_UPDATER_COMMAND,
     REQUIRED_UPDATER_PROTOCOL,
+    UNREADABLE_RESULT_WINDOW_SECONDS,
 )
 
 ROOT = BACKEND_DIR.parent
@@ -108,7 +110,7 @@ def test_an_old_updater_applying_this_release_may_not_migrate(
 
     assert reason is not None
     assert "predates updater protocol" in reason
-    assert RECREATE_UPDATER_COMMAND in reason
+    assert f"CIPHERMOTH_VERSION={FIRST_PROTOCOL_2_RELEASE}" in reason
 
 
 @pytest.mark.parametrize(
@@ -141,6 +143,8 @@ def test_an_unreadable_recent_result_of_an_old_updater_blocks(tmp_path: Path) ->
     (tmp_path / "result.json").chmod(0o000)
     try:
         assert decide(True, tmp_path, VERSION, time.time()) is not None
+        later = time.time() + UNREADABLE_RESULT_WINDOW_SECONDS + 1
+        assert decide(True, tmp_path, VERSION, later) is None
     finally:
         (tmp_path / "result.json").chmod(0o600)
 

@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -390,7 +391,7 @@ def test_a_restore_that_keeps_failing_needs_intervention(tmp_path: Path) -> None
     assert world.journal["phase"] == "intervention"
 
     world.unflag("restore_fail")
-    assert world.run("resolve").returncode == 0
+    assert world.run("resolve").returncode == 0, world.log
     assert world.journal["phase"] == "resolved"
     assert world.maintenance is None
     assert world.live_db != before
@@ -577,17 +578,23 @@ def test_an_update_interrupted_under_the_previous_updater_is_reported(
 
 def test_stray_temporary_databases_are_dropped(tmp_path: Path) -> None:
     world = World(tmp_path)
-    world.state["databases"]["ciphermoth_verify_0123456789ab"] = initial_database("x")
-    world.state["databases"]["ciphermoth_failed_0123456789ab"] = initial_database("x")
-    world.state["databases"]["other_restore_0123456789ab"] = initial_database("x")
+    world.state["databases"]["ciphermoth_verify_0123456789abcdef0123456789abcdef"] = (
+        initial_database("x")
+    )
+    world.state["databases"]["ciphermoth_failed_0123456789abcdef0123456789abcdef"] = (
+        initial_database("x")
+    )
+    world.state["databases"]["other_restore_0123456789abcdef0123456789abcdef"] = (
+        initial_database("x")
+    )
     world.save()
 
     world.run()
 
     assert world.database_names == [
         "ciphermoth",
-        "ciphermoth_failed_0123456789ab",
-        "other_restore_0123456789ab",
+        "ciphermoth_failed_0123456789abcdef0123456789abcdef",
+        "other_restore_0123456789abcdef0123456789abcdef",
     ]
 
 
@@ -630,3 +637,123 @@ def test_the_heartbeat_reports_the_protocol_and_a_stopped_updater(
     assert heartbeat["protocol"] == 2
     assert heartbeat["running"] is False
     assert (world.control / "updater.ready").exists()
+
+
+def _serving(world: World) -> subprocess.Popen[str]:
+    (world.control / "updater.json").unlink(missing_ok=True)
+    process = subprocess.Popen(
+        [sys.executable, str(UPDATER), "run"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=world.environment(),
+    )
+    heartbeat = world.control / "updater.json"
+    for _ in range(100):
+        if heartbeat.exists() and json.loads(heartbeat.read_text())["running"]:
+            break
+        time.sleep(0.1)
+    return process
+
+
+def _stop(process: subprocess.Popen[str]) -> str:
+    process.terminate()
+    return process.communicate(timeout=30)[1]
+
+
+@pytest.mark.parametrize("command", ["resolve", "retry"])
+def test_operator_commands_reach_a_running_updater(
+    tmp_path: Path, command: str
+) -> None:
+    world = World(tmp_path)
+    world.release("1.5.2", migrate_to="rev2")
+    world.flag("backend_health_fail", "restore_fail")
+    before = world.live_db
+    world.request("v1.5.2")
+    world.run()
+    assert world.journal["phase"] == "intervention", world.log
+    assert world.journal["recover_from"] == "rolling_back"
+    world.unflag("restore_fail")
+    server = _serving(world)
+    try:
+        done = world.run(command, timeout=90)
+    finally:
+        log = _stop(server)
+
+    assert done.returncode == 0, done.stderr + log
+    assert "handing" in done.stderr
+    assert world.maintenance is None
+    if command == "retry":
+        assert world.journal["phase"] == "rolled_back"
+        assert world.live_db == before
+        assert world.running() == "1.5.1"
+    else:
+        assert world.journal["phase"] == "resolved"
+
+
+def test_retry_needs_an_intervention(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    assert world.run("retry").returncode == 1
+
+
+def test_resolving_an_unreadable_journal_ends_maintenance(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    state = world.backups / "state"
+    state.mkdir(parents=True)
+    (state / "journal.json").write_text("{not json")
+    (world.control / "maintenance.json").write_text("{}")
+
+    assert world.run("resolve").returncode == 0
+
+    assert world.maintenance is None
+    assert not (state / "journal.json").exists()
+    assert world.run().returncode == 0
+    assert world.result["state"] == "failed"
+
+
+def test_recovery_exits_when_docker_stays_down(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    world.release("1.5.2", migrate_to="rev2")
+    world.request("v1.5.2")
+    world.run(CIPHERMOTH_UPDATER_FAULT="kill:compose_up_done")
+    _killed(world)
+    world.load()
+    world.state["docker_down"] = 10_000
+    world.save()
+
+    world.run(DEPENDENCY_TIMEOUT="0.5", RETRY_INTERVAL="0.05")
+
+    assert world.process is not None and world.process.returncode == 1
+    assert world.journal["phase"] == "applying"
+    assert world.maintenance is not None
+
+
+def test_a_directory_named_like_the_request_does_not_stop_the_updater(
+    tmp_path: Path,
+) -> None:
+    world = World(tmp_path)
+    (world.control / "request.json").mkdir()
+    (world.control / "request.json" / "x").write_text("x")
+
+    world.serve_for(1.5)
+
+    assert "cannot remove the request file" in world.log
+    assert world.log.count("cannot remove the request file") == 1
+    heartbeat = json.loads((world.control / "updater.json").read_text())
+    assert heartbeat["protocol"] == 2
+
+
+def test_state_files_are_not_followed_through_symlinks(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    world.release("1.5.2")
+    target = tmp_path / "victim"
+    target.write_text("keep")
+    target.chmod(0o600)
+    (world.control / "maintenance.json").symlink_to("/dev/zero")
+    (world.control / "updater.ready").symlink_to(target)
+
+    world.serve_for(1.5)
+
+    assert target.read_text() == "keep"
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert not (world.control / "updater.ready").is_symlink()

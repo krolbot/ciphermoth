@@ -27,10 +27,12 @@ def world():
     with (WORLD / "world.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         data = json.loads(STATE.read_text())
-        yield data
-        tmp = STATE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
-        os.replace(tmp, STATE)
+        try:
+            yield data
+        finally:
+            tmp = STATE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
+            os.replace(tmp, STATE)
 
 
 def record(program, args):

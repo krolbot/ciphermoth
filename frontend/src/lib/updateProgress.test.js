@@ -37,6 +37,16 @@ describe("progressOutcome with a protocol 2 updater", () => {
     ).toBe("success");
   });
 
+  it("ignores an old result while its own request is still being sent", () => {
+    expect(
+      progressOutcome({ ...base, requestId: null, status: { state: "failed", id: "b".repeat(32) } })
+    ).toBe("waiting");
+  });
+
+  it("ignores a result without an id", () => {
+    expect(progressOutcome({ ...base, status: { state: "rolled_back" } })).toBe("waiting");
+  });
+
   it("ignores a result that belongs to another request", () => {
     expect(
       progressOutcome({ ...base, live: "1.5.1", status: { state: "failed", id: "b".repeat(32) } })

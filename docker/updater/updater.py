@@ -26,14 +26,16 @@ SNAPSHOT_FORMAT = "ciphermoth-snapshot-v1"
 VERSION_RE = re.compile(r"v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})", re.ASCII)
 TAG_RE = re.compile(r"v(\d{1,9})\.(\d{1,9})\.(\d{1,9})", re.ASCII)
 REQUEST_ID_RE = re.compile(r"[0-9a-f]{32}", re.ASCII)
-DATABASE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}", re.ASCII)
+DATABASE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,21}", re.ASCII)
 DIGEST_SUFFIX_RE = re.compile(r"@sha256:[0-9a-f]{64}", re.ASCII)
 ENV_VERSION_LINE = re.compile(rb"^CIPHERMOTH_VERSION=[^\r\n]*", re.MULTILINE)
 SCRIPT_SRC_RE = re.compile(rb'<script[^>]*\ssrc="(/assets/[A-Za-z0-9._-]+\.js)"')
 MAX_REQUEST_BYTES = 4096
+MAX_STATE_BYTES = 1 << 20
 REMEMBERED_REQUESTS = 50
 
 ACTIVE = ("preparing", "verifying", "snapshotting", "applying", "validating")
+OPERATOR_COMMANDS = ("resolve", "retry")
 ROLLING_BACK = "rolling_back"
 INTERVENTION = "intervention"
 TERMINAL = ("committed", "rolled_back", "failed", "resolved")
@@ -157,13 +159,13 @@ def write_atomic(
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "wb") as handle:
+            os.fchmod(handle.fileno(), mode)
+            if owner is not None:
+                with suppress(OSError):
+                    os.fchown(handle.fileno(), *owner)
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(tmp, mode)
-        if owner is not None:
-            with suppress(OSError):
-                os.chown(tmp, *owner)
         os.replace(tmp, path)
     except BaseException:
         with suppress(FileNotFoundError):
@@ -177,10 +179,27 @@ def write_json(path: Path, payload: dict, mode: int = 0o644) -> None:
     write_atomic(path, text.encode(), mode)
 
 
-def read_json(path: Path) -> dict | None:
+def read_bounded(path: Path, limit: int = MAX_STATE_BYTES) -> bytes | None:
     try:
-        data = json.loads(path.read_bytes())
-    except (OSError, ValueError):
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = os.read(fd, limit + 1)
+    finally:
+        os.close(fd)
+    return data if len(data) <= limit else None
+
+
+def read_json(path: Path) -> dict | None:
+    raw = read_bounded(path)
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
         return None
     return data if isinstance(data, dict) else None
 
@@ -735,6 +754,7 @@ class Control:
         self.heartbeat = directory / "updater.json"
         self.maintenance = directory / "maintenance.json"
         self.ready = directory / "updater.ready"
+        self.stuck_request = False
 
     def has_request(self) -> bool:
         return os.path.lexists(self.request)
@@ -755,8 +775,16 @@ class Control:
                     data = os.read(fd, MAX_REQUEST_BYTES + 1)
             finally:
                 os.close(fd)
-        with suppress(FileNotFoundError):
+        try:
             os.unlink(self.request)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            if not self.stuck_request:
+                log(f"cannot remove the request file ({error}); ignoring it")
+            self.stuck_request = True
+            return None
+        self.stuck_request = False
         return data
 
     def publish(self, payload: dict) -> None:
@@ -850,7 +878,7 @@ class Updater:
     def setup(self) -> None:
         if not DATABASE_RE.fullmatch(self.settings.pg_database):
             raise SystemExit(
-                "POSTGRES_DB must be a plain identifier of at most 40 characters"
+                "POSTGRES_DB must be a plain identifier of at most 22 characters"
             )
         for directory in (self.state_dir, self.updates_dir, self.snapshots.dir):
             directory.mkdir(parents=True, exist_ok=True)
@@ -1050,7 +1078,7 @@ class Updater:
 
     def database_names(self, journal: dict) -> tuple[str, str, str]:
         base = self.settings.pg_database
-        short = self.short_id(journal)
+        short = journal["id"]
         return (
             f"{base}_verify_{short}",
             f"{base}_restore_{short}",
@@ -1339,7 +1367,7 @@ class Updater:
         partial = self.snapshots.partial_path(name)
         size = self.pg.size(database)
         free = os.statvfs(self.snapshots.dir)
-        if free.f_bavail * free.f_frsize < size + 64 * 1024 * 1024:
+        if free.f_bavail * free.f_frsize < 2 * size + 64 * 1024 * 1024:
             raise StepError("not enough free disk space for the database snapshot")
         log(f"snapshotting {database} ({size} bytes)")
         self.pg.dump(database, partial)
@@ -1476,7 +1504,7 @@ class Updater:
             except StepError:
                 self.docker.compose("up", "-d", *SERVICES, timeout=900)
             self.wait_healthy(previous, journal["previous"]["images"])
-        except StepError as error:
+        except (StepError, OSError) as error:
             self.intervention(
                 journal,
                 f"{reason}; restarting v{previous} afterwards failed too ({error})",
@@ -1515,7 +1543,7 @@ class Updater:
             try:
                 self.rollback_once(journal)
                 return
-            except StepError as error:
+            except (StepError, OSError) as error:
                 log(f"rollback attempt failed: {error}")
                 state["attempts"] += 1
                 state["last_error"] = str(error)
@@ -1611,6 +1639,8 @@ class Updater:
         self.fault("restore_swapped")
 
     def intervention(self, journal: dict, reason: str) -> None:
+        if journal["phase"] != INTERVENTION:
+            journal["recover_from"] = journal["phase"]
         snapshot = (journal.get("snapshot") or {}).get("name")
         kept = f" The pre-update snapshot {snapshot} is kept." if snapshot else ""
         self.transition(
@@ -1682,17 +1712,20 @@ class Updater:
                 return
             except StepError as error:
                 if time.monotonic() > deadline:
-                    log(f"Docker or the database is still unavailable: {error}")
-                    return
+                    log(
+                        f"Docker or the database is still unavailable ({error}); "
+                        "exiting so the restart policy retries later"
+                    )
+                    raise SystemExit(1) from error
                 log(f"waiting for Docker and the database before recovering: {error}")
                 self.sleep(self.settings.retry_interval)
 
     def drop_stray_databases(self, journal: dict | None) -> None:
         active = None
         if journal is not None and journal["phase"] not in TERMINAL:
-            active = self.short_id(journal)
+            active = journal["id"]
         pattern = re.compile(
-            rf"{re.escape(self.settings.pg_database)}_(verify|restore)_([0-9a-f]{{12}})"
+            rf"{re.escape(self.settings.pg_database)}_(verify|restore)_([0-9a-f]{{32}})"
         )
         try:
             names = self.pg.list_databases()
@@ -1751,7 +1784,10 @@ class Updater:
             os.replace(
                 self.journal.path, self.journal.path.with_suffix(f".{int(time.time())}")
             )
+            with suppress(FileNotFoundError):
+                os.unlink(self.control.maintenance)
             self.publish("failed", "The update state was reset by hand.", None)
+            self.heartbeat.set(None, None, False)
             return 0
         if journal is None or journal["phase"] != INTERVENTION:
             log("nothing to resolve")
@@ -1765,24 +1801,103 @@ class Updater:
         self.setup()
         with self.locked():
             self.heartbeat.start()
-            self.control.ready.touch()
+            write_atomic(self.control.ready, b"")
             try:
-                self.reconcile()
+                self.recover()
                 log(f"ready (protocol {PROTOCOL}, version {self.settings.version})")
                 while True:
+                    self.operator_requests()
                     if self.control.has_request():
                         self.handle_request()
                     self.sleep(self.settings.poll_interval)
             finally:
                 self.heartbeat.stop()
 
+    def recover(self) -> None:
+        try:
+            self.reconcile()
+        except OSError as error:
+            log(f"cannot recover now ({error}); exiting so it is retried later")
+            self.sleep(self.settings.retry_interval * 6)
+            raise SystemExit(1) from error
+
+    def operator_marker(self, command: str) -> Path:
+        return self.state_dir / f"{command}.requested"
+
+    def operator_requests(self) -> None:
+        for command in OPERATOR_COMMANDS:
+            marker = self.operator_marker(command)
+            if marker.exists():
+                with suppress(FileNotFoundError):
+                    marker.unlink()
+                log(f"operator asked to {command}")
+                code = self.operate(command)
+                write_atomic(
+                    marker.with_suffix(".done"), str(code).encode(), mode=0o600
+                )
+
+    def operate(self, command: str) -> int:
+        if command == "resolve":
+            return self.resolve()
+        return self.retry()
+
+    def operator(self, command: str) -> int:
+        self.setup()
+        handle = (self.state_dir / "lock").open("a+")
+        try:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                marker = self.operator_marker(command)
+                done = marker.with_suffix(".done")
+                with suppress(FileNotFoundError):
+                    done.unlink()
+                write_atomic(marker, timestamp().encode(), mode=0o600)
+                log(f"handing '{command}' to the running updater")
+                deadline = time.monotonic() + 3600
+                while time.monotonic() < deadline:
+                    outcome = read_bounded(done, 16)
+                    if outcome is not None:
+                        done.unlink()
+                        print(json.dumps(read_json(self.journal.path), indent=2))
+                        return int(outcome or b"1")
+                    time.sleep(0.5)
+                log("the running updater did not finish within an hour")
+                return 1
+            return self.operate(command)
+        finally:
+            handle.close()
+
+    def retry(self) -> int:
+        try:
+            journal = self.journal.load()
+        except JournalUnreadable as error:
+            log(f"cannot retry: {error}; use resolve")
+            return 1
+        if journal is None or journal["phase"] != INTERVENTION:
+            log("nothing to retry")
+            return 1
+        origin = journal.get("recover_from")
+        if origin not in (*ACTIVE, ROLLING_BACK):
+            log("this update cannot be retried automatically; use resolve")
+            return 1
+        journal["rollback"].update({"attempts": 0, "resumes": 0})
+        self.transition(journal, origin, detail="Retrying the recovery by request")
+        self.recover()
+        after = self.journal.load()
+        return 0 if after is not None and after["phase"] != INTERVENTION else 1
+
     def once(self) -> None:
         self.setup()
         with self.locked():
             self.heartbeat.beat()
-            self.reconcile()
-            if self.control.has_request():
-                self.handle_request()
+            try:
+                self.recover()
+                self.operator_requests()
+                if self.control.has_request():
+                    self.handle_request()
+            finally:
+                self.heartbeat.beat(running=False)
 
 
 def _terminate(signum: int, frame: object) -> None:
@@ -1805,15 +1920,13 @@ def main(argv: list[str]) -> int:
         updater.setup()
         print(json.dumps(updater.journal.load(), indent=2))
         return 0
-    if command == "resolve":
-        updater.setup()
-        with updater.locked():
-            return updater.resolve()
+    if command in OPERATOR_COMMANDS:
+        return updater.operator(command)
     if command == "verify-image":
         updater.verify_signature(argv[2])
         return 0
     print(
-        "usage: updater.py [run|once|status|resolve|newer A B|verify-image REF]",
+        "usage: updater.py [run|once|status|retry|resolve|newer A B|verify-image REF]",
         file=sys.stderr,
     )
     return 2
