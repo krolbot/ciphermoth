@@ -143,7 +143,7 @@ The **Backup** button in the web UI downloads the same encrypted ZIP straight to
 
 It follows the same zero-trust rules as the web UI, and it's small enough to read in one sitting ([`backend/cli.py`](../backend/cli.py)).
 
-- **Nothing is stored.** There is no token cache and no config file. Each command prompts for the master password, opens a vault session on the server for that one command, and locks it again when the command ends, even if it fails. The CLI never sees the vault key. That's also why every command asks again. Against a server older than v1.5.0 the CLI falls back to what those releases expect: it receives the vault key, sends it with each request of that command, and forgets it.
+- **Nothing is stored.** There is no token cache and no config file. Each command prompts for the master password, opens a vault session on the server for that one command, and locks it again when the command ends, even if it fails. The CLI never sees the vault key. That's also why every command asks again. Only against a server older than v1.5.0, recognized by its missing unlock route, does the CLI fall back to what those releases expect: it receives the vault key, sends it with each request of that command, and forgets it. Any other error stops the command instead.
 - **Secrets are never arguments.** Passwords and note bodies are typed at a hidden prompt, so they don't reach your shell history, `ps`, or `docker inspect`. Only entry names are arguments, so `cip password get github` does reveal in your history that a `github` entry exists.
 - **Redirects are never followed**, so the session token (or, with an older server, the vault key) can't be replayed to another host.
 - **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password. The ZIP format turns that password into a key with PBKDF2-SHA1 at 1,000 iterations, which is much weaker than the vault's Argon2id, so treat the file itself as sensitive and keep it somewhere safe. It holds your active entries, not the trash, password history, attachments or settings.
@@ -153,7 +153,7 @@ A note on entry names: any name works, including ones containing `/` (the CLI ch
 
 ## Rate limits
 
-Unlocking the vault is rate-limited to 30 attempts an hour per IP address to slow down anyone guessing your master password. Every CLI command unlocks once, so a long batch of commands can run into it. Raise it on the backend if you hit it:
+Unlocking the vault is rate-limited to 30 attempts an hour per IP address to slow down anyone guessing your master password. Every CLI command unlocks once (twice if its session expires while you answer prompts), so a long batch of commands can run into it. Raise it on the backend if you hit it:
 
 ```shell
 # in your .env, then: docker compose -f docker-compose.prod.yml up -d

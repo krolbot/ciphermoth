@@ -726,6 +726,45 @@ def test_cli_does_not_fall_back_to_the_vault_key_when_meta_fails(meta: str) -> N
     assert all("x-ciphermoth-key-derivation" not in _lower(h) for _, _, h in requests)
 
 
+@pytest.mark.parametrize(
+    ("meta", "unlock_status", "unlock_body"),
+    [
+        ("sessions", 404, {"detail": "Not Found"}),
+        ("broken", 404, {"detail": "No master password found."}),
+        ("broken", 403, {"detail": "Forbidden."}),
+        ("broken", 500, {"detail": "An internal server error occurred."}),
+        ("broken", 404, b"<html>proxy 404</html>"),
+        ("broken", 429, {"detail": "Too many attempts."}),
+    ],
+)
+def test_cli_never_falls_back_to_the_vault_key_on_an_unrelated_error(
+    meta: str, unlock_status: int, unlock_body: object
+) -> None:
+    def respond(handler: _Recorder) -> None:
+        if handler.path.endswith("/meta"):
+            if meta == "sessions":
+                handler.send(200, SERVERS["sessions"])
+            else:
+                handler.send(502, b"bad gateway")
+        elif handler.path.endswith("/master_password/unlock"):
+            handler.send(unlock_status, unlock_body)
+        else:
+            handler.send(200, {"valid": True, "key_derivation": FAKE_KEY})
+
+    with _fake_server(respond) as (api, requests):
+        result = runner.invoke(
+            cli_app,
+            ["password", "list"],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": api},
+        )
+
+    assert result.exit_code == 1
+    paths = [path.removeprefix("/api") for _, path, _ in requests]
+    assert "/master_password/check" not in paths
+    assert "Traceback" not in result.output
+
+
 def test_cli_keeps_credentials_in_the_url_for_a_proxy() -> None:
     def respond(handler: _Recorder) -> None:
         if not _answer_unlock(handler, "sessions"):

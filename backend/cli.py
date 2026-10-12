@@ -38,6 +38,7 @@ _KINDS = ("login", "note")
 _CONFLICTS = ("skip", "overwrite")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 _SESSION_HEADER = "x-ciphermoth-session"
+_SESSIONS = "vault-sessions"
 _SLASH_NAMES = "entry-names-with-slash"
 
 
@@ -104,9 +105,9 @@ def _features(client: httpx.Client) -> list[str]:
 class _Vault:
     """
     One unlocked vault for the length of a command. Servers that offer vault
-    sessions get a session that is locked again when the command ends; older
-    servers (v1.4.x), which have no unlock route, get their vault key header, as
-    those releases expect.
+    sessions get a session that is locked again when the command ends. Only a
+    server that has no unlock route at all (v1.4.x: routing 404 and no
+    vault-sessions feature) gets the deprecated vault key flow it expects.
     """
 
     def __init__(self, client: httpx.Client) -> None:
@@ -126,9 +127,18 @@ class _Vault:
         except httpx.ConnectError:
             _die(f"Cannot reach the API at {_api_url()!r}. Is the service running?")
 
+    def _has_no_unlock_route(self, resp: httpx.Response) -> bool:
+        if _SESSIONS in self.features or resp.status_code not in (404, 405):
+            return False
+        try:
+            detail = resp.json().get("detail")
+        except (ValueError, AttributeError):
+            return False
+        return detail in ("Not Found", "Method Not Allowed")
+
     def _authenticate(self) -> None:
         resp = self._post_password("/master_password/unlock")
-        sessions = resp.status_code not in (404, 405)
+        sessions = not self._has_no_unlock_route(resp)
         if not sessions:
             resp = self._post_password("/master_password/check")
 
