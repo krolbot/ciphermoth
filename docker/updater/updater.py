@@ -902,9 +902,17 @@ class Updater:
         }
         self.control.publish(payload)
 
-    def refuse(self, target: str | None, reason: str) -> None:
+    def refuse(
+        self, target: str | None, reason: str, request_id: str | None = None
+    ) -> None:
         log(f"refused: {reason}")
-        self.publish("failed", f"Refused: {reason}. Nothing was changed.", target)
+        extra = {"id": request_id} if request_id else {}
+        self.publish(
+            "failed", f"Refused: {reason}. Nothing was changed.", target, **extra
+        )
+
+    def refuse_request(self, request: Request, reason: str) -> None:
+        self.refuse(request.target, reason, request.id)
 
     def transition(self, journal: dict, phase: str, detail: str | None = None) -> None:
         journal["phase"] = phase
@@ -1083,35 +1091,35 @@ class Updater:
         try:
             self.consider(request)
         except StepError as error:
-            self.refuse(request.target, str(error))
+            self.refuse_request(request, str(error))
 
     def consider(self, request: Request) -> None:
         try:
             current = self.journal.load()
         except JournalUnreadable as error:
-            self.refuse(request.target, f"the update journal is unreadable ({error})")
+            self.refuse_request(request, f"the update journal is unreadable ({error})")
             return
         if current is not None and current["phase"] == INTERVENTION:
-            self.refuse(
-                request.target,
+            self.refuse_request(
+                request,
                 "a previous update needs manual attention first (see the "
                 "updater logs and docs/UPDATING.md)",
             )
             return
         if current is not None and current["phase"] not in TERMINAL:
-            self.refuse(request.target, "another update is still in progress")
+            self.refuse_request(request, "another update is still in progress")
             return
         if request.id in self.remembered_requests():
-            self.refuse(request.target, "this update request was already handled")
+            self.refuse_request(request, "this update request was already handled")
             return
         self.remember_request(request.id)
         running = self.running_version()
         if running is None:
-            self.refuse(request.target, "CipherMoth's backend is not answering")
+            self.refuse_request(request, "CipherMoth's backend is not answering")
             return
         if not is_newer(request.target, running):
-            self.refuse(
-                request.target,
+            self.refuse_request(
+                request,
                 f"{request.target} is not newer than the running version {running}",
             )
             return
@@ -1119,8 +1127,8 @@ class Updater:
         if parse_version(configured) is not None and parse_version(
             configured
         ) != parse_version(running):
-            self.refuse(
-                request.target,
+            self.refuse_request(
+                request,
                 f"the .env file names version {configured} but {running} is running",
             )
             return
