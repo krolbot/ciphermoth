@@ -66,13 +66,17 @@ What the suite protects, and where:
 
 | Area | Tests |
 |---|---|
-| Every route rejects missing, forged and stale keys | `test_authz.py`, `test_vault_key.py`, `test_adversarial.py` |
+| Every route rejects missing, forged, expired and locked sessions and forged or stale legacy keys | `test_authz.py`, `test_vault_key.py`, `test_adversarial.py` |
+| Vault sessions expire, lock, end on rotation and survive races | `test_sessions.py` |
+| Old and new CLIs work with old and new servers | `test_cli.py`, with the released v1.4.7 CLI frozen in `testdata/clients` |
 | Old vaults still open, upgrade and restore | `test_golden.py` with the fixtures in [`testdata/golden`](testdata/golden/README.md) |
 | Cryptography is byte-compatible | `test_vectors.py` with [`testdata/vectors`](testdata/vectors/README.md), shared with `frontend/src/lib/totp.test.js` |
 | Imports cannot damage a vault | `test_imports.py` (including Hypothesis property tests), `test_hostile_files.py` |
 | Failed or interrupted writes change nothing | `test_failures.py`, `test_process_kill.py` |
 | The CLI and `scripts/cip` keep their contracts | `test_cli.py` |
 | The updater refuses, verifies and rolls back | `test_updates.py` |
+
+Tests authenticate the way current clients do: `auth(token)` sends a session token from `create_vault()` or `unlock()`. `key_auth(key)` with `create_legacy_vault()` or `legacy_unlock()` sends the deprecated vault key header, and `stored_vault_key()` derives the key from the database when a test needs the key itself. The legacy helpers go away with the legacy API in v1.6.0; `test_the_legacy_key_is_removed_on_schedule` fails once the version reaches it.
 
 `backend/tests/integrity.py` reads any vault (any schema from v1.0.0 on) and decrypts every field strictly, reporting what the application's lenient read path would hide. Use it whenever a change touches storage, encryption or migrations: `read_vault` before and after, then `assert_same_vault`.
 
@@ -116,6 +120,7 @@ Everything is optional, the defaults work fine for local use.
 | `DISABLE_DOCS` | `false` | Set `true` to hide `/docs` and `/redoc` |
 | `DEBUG` | `false` | FastAPI debug mode |
 | `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
+| `CIPHERMOTH_LEGACY_KEY_AUTH` | `true` | Set `false` to refuse clients from v1.4.x and earlier, which receive the vault key and send it back with every request. This compatibility is removed in v1.6.0 |
 
 **Frontend:**
 
@@ -143,6 +148,8 @@ CipherMoth is built to run on a machine you trust, your home server, a VPS behin
 `docker-compose.prod.yml` publishes the UI and API on `127.0.0.1` only. That is what you want when the reverse proxy runs on the same host: the proxy can reach CipherMoth, nothing else on the network can. If other machines need to reach the ports directly (a proxy on another box, a LAN, a VPN such as Tailscale), set `CIPHERMOTH_BIND_ADDRESS=0.0.0.0` in your `.env`, or a specific interface address, and make sure HTTPS sits in front. Installs from before v1.4.6 keep whatever their own copy of the compose file says until it is replaced.
 
 **Pass request paths through unchanged.** Entry names can contain `/`, which clients send as `%2F`. A proxy that decodes `%2F` before forwarding turns a request for the entry `x/purge` into a request to purge the entry `x`. Caddy's `reverse_proxy` (also inside `handle_path`) and nginx's `proxy_pass http://127.0.0.1:8000;` (no path after the address) pass the path unchanged. nginx's `proxy_pass http://127.0.0.1:8000/;` or `.../api/;` (with a path, including any path-prefix setup) decodes it. Since v1.4.7 the web UI and CLI also name the entry in a header, so the API refuses such a rewritten request instead of acting on another entry, but older clients get no such protection and the entries stay unreachable until the proxy is fixed.
+
+Vault sessions live in the backend's memory. Run exactly one backend process (the image's `uvicorn --workers 1`); with several workers a session opened by one would be unknown to the others. The session token travels in the `x-ciphermoth-session` header, which proxies forward by default; don't log it, because it opens the vault until the session ends. `Authorization` is left to the proxy, so Basic auth or a forward-auth login in front of CipherMoth keeps working.
 
 One thing to know about rate limiting behind a proxy: the limits are keyed on the client IP, which the app reads from the network connection. Behind a reverse proxy every request looks like it comes from the proxy, so the limits become global instead of per client. If you want per-client rate limiting, configure your proxy to preserve the real client address (and only trust `X-Forwarded-For` from the proxy itself).
 

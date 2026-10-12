@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Security
+
+- **Your browser no longer holds the vault key.** Unlocking now opens a session on the server: the key stays in the server's memory and the browser keeps only a random session token, sent in an `x-ciphermoth-session` header (`Authorization` stays free for a reverse proxy's own login). A token that leaks (for example through a browser extension) stops working when the session ends and never reveals the key; previously a leaked key stayed valid until the master password changed.
+- **Sessions end on the server.** The inactivity timeout from Settings is now enforced by the server (plus one minute of grace), along with a 12-hour maximum, so a forgotten tab or a copied token can't keep the vault open. Logging out, auto-lock and closing the session from the CLI end it on the server too. Changing the master password ends every session, including those of other devices, and so does any change of the vault key made outside this server process.
+- **Unlocking no longer stalls the server.** The deliberately slow Argon2id and bcrypt steps run off the request loop, at most two at a time, so other requests keep being answered while someone unlocks and many simultaneous unlocks can't exhaust memory.
+
+### Added
+
+- `POST /api/master_password/unlock` returns a session token, `POST /api/master_password/lock` ends one, and `GET /api/master_password/session` reports (and refreshes) it. `POST /api/master_password/create` returns a session token instead of the vault key. `/api/meta` lists the `vault-sessions` feature, and `legacy-key-auth` while that is accepted.
+- `CIPHERMOTH_LEGACY_KEY_AUTH=false` refuses clients that still use the vault key (see below) before v1.6.0 does.
+
+### Changed
+
+- **Everyone is asked to unlock once after updating.** Sessions live only in the server's memory, so restarting or updating the server also locks every open tab and the next request returns to the unlock screen. The backend must keep running a single worker process (the shipped images do).
+- **The CLI** opens a session for each command and locks it when the command ends, even on errors. If a session expires while you are still answering prompts, it unlocks again once with the password you already typed. Against servers older than v1.5.0, which have no unlock route, it still uses the vault key, as those releases expect.
+
+### Deprecated
+
+- **`POST /api/master_password/check` and the `x-ciphermoth-key-derivation` header**, which hand the vault key to clients and accept it back, are kept so that v1.4.x CLIs and browser tabs that were open during the update keep working. They behave exactly as in v1.4.7 (the key must match the vault, under the same locks) and `/check` answers with a `Deprecation` header. **They will be removed in v1.6.0.** Update scripts that call the API directly to use `/unlock` and send the token in `x-ciphermoth-session`.
+
 ## [1.4.7] - 2026-10-11
 
 ### Fixed

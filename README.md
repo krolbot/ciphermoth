@@ -103,9 +103,10 @@ How it works:
 - **not encrypted yet:** each entry's **name, username and description**, plus its type, favorite flag, timestamps and
   attachment sizes. Someone with the database can see which entries you have and the usernames on them, just not the
   passwords. Encrypting those too is planned;
-- when you unlock, the server derives the key and hands it to your browser, which keeps it in `sessionStorage` (gone
-  when you close the tab) and sends it with every request. The server checks it against the vault, uses it in memory to
-  encrypt and decrypt, and never stores or logs it. So while you're using the vault, the server does see your
+- when you unlock, the server derives the key and keeps it in memory for a **session**; your browser only gets a
+  random session token (kept in `sessionStorage`, gone when you close the tab), never the key. The server ends the
+  session after the inactivity timeout from Settings, when you log out, when the master password changes, and when it
+  restarts, and never stores or logs the key or the token. So while you're using the vault, the server does see your
   passwords: run it on a machine you trust;
 - backups are AES-256 encrypted ZIPs locked with your master password, but the ZIP format derives that key with
   PBKDF2-SHA1 at 1,000 iterations, which is far cheaper to brute-force than the vault itself. Keep backup files
@@ -116,7 +117,8 @@ How it works:
 
 **It protects against** someone who steals the database or disk (they get ciphertext, a bcrypt hash, and the entry
 names, usernames and descriptions listed above), accidental server-side exposure (the server never persists the master
-password or the derived key), and casual inspection of stored data.
+password, the derived key or session tokens), and casual inspection of stored data. A session token that leaks works
+only until that session ends; it never reveals the key.
 
 **It does not protect against** malware or a keylogger on the device you unlock from, a weak master password, exposing
 the instance on the public internet without `https`, or forgetting your master password (there is no recovery). Run it
