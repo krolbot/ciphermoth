@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-12
+
 ### Security
 
 - **The web UI and the CLI no longer receive the vault key.** Unlocking now opens a session on the server: the key stays in the server's memory and the client keeps only a random session token, sent in an `x-ciphermoth-session` header (`Authorization` stays free for a reverse proxy's own login). A token that leaks (for example through a browser extension) stops working when the session ends and never reveals the key; previously a leaked key stayed valid until the master password changed. Until v1.6.0 the server still hands the key to clients that ask for it the old way, so v1.4.x clients keep working (see Deprecated).
