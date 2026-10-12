@@ -128,7 +128,7 @@ Everything is optional, the defaults work fine for local use.
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_API_URL` | `http://localhost:8000/api` | Backend API base URL: an `http(s)` URL without user name, query or fragment, or a path such as `/api` when a proxy serves the API on the UI's own origin. The image allows browser connections only to this origin (plus GitHub's release address for the update check) and refuses to start if the value is not a plain URL or path. With an IPv6 address the policy can only restrict the scheme (`http:`/`https:`), so prefer a host name. In Compose it comes from `CIPHERMOTH_API_URL` |
+| `VITE_API_URL` | `http://localhost:8000/api` | Backend API base URL: an `http(s)` URL, a `//host` URL, or a path such as `/api` when a proxy serves the API on the UI's own origin. The image allows browser connections only to this origin (plus GitHub's release address for the update check). A value with another scheme or with characters that could rewrite the policy or the app is refused: the UI then shows a page explaining what to fix. With an IPv6 address the policy can only restrict the scheme (`http:`/`https:`), so prefer a host name. In Compose it comes from `CIPHERMOTH_API_URL` |
 
 **CLI:**
 

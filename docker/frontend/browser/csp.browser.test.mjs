@@ -207,14 +207,46 @@ describe("API behind the same origin", () => {
   });
 });
 
-describe("unsafe configuration", () => {
-  test("an API URL that would rewrite the policy stops the container", () => {
-    for (const apiUrl of ["http://x.test/api'; script-src *", "javascript:alert(1)"]) {
-      const run = spawnSync("docker", ["run", "--rm", "-e", `VITE_API_URL=${apiUrl}`, IMAGE], {
-        timeout: 60_000,
-      });
-      assert.notEqual(run.status, 0, apiUrl);
-      assert.match(run.stderr.toString(), /CipherMoth cannot start/);
-    }
+describe("API on a protocol-relative URL", () => {
+  let frontend;
+
+  before(async () => {
+    frontend = await startFrontend(`//127.0.0.1:${api.address().port}/api`);
   });
+
+  after(() => stopFrontend(frontend));
+
+  test("the page's scheme is used for the API host and other hosts stay blocked", async () => {
+    const page = await browser.newPage();
+    apiSeen.length = 0;
+    await page.goto(frontend.url);
+    await page.getByRole("button", { name: "Unlock Vault" }).waitFor();
+    assert.ok(apiSeen.includes("/api/master_password/status"), apiSeen.join());
+    const blocked = await attempt(page, "fetch", `http://127.0.0.1:${elsewhere.address().port}/x`);
+    assert.ok(blocked.violations.length > 0);
+    await page.close();
+  });
+});
+
+describe("unsafe configuration", () => {
+  for (const apiUrl of ["http://x.test/api'; script-src *", "javascript:alert(1)"]) {
+    test(`${apiUrl} serves an explanation instead of the app`, async () => {
+      const frontend = await startFrontend(apiUrl);
+      try {
+        const response = await fetch(`${frontend.url}/passwords`);
+        const html = await response.text();
+        assert.match(html, /CipherMoth cannot start/);
+        assert.match(html, /CIPHERMOTH_API_URL/);
+        assert.doesNotMatch(html, /<script/);
+        assert.equal(
+          response.headers.get("content-security-policy"),
+          "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        );
+        const logs = spawnSync("docker", ["logs", frontend.name]);
+        assert.match(logs.stderr.toString(), /CipherMoth cannot start: the API URL/);
+      } finally {
+        stopFrontend(frontend);
+      }
+    });
+  }
 });

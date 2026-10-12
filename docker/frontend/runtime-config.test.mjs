@@ -6,11 +6,13 @@ import { test } from "node:test";
 
 import {
   ConfigError,
+  ERROR_POLICY,
   configure,
   connectSources,
   parseApiUrl,
   parseGithubRepo,
   withConnectSrc,
+  writeErrorSite,
 } from "./runtime-config.mjs";
 
 const RELEASES = "https://api.github.com/repos/mr-grj/ciphermoth/releases/latest";
@@ -25,42 +27,60 @@ test("absolute API URLs allow exactly their origin", () => {
     ["https://API.Example.COM:8443/ciphermoth/api", "https://api.example.com:8443"],
     ["http://vault_backend:8000/api", "http://vault_backend:8000"],
   ]) {
-    assert.deepEqual(parseApiUrl(url), { url, source: origin, warning: null });
+    assert.deepEqual(parseApiUrl(url), { url, sources: [origin], warnings: [] });
   }
 });
 
-test("a relative API path is served by the UI's own origin", () => {
-  assert.deepEqual(parseApiUrl("/api"), { url: "/api", source: null, warning: null });
-  assert.deepEqual(connectSources({ apiSource: null, githubRepo: "mr-grj/ciphermoth" }), [
+test("relative API paths, with or without a leading slash, use the UI's own origin", () => {
+  for (const url of ["/api", "api", "ciphermoth/api/", "/"]) {
+    assert.deepEqual(parseApiUrl(url), { url, sources: [], warnings: [] });
+  }
+  assert.deepEqual(connectSources({ apiSources: [], githubRepo: "mr-grj/ciphermoth" }), [
     "'self'",
     RELEASES,
   ]);
 });
 
+test("protocol-relative API URLs allow that host on the page's own scheme", () => {
+  assert.deepEqual(parseApiUrl("//Vault.Example.com:8443/api").sources, [
+    "vault.example.com:8443",
+  ]);
+  assert.deepEqual(parseApiUrl("//moth:secret@vault.example.com/api").sources, [
+    "vault.example.com",
+  ]);
+});
+
+test("values v1.4.7 accepted keep working, with a warning", () => {
+  const credentials = parseApiUrl("https://moth:secret@vault.example.com/api");
+  assert.deepEqual(credentials.sources, ["https://vault.example.com"]);
+  assert.match(credentials.warnings[0], /user name or password/);
+  assert.match(parseApiUrl("https://vault.example.com/api?x=1").warnings[0], /query/);
+  assert.match(parseApiUrl("https://vault.example.com/api#x").warnings[0], /query/);
+});
+
 test("an unset API URL keeps the documented default", () => {
-  assert.equal(parseApiUrl(undefined).source, "http://localhost:8000");
-  assert.equal(parseApiUrl("  ").source, "http://localhost:8000");
+  assert.deepEqual(parseApiUrl(undefined).sources, ["http://localhost:8000"]);
+  assert.deepEqual(parseApiUrl("  ").sources, ["http://localhost:8000"]);
 });
 
 test("an IPv6 API host falls back to its scheme, with a warning", () => {
   const api = parseApiUrl("http://[::1]:8000/api");
-  assert.equal(api.source, "http:");
-  assert.match(api.warning, /IPv6/);
+  assert.deepEqual(api.sources, ["http:"]);
+  assert.match(api.warnings[0], /IPv6/);
+  assert.deepEqual(parseApiUrl("//[::1]:8000/api").sources, ["http:", "https:"]);
 });
 
-test("unsafe or unusable API URLs stop the container", () => {
+test("unsafe or unusable API URLs are refused", () => {
   for (const url of [
     "javascript:alert(1)",
     "ftp://vault.example.com/api",
+    "localhost:8000/api",
     "http://vault.example.com/api'; script-src *",
     "http://vault.example.com/api\"",
     "http://vault.example.com/api;connect-src *",
     "http://vault.example.com/a b",
-    "http://user:pass@vault.example.com/api",
-    "http://vault.example.com/api?x=1",
-    "http://vault.example.com/api#x",
-    "//vault.example.com/api",
-    "api",
+    "//*/api",
+    "http://*.example.com/api",
     "http://",
   ]) {
     assert.throws(() => parseApiUrl(url), ConfigError, url);
@@ -136,4 +156,19 @@ test("configure refuses before touching the bundle", () => {
     ConfigError
   );
   assert.equal(readFileSync(bundle, "utf8"), 'const a="__CIPHERMOTH_API_URL__";');
+});
+
+test("the error page explains the problem without serving the app", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ciphermoth-runtime-"));
+  const site = join(dir, "site");
+  const config = join(dir, "error.json");
+  writeErrorSite(site, config, `the API URL is not valid: <script>alert("x")</script>`);
+  const html = readFileSync(join(site, "index.html"), "utf8");
+  assert.match(html, /CipherMoth cannot start/);
+  assert.match(html, /CIPHERMOTH_API_URL/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /&#60;script&#62;/);
+  const headers = JSON.parse(readFileSync(config, "utf8")).headers[0].headers;
+  assert.equal(headers.find((h) => h.key === "Content-Security-Policy").value, ERROR_POLICY);
+  assert.equal(headers.find((h) => h.key === "Cache-Control").value, "no-store");
 });
