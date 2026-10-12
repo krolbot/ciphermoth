@@ -282,14 +282,20 @@ def build_images() -> dict[str, str]:
     return refs
 
 
-def compose_file(project: str, source: str, updater_image: str | None) -> str:
+def compose_file(
+    project: str,
+    source: str,
+    updater_image: str | None,
+    registry: str | None = REGISTRY,
+) -> str:
     text_value = sh("git", "show", f"{source}:docker-compose.prod.yml", cwd=ROOT).stdout
+    repo = registry or "ghcr.io/mr-grj"
     replacements = [
         ("name: ciphermoth\n", f"name: {project}\n"),
-        ("ghcr.io/mr-grj/ciphermoth-", f"{REGISTRY}/ciphermoth-"),
+        ("ghcr.io/mr-grj/ciphermoth-", f"{repo}/ciphermoth-"),
         (
             "IMAGE_REPO: ghcr.io/mr-grj/ciphermoth\n",
-            f"IMAGE_REPO: {REGISTRY}/ciphermoth\n",
+            f"IMAGE_REPO: {repo}/ciphermoth\n",
         ),
         (
             "    image: postgres:16-alpine\n",
@@ -297,8 +303,8 @@ def compose_file(project: str, source: str, updater_image: str | None) -> str:
             '    ports:\n      - "127.0.0.1:${E2E_DB_PORT}:5432"\n',
         ),
         (
-            f"      IMAGE_REPO: {REGISTRY}/ciphermoth\n",
-            f"      IMAGE_REPO: {REGISTRY}/ciphermoth\n"
+            f"      IMAGE_REPO: {repo}/ciphermoth\n",
+            f"      IMAGE_REPO: {repo}/ciphermoth\n"
             "      HEALTH_RETRIES: ${E2E_HEALTH_RETRIES:-30}\n"
             "      HEALTH_INTERVAL: ${E2E_HEALTH_INTERVAL:-2}\n"
             "      POLL_INTERVAL: 1\n"
@@ -315,7 +321,7 @@ def compose_file(project: str, source: str, updater_image: str | None) -> str:
         raise AssertionError("updater POSTGRES_HOST not found")
     updater = updater.replace(host, "      POSTGRES_HOST: ${E2E_UPDATER_DB_HOST:-db}\n")
     if updater_image:
-        image = f"{REGISTRY}/ciphermoth-updater:${{CIPHERMOTH_VERSION:-latest}}"
+        image = f"{repo}/ciphermoth-updater:${{CIPHERMOTH_VERSION:-latest}}"
         if f"    image: {image}\n" not in updater:
             raise AssertionError("updater image line not found")
         updater = updater.replace(image, updater_image, 1)
@@ -333,6 +339,7 @@ class Stack:
         updater_image: str | None = None,
         extra_env: dict[str, str] | None = None,
         updater_restart: str | None = None,
+        registry: str | None = REGISTRY,
     ) -> None:
         self.project = f"{PROJECT_PREFIX}{name}"
         if self.project == "ciphermoth" or not self.project.startswith(PROJECT_PREFIX):
@@ -344,7 +351,7 @@ class Stack:
         self.frontend_port = free_port()
         self.db_port = free_port()
         self.db_password = secrets.token_urlsafe(24)
-        compose = compose_file(self.project, compose_source, updater_image)
+        compose = compose_file(self.project, compose_source, updater_image, registry)
         if updater_restart:
             old = '    restart: unless-stopped\n    profiles: ["autoupdate"]\n'
             if old not in compose:
