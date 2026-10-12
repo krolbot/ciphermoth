@@ -11,7 +11,7 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-`CIPHERMOTH_VERSION` in `.env` decides which release runs (`latest`, or a pinned version such as `1.5.1`). Nothing verifies the images' signatures on this path unless you do it yourself (see [SECURITY.md](../SECURITY.md)), and nothing rolls back for you.
+`CIPHERMOTH_VERSION` in `.env` decides which release runs (`latest`, or a pinned version such as `1.5.1`). Nothing verifies the images' signatures on this path unless you do it yourself (see [SECURITY.md](../SECURITY.md)), and nothing rolls back for you. If a future release changes the database schema, a manual update applies that change with no snapshot and no automatic way back: keep the backup you just made, because restoring it into a fresh vault is then the only way to return to the previous version.
 
 ## One-click updates
 

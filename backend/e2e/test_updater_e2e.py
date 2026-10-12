@@ -70,6 +70,7 @@ def test_bootstrap_from_the_published_release(stacks) -> None:
     token = stack.unlock(MASTER)
     assert stack.add_entry(token, "before the bootstrap").status_code == 200
     before = stack.vault(KEY, MASTER)
+    tables = stack.tables()
 
     resp = stack.apply(token, f"v{CANDIDATE}")
     assert resp.status_code == 200, resp.text
@@ -80,11 +81,15 @@ def test_bootstrap_from_the_published_release(stacks) -> None:
     assert status["updater_protocol"] == 1
     assert status["updater_upgrade_required"] is True
     assert stack.frontend_version() == CANDIDATE
+    assert stack.revision() == BASE_HEAD
+    assert stack.tables() == tables
     _identical(stack, before)
     token = stack.unlock(MASTER)
-    refused = stack.apply(token, "v1.5.2")
-    assert refused.status_code == 403
-    assert "--profile autoupdate pull updater" in refused.json()["detail"]
+    for target in ("v1.5.2", "v1.5.3"):
+        refused = stack.apply(token, target)
+        assert refused.status_code == 403
+        assert "--profile autoupdate pull updater" in refused.json()["detail"]
+    assert stack.revision() == BASE_HEAD
 
     sh(
         "sh",
@@ -110,6 +115,23 @@ def test_bootstrap_from_the_published_release(stacks) -> None:
     snapshots = [f for f in stack.backups() if f.startswith("/b/snapshots/")]
     assert len([f for f in snapshots if f.endswith(".dump")]) == 1
     assert any(f.endswith(".sql") for f in stack.backups())
+
+    env = stack.dir / ".env"
+    env.write_text(
+        env.read_text().replace("E2E_FAULT=\n", "E2E_FAULT=kill:restore_created\n")
+    )
+    stack.compose("up", "-d", "--no-deps", "updater")
+    stack.wait_for(lambda: stack.updater_heartbeat(), 120, "the restarted updater")
+    token = stack.unlock(MASTER)
+    request_id = _apply(stack, token, "v1.5.5")
+    status = stack.wait_result(request_id)
+
+    assert status["state"] == "rolled_back", status
+    assert stack.container("updater")["RestartCount"] >= 1
+    _healthy_on(stack, "1.5.2")
+    assert stack.revision() == BASE_HEAD
+    assert stack.tables() == tables
+    _identical(stack, before)
 
 
 def test_an_update_with_a_schema_migration_succeeds(stacks) -> None:

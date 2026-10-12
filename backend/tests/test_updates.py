@@ -1,8 +1,9 @@
 import asyncio
 import json
+import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -118,8 +119,10 @@ async def test_an_updater_that_is_not_running_is_reported(
     client: httpx.AsyncClient, age: int, running: bool
 ) -> None:
     key = await create_vault(client)
+    ready = control_dir() / "updater.ready"
+    ready.touch()
+    os.utime(ready, (1, 1))
     updater_alive(age=age, running=running)
-    (control_dir() / "updater.ready").touch()
 
     status = (await client.get("/updates/apply/status")).json()
     resp = await _apply(client, key, bump_patch(CURRENT))
@@ -130,6 +133,66 @@ async def test_an_updater_that_is_not_running_is_reported(
     assert resp.status_code == 403
     assert "not running" in resp.json()["detail"]
     assert "request.json" not in control_files()
+
+
+@pytest.mark.parametrize(
+    "heartbeat",
+    [
+        {"protocol": 2, "heartbeat_at": "2999-01-01T00:00:00+00:00"},
+        {"protocol": True, "heartbeat_at": "now"},
+        {"protocol": "2", "heartbeat_at": "now"},
+        {"protocol": 2, "heartbeat_at": "yesterday"},
+        {"protocol": 2},
+        ["protocol", 2],
+    ],
+    ids=["future", "bool", "string", "bad-time", "no-time", "not-an-object"],
+)
+async def test_a_heartbeat_that_does_not_prove_a_running_updater_is_refused(
+    client: httpx.AsyncClient, heartbeat: object
+) -> None:
+    key = await create_vault(client)
+    text = json.dumps(heartbeat).replace('"now"', f'"{datetime.now(UTC).isoformat()}"')
+    (control_dir() / "updater.json").write_text(text)
+
+    status = (await client.get("/updates/apply/status")).json()
+    resp = await _apply(client, key, bump_patch(CURRENT))
+
+    assert status["updater_present"] is False
+    assert resp.status_code == 403
+    assert "request.json" not in control_files()
+
+
+async def test_an_old_updater_started_after_a_v2_one_is_reported_as_outdated(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    updater_alive(age=300)
+    ready = control_dir() / "updater.ready"
+    ready.touch()
+    beat = (control_dir() / "updater.json").stat().st_mtime
+    os.utime(ready, (beat + 5, beat + 5))
+
+    status = (await client.get("/updates/apply/status")).json()
+    resp = await _apply(client, key, bump_patch(CURRENT))
+
+    assert status["updater_protocol"] == 1
+    assert status["updater_upgrade_required"] is True
+    assert resp.status_code == 403
+    assert RECREATE_UPDATER_COMMAND in resp.json()["detail"]
+
+
+async def test_a_running_v2_updater_is_not_mistaken_for_an_old_one(
+    client: httpx.AsyncClient,
+) -> None:
+    ready = control_dir() / "updater.ready"
+    ready.touch()
+    os.utime(ready, (1, 1))
+    updater_alive()
+
+    status = (await client.get("/updates/apply/status")).json()
+
+    assert status["updater_present"] is True
+    assert status["updater_protocol"] == 2
 
 
 async def test_a_second_request_is_refused_while_one_waits(

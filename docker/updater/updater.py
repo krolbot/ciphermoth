@@ -502,15 +502,7 @@ class Postgres:
         self.query(f"DROP DATABASE IF EXISTS {quote_ident(database)} WITH (FORCE)")
 
     def swap(self, live: str, replacement: str, retired: str) -> None:
-        statements = []
-        if self.exists(live):
-            statements.append(
-                f"ALTER DATABASE {quote_ident(live)} RENAME TO {quote_ident(retired)}"
-            )
-        statements.append(
-            f"ALTER DATABASE {quote_ident(replacement)} RENAME TO {quote_ident(live)}"
-        )
-        sql = "BEGIN; " + "; ".join(statements) + "; COMMIT;"
+        sql = swap_sql(live, replacement, retired, self.exists(live))
         for attempt in range(5):
             self.terminate(live, replacement)
             try:
@@ -613,6 +605,18 @@ class Postgres:
 
     def server_version(self) -> str:
         return self.query("SHOW server_version")[0][0]
+
+
+def swap_sql(live: str, replacement: str, retired: str, live_exists: bool) -> str:
+    statements = []
+    if live_exists:
+        statements.append(
+            f"ALTER DATABASE {quote_ident(live)} RENAME TO {quote_ident(retired)}"
+        )
+    statements.append(
+        f"ALTER DATABASE {quote_ident(replacement)} RENAME TO {quote_ident(live)}"
+    )
+    return "BEGIN; " + "; ".join(statements) + "; COMMIT;"
 
 
 class Snapshots:
@@ -1800,8 +1804,8 @@ class Updater:
     def serve(self) -> None:
         self.setup()
         with self.locked():
-            self.heartbeat.start()
             write_atomic(self.control.ready, b"")
+            self.heartbeat.start()
             try:
                 self.recover()
                 log(f"ready (protocol {PROTOCOL}, version {self.settings.version})")

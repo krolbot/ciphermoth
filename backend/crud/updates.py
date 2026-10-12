@@ -60,10 +60,27 @@ def maintenance_active() -> bool:
     return os.path.lexists(_maintenance_file())
 
 
+def _mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 def updater_info(now: datetime | None = None) -> dict:
-    heartbeat = _read_json(_control_dir() / "updater.json")
+    heartbeat_file = _control_dir() / "updater.json"
+    ready_file = _control_dir() / "updater.ready"
+    heartbeat = _read_json(heartbeat_file)
     protocol = heartbeat.get("protocol")
-    if isinstance(protocol, int) and not isinstance(protocol, bool):
+    beat_time, ready_time = _mtime(heartbeat_file), _mtime(ready_file)
+    legacy_started_later = (
+        beat_time is not None and ready_time is not None and ready_time > beat_time
+    )
+    if (
+        isinstance(protocol, int)
+        and not isinstance(protocol, bool)
+        and not legacy_started_later
+    ):
         version = heartbeat.get("version")
         alive = False
         try:
@@ -81,7 +98,7 @@ def updater_info(now: datetime | None = None) -> dict:
             "protocol": protocol,
             "version": version if isinstance(version, str) else None,
         }
-    if (_control_dir() / "updater.ready").exists():
+    if ready_time is not None:
         return {"present": True, "protocol": 1, "version": None}
     return {"present": False, "protocol": None, "version": None}
 
