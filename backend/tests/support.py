@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 import secrets
 import socket
@@ -9,6 +10,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -193,6 +195,21 @@ async def db_execute(sql: str, **params: object) -> list[tuple]:
     async with engine.begin() as conn:
         result = await conn.execute(text(sql), params)
         return [tuple(row) for row in result.all()] if result.returns_rows else []
+
+
+def updater_alive(protocol: int = 2, age: int = 0, running: bool = True) -> None:
+    beat = (datetime.now(UTC) - timedelta(seconds=age)).isoformat()
+    (update_control_dir() / "updater.json").write_text(
+        json.dumps(
+            {
+                "protocol": protocol,
+                "version": "1.5.1",
+                "heartbeat_at": beat,
+                "running": running,
+                "busy": False,
+            }
+        )
+    )
 
 
 def control_files() -> list[str]:

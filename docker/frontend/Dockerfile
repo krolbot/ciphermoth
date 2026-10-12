@@ -18,6 +18,8 @@ RUN npm run build
 
 FROM node:20-alpine AS runtime
 
+LABEL io.ciphermoth.min-updater-protocol="2"
+
 ARG VITE_GITHUB_REPO=mr-grj/ciphermoth
 ENV CIPHERMOTH_GITHUB_REPO=$VITE_GITHUB_REPO
 

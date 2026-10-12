@@ -15,6 +15,8 @@ RUN uv sync --frozen --no-install-project --no-group dev
 
 FROM python:3.13-slim-bookworm AS runtime
 
+LABEL io.ciphermoth.min-updater-protocol="2"
+
 ENV PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:$PATH" \

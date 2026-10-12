@@ -28,6 +28,7 @@ from tests.support import (
     api_server,
     db_execute,
     stored_vault_key,
+    update_control_dir,
 )
 
 runner = CliRunner()
@@ -169,6 +170,15 @@ async def test_cli_rejects_a_wrong_master_password(live_server: str) -> None:
     )
     assert result.exit_code == 1
     assert "Invalid master password" in result.output
+
+
+async def test_cli_explains_an_update_in_progress(api: str) -> None:
+    (update_control_dir() / "maintenance.json").write_text("{}")
+
+    result = cli(api, "password", "list")
+
+    assert result.exit_code == 1
+    assert "installing an update" in result.output
 
 
 async def test_cli_works_on_a_vault_upgraded_from_v145(api: str) -> None:

@@ -2,6 +2,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
 
 from api.endpoints import (
+    health,
     master_password,
     meta,
     password,
@@ -19,6 +20,7 @@ def make_api_router() -> APIRouter:
     api_router.responses = inject_responses()
 
     api_router.include_router(master_password.router, prefix="/master_password")
+    api_router.include_router(health.router, prefix="/health")
     api_router.include_router(meta.router, prefix="/meta")
     api_router.include_router(password.router, prefix="/passwords")
     api_router.include_router(settings.router, prefix="/settings")

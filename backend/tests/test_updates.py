@@ -1,6 +1,8 @@
+import asyncio
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -13,9 +15,11 @@ from tests.support import (
     control_files,
     create_vault,
     previous_version,
+    updater_alive,
 )
 from tests.support import update_control_dir as control_dir
 from tests.updater_harness import UPDATER, World, stale_time
+from update_protocol import RECREATE_UPDATER_COMMAND
 
 CURRENT = get_api_settings().version
 
@@ -40,13 +44,13 @@ async def test_apply_refuses_targets_that_are_not_newer(
     client: httpx.AsyncClient, target: str
 ) -> None:
     key = await create_vault(client)
-    (control_dir() / "updater.ready").touch()
+    updater_alive()
 
     resp = await _apply(client, key, target)
 
     assert resp.status_code == 403, resp.text
     assert "newer" in resp.json()["detail"]
-    assert control_files() == ["updater.ready"]
+    assert control_files() == ["updater.json"]
 
 
 @pytest.mark.parametrize(
@@ -57,30 +61,168 @@ async def test_apply_refuses_malformed_targets(
     client: httpx.AsyncClient, target: str
 ) -> None:
     key = await create_vault(client)
-    (control_dir() / "updater.ready").touch()
+    updater_alive()
 
     resp = await _apply(client, key, target)
 
     assert resp.status_code in (403, 422), resp.text
-    assert control_files() == ["updater.ready"]
+    assert control_files() == ["updater.json"]
 
 
 async def test_apply_accepts_a_newer_release(client: httpx.AsyncClient) -> None:
     key = await create_vault(client)
-    (control_dir() / "updater.ready").touch()
+    updater_alive()
     major, minor, _ = CURRENT.split(".")
     for target in (bump_patch(CURRENT), f"v{major}.{int(minor) + 1}.0"):
+        (control_dir() / "request.json").unlink(missing_ok=True)
         resp = await _apply(client, key, target)
         assert resp.status_code == 200, resp.text
         request = json.loads((control_dir() / "request.json").read_text())
         assert request["target"] == target
+        assert request["id"] == resp.json()["request_id"]
+        assert len(request["id"]) == 32
+        assert datetime.fromisoformat(request["requested_at"]).tzinfo is not None
+        assert resp.json()["state"] == "requested"
 
 
 async def test_apply_requires_the_updater_sidecar(client: httpx.AsyncClient) -> None:
     key = await create_vault(client)
     resp = await _apply(client, key, bump_patch(CURRENT))
     assert resp.status_code == 403
+    assert "not enabled" in resp.json()["detail"]
     assert control_files() == []
+
+
+async def test_an_old_updater_must_be_recreated_before_one_click_updates(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    (control_dir() / "updater.ready").touch()
+
+    status = (await client.get("/updates/apply/status")).json()
+    resp = await _apply(client, key, bump_patch(CURRENT))
+
+    assert status["updater_present"] is True
+    assert status["updater_protocol"] == 1
+    assert status["updater_upgrade_required"] is True
+    assert status["required_protocol"] == 2
+    assert resp.status_code == 403
+    assert RECREATE_UPDATER_COMMAND in resp.json()["detail"]
+    assert control_files() == ["updater.ready"]
+
+
+@pytest.mark.parametrize(
+    ("age", "running"), [(300, True), (0, False)], ids=["silent", "stopped"]
+)
+async def test_an_updater_that_is_not_running_is_reported(
+    client: httpx.AsyncClient, age: int, running: bool
+) -> None:
+    key = await create_vault(client)
+    updater_alive(age=age, running=running)
+    (control_dir() / "updater.ready").touch()
+
+    status = (await client.get("/updates/apply/status")).json()
+    resp = await _apply(client, key, bump_patch(CURRENT))
+
+    assert status["updater_present"] is False
+    assert status["updater_protocol"] == 2
+    assert status["updater_upgrade_required"] is False
+    assert resp.status_code == 403
+    assert "not running" in resp.json()["detail"]
+    assert "request.json" not in control_files()
+
+
+async def test_a_second_request_is_refused_while_one_waits(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    updater_alive()
+    assert (await _apply(client, key, bump_patch(CURRENT))).status_code == 200
+    first = (control_dir() / "request.json").read_text()
+
+    resp = await _apply(client, key, bump_patch(CURRENT, 2))
+
+    assert resp.status_code == 403
+    assert "already" in resp.json()["detail"]
+    assert (control_dir() / "request.json").read_text() == first
+
+
+async def test_concurrent_requests_publish_exactly_one(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    updater_alive()
+
+    responses = await asyncio.gather(
+        *(_apply(client, key, bump_patch(CURRENT, n)) for n in range(1, 6))
+    )
+
+    assert sorted(r.status_code for r in responses).count(200) == 1
+    accepted = next(r for r in responses if r.status_code == 200).json()
+    request = json.loads((control_dir() / "request.json").read_text())
+    assert request["id"] == accepted["request_id"]
+
+
+@pytest.mark.parametrize(
+    "state", ["verifying", "snapshotting", "applying", "validating", "rolling_back"]
+)
+async def test_requests_are_refused_while_an_update_runs(
+    client: httpx.AsyncClient, state: str
+) -> None:
+    key = await create_vault(client)
+    updater_alive()
+    (control_dir() / "result.json").write_text(json.dumps({"state": state}))
+
+    resp = await _apply(client, key, bump_patch(CURRENT))
+
+    assert resp.status_code == 403
+    assert "in progress" in resp.json()["detail"]
+    assert (await client.get("/updates/apply/status")).json()["state"] == state
+
+
+async def test_requests_are_refused_when_an_update_needs_attention(
+    client: httpx.AsyncClient,
+) -> None:
+    key = await create_vault(client)
+    updater_alive()
+    (control_dir() / "result.json").write_text(
+        json.dumps({"state": "intervention", "detail": "restore failed"})
+    )
+
+    resp = await _apply(client, key, bump_patch(CURRENT))
+
+    assert resp.status_code == 403
+    assert "manual attention" in resp.json()["detail"]
+    status = (await client.get("/updates/apply/status")).json()
+    assert status["state"] == "intervention"
+    assert status["detail"] == "restore failed"
+
+
+async def test_status_reports_the_updater_and_maintenance(
+    client: httpx.AsyncClient,
+) -> None:
+    updater_alive()
+    (control_dir() / "result.json").write_text(
+        json.dumps({"state": "validating", "target": "v9.9.9", "id": "a" * 32})
+    )
+    (control_dir() / "maintenance.json").write_text("{}")
+
+    status = (await client.get("/updates/apply/status")).json()
+
+    assert status == {
+        "state": "validating",
+        "detail": None,
+        "target": "v9.9.9",
+        "finished_at": None,
+        "id": "a" * 32,
+        "request_id": None,
+        "updater_present": True,
+        "updater_protocol": 2,
+        "updater_version": "1.5.1",
+        "updater_upgrade_required": False,
+        "required_protocol": 2,
+        "maintenance": True,
+    }
 
 
 def _updater_newer(candidate: str, current: str) -> bool:

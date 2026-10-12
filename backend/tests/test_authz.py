@@ -23,7 +23,7 @@ from tests.support import (
     key_auth,
     legacy_unlock,
     unlock,
-    update_control_dir,
+    updater_alive,
 )
 
 Spec = Callable[[httpx.AsyncClient, Headers, dict], Awaitable[httpx.Response]]
@@ -35,6 +35,7 @@ PUBLIC_ROUTES = {
     ("POST", "/api/master_password/lock"),
     ("POST", "/api/master_password/create"),
     ("GET", "/api/meta"),
+    ("GET", "/api/health"),
     ("GET", "/api/updates/apply/status"),
 }
 
@@ -163,7 +164,7 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
     resp = await client.delete("/passwords/beta", headers=headers)
     assert resp.status_code == 200, resp.text
     await client.get("/settings", headers=headers)
-    (update_control_dir() / "updater.ready").touch()
+    updater_alive()
     backup_zip = create_encrypted_zip(
         [{"name": "from-backup", "value": "restored-Value-1"}], MASTER_PASSWORD
     )
@@ -309,7 +310,7 @@ async def test_legacy_vault_fails_closed_until_unlocked(
 async def test_uninitialized_vault_rejects_everything(
     client: httpx.AsyncClient, route: tuple[str, str]
 ) -> None:
-    (update_control_dir() / "updater.ready").touch()
+    updater_alive()
     ctx = {"attachment_id": 1, "backup_zip": b"PK"}
     credentials = {
         **_as_key_headers(forged_keys("A" * 43 + "=")),
