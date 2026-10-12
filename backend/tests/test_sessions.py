@@ -6,6 +6,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -36,12 +37,11 @@ from tests.support import (
     unlock,
 )
 from vault_sessions import (
-    ACTIVITY_GRACE_MS,
+    EXPIRY_TOLERANCE_MS,
     MAX_LIFETIME_MS,
     TOKEN_BYTES,
     Instant,
     VaultSessions,
-    idle_timeout_for,
 )
 
 ROTATE = {
@@ -74,7 +74,7 @@ def clock() -> FakeClock:
 
 @pytest.fixture
 def store(clock: FakeClock) -> VaultSessions:
-    return VaultSessions(idle_timeout_ms=IDLE_MS, clock=clock)
+    return VaultSessions(idle_timeout_ms=IDLE_MS, tolerance_ms=0, clock=clock)
 
 
 @pytest.fixture
@@ -196,7 +196,9 @@ def test_revoking_ends_one_session_and_revoke_all_ends_every_one(
 def test_the_store_is_bounded_and_evicts_the_least_recently_used(
     clock: FakeClock,
 ) -> None:
-    store = VaultSessions(idle_timeout_ms=IDLE_MS, max_sessions=3, clock=clock)
+    store = VaultSessions(
+        idle_timeout_ms=IDLE_MS, tolerance_ms=0, max_sessions=3, clock=clock
+    )
     first, second, third = (store.open(KEY) for _ in range(3))
     store.resolve(first)
     fourth = store.open(KEY)
@@ -210,7 +212,9 @@ def test_the_store_is_bounded_and_evicts_the_least_recently_used(
 def test_expired_sessions_are_dropped_before_live_ones_are_evicted(
     clock: FakeClock,
 ) -> None:
-    store = VaultSessions(idle_timeout_ms=IDLE_MS, max_sessions=2, clock=clock)
+    store = VaultSessions(
+        idle_timeout_ms=IDLE_MS, tolerance_ms=0, max_sessions=2, clock=clock
+    )
     stale = store.open(KEY)
     clock.advance(IDLE_MS // 2)
     live = store.open(KEY)
@@ -225,12 +229,95 @@ def test_expired_sessions_are_dropped_before_live_ones_are_evicted(
 
 
 def test_a_single_session_store_replaces_the_previous_unlock(clock: FakeClock) -> None:
-    desktop = VaultSessions(idle_timeout_ms=IDLE_MS, max_sessions=1, clock=clock)
+    desktop = VaultSessions(
+        idle_timeout_ms=IDLE_MS, tolerance_ms=0, max_sessions=1, clock=clock
+    )
     first = desktop.open(KEY)
     second = desktop.open(KEY)
     with pytest.raises(SessionRequired):
         desktop.resolve(first)
     assert desktop.resolve(second) == KEY
+
+
+def test_the_configured_timeout_is_enforced_within_the_tolerance(
+    clock: FakeClock,
+) -> None:
+    store = VaultSessions(idle_timeout_ms=30_000, tolerance_ms=5_000, clock=clock)
+    early, late = store.open(KEY), store.open(KEY)
+    clock.advance(34_999)
+    assert store.resolve(early, refresh=False) == KEY
+    assert store.info(early).expires_in_ms == 0
+    clock.advance(2)
+    for token in (early, late):
+        with pytest.raises(SessionRequired):
+            store.resolve(token)
+
+
+def test_the_default_tolerance_is_at_most_five_seconds(clock: FakeClock) -> None:
+    store = VaultSessions(idle_timeout_ms=30_000, clock=clock)
+    token = store.open(KEY)
+    clock.advance(35_001)
+    with pytest.raises(SessionRequired):
+        store.resolve(token)
+
+
+def test_reading_a_session_is_not_activity(
+    store: VaultSessions, clock: FakeClock
+) -> None:
+    token = store.open(KEY)
+    for _ in range(4):
+        clock.advance(IDLE_MS // 4 - 1)
+        assert store.resolve(token, refresh=False) == KEY
+        store.info(token)
+    clock.advance(5)
+    with pytest.raises(SessionRequired):
+        store.info(token)
+
+
+def test_an_expired_session_is_deleted_and_cannot_be_revived(
+    store: VaultSessions, clock: FakeClock
+) -> None:
+    token = store.open(KEY)
+    clock.advance(IDLE_MS + 1)
+    store.set_idle_timeout(IDLE_MS * 10)
+    for attempt in (store.info, store.resolve, store.resolve):
+        with pytest.raises(SessionRequired):
+            attempt(token)
+    assert store.revoke(token) is False
+    assert len(store) == 0
+
+
+def test_a_new_timeout_applies_to_open_sessions_from_their_last_activity(
+    store: VaultSessions, clock: FakeClock
+) -> None:
+    idle, active = store.open(KEY), store.open(KEY)
+    clock.advance(20_000)
+    store.resolve(active)
+    store.set_idle_timeout(15_000)
+    with pytest.raises(SessionRequired):
+        store.resolve(idle)
+    assert store.info(active).expires_in_ms == 15_000
+    store.set_idle_timeout(60_000)
+    clock.advance(40_000)
+    assert store.resolve(active) == KEY
+
+
+@pytest.mark.parametrize("offset_ms", [-1, 0, 1])
+def test_concurrent_requests_at_the_deadline_agree(
+    store: VaultSessions, clock: FakeClock, offset_ms: int
+) -> None:
+    token = store.open(KEY)
+    clock.advance(IDLE_MS + offset_ms)
+
+    def attempt(_: int) -> str:
+        try:
+            return store.resolve(token)
+        except SessionRequired:
+            return "ended"
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        outcomes = set(pool.map(attempt, range(64)))
+    assert outcomes == ({KEY} if offset_ms < 0 else {"ended"})
 
 
 async def test_unlock_returns_a_session_and_never_the_vault_key(
@@ -253,7 +340,7 @@ async def test_unlock_returns_a_session_and_never_the_vault_key(
         assert vault_key.rstrip("=") not in resp.text
         assert raw_key.hex() not in resp.text
         assert resp.headers["cache-control"] == "no-store"
-    assert unlocked.json()["idle_timeout_ms"] == idle_timeout_for(120_000)
+    assert unlocked.json()["idle_timeout_ms"] == 120_000
     assert len(sessions()) == 2
 
 
@@ -282,10 +369,12 @@ async def test_session_status_reports_the_server_side_timeout(
     token = await create_vault(client)
     app_clock.advance(30_000)
     resp = await client.get("/master_password/session", headers=auth(token))
-    assert resp.json() == {
-        "idle_timeout_ms": 120_000 + ACTIVITY_GRACE_MS,
-        "expires_in_ms": 120_000 + ACTIVITY_GRACE_MS,
-    }
+    assert resp.json() == {"idle_timeout_ms": 120_000, "expires_in_ms": 90_000}
+    app_clock.advance(10_000)
+    resp = await client.get("/master_password/session", headers=auth(token))
+    assert resp.json() == {"idle_timeout_ms": 120_000, "expires_in_ms": 80_000}
+    resp = await client.post("/master_password/session", headers=auth(token))
+    assert resp.json() == {"idle_timeout_ms": 120_000, "expires_in_ms": 120_000}
 
 
 async def test_idle_sessions_expire_on_the_server(
@@ -296,11 +385,78 @@ async def test_idle_sessions_expire_on_the_server(
     for _ in range(3):
         app_clock.advance(100_000)
         assert (await client.get("/passwords", headers=auth(busy))).status_code == 200
+    resp = await client.get("/master_password/session", headers=auth(token))
+    assert resp.status_code == 401
     resp = await client.get("/passwords", headers=auth(token))
     assert resp.status_code == 401
     assert resp.json()["code"] == "invalid_session"
     assert resp.headers["www-authenticate"] == "CipherMoth-Session"
     assert (await client.get("/passwords", headers=auth(busy))).status_code == 200
+
+
+async def test_status_checks_and_public_polling_do_not_keep_a_session_alive(
+    client: httpx.AsyncClient, app_clock: FakeClock
+) -> None:
+    token = await create_vault(client)
+    for path in ("/master_password/session", "/meta", "/master_password/status"):
+        app_clock.advance(30_000)
+        assert (await client.get(path, headers=auth(token))).status_code == 200
+    app_clock.advance(30_000 + EXPIRY_TOLERANCE_MS + 1)
+    resp = await client.get("/master_password/session", headers=auth(token))
+    assert resp.status_code == 401
+    resp = await client.post("/master_password/session", headers=auth(token))
+    assert resp.status_code == 401
+
+
+async def test_activity_keeps_a_session_open_until_its_absolute_limit(
+    client: httpx.AsyncClient, app_clock: FakeClock
+) -> None:
+    token = await create_vault(client)
+    settings = (await client.get("/settings", headers=auth(token))).json()
+    resp = await client.patch(
+        "/settings", json={**settings, "inactivity_ms": 3_600_000}, headers=auth(token)
+    )
+    assert resp.status_code == 200
+    elapsed = 0
+    while elapsed + 3_000_000 < MAX_LIFETIME_MS:
+        app_clock.advance(3_000_000)
+        elapsed += 3_000_000
+        resp = await client.post("/master_password/session", headers=auth(token))
+        assert resp.status_code == 200
+    app_clock.advance(MAX_LIFETIME_MS - elapsed)
+    resp = await client.post("/master_password/session", headers=auth(token))
+    assert resp.status_code == 401
+
+
+async def test_raising_the_timeout_does_not_revive_an_expired_session(
+    client: httpx.AsyncClient, app_clock: FakeClock
+) -> None:
+    stale = await create_vault(client)
+    app_clock.advance(100_000)
+    active = await unlock(client)
+    app_clock.advance(30_000)
+    settings = (await client.get("/settings", headers=auth(active))).json()
+    resp = await client.patch(
+        "/settings", json={**settings, "inactivity_ms": 3_600_000}, headers=auth(active)
+    )
+    assert resp.status_code == 200
+    assert (await client.get("/passwords", headers=auth(stale))).status_code == 401
+
+
+async def test_concurrent_requests_near_the_deadline_agree(
+    client: httpx.AsyncClient, app_clock: FakeClock
+) -> None:
+    token = await create_vault(client)
+    app_clock.advance(120_000 + EXPIRY_TOLERANCE_MS - 1)
+    responses = await asyncio.gather(
+        *(client.get("/passwords", headers=auth(token)) for _ in range(10))
+    )
+    assert {r.status_code for r in responses} == {200}
+    app_clock.advance(120_000 + EXPIRY_TOLERANCE_MS)
+    responses = await asyncio.gather(
+        *(client.get("/passwords", headers=auth(token)) for _ in range(10))
+    )
+    assert {r.status_code for r in responses} == {401}
 
 
 async def test_the_inactivity_setting_is_enforced_by_the_server(
@@ -315,15 +471,32 @@ async def test_the_inactivity_setting_is_enforced_by_the_server(
     )
     assert resp.status_code == 200
     status = await client.get("/master_password/session", headers=auth(token))
-    assert status.json()["idle_timeout_ms"] == 30_000 + ACTIVITY_GRACE_MS
+    assert status.json() == {"idle_timeout_ms": 30_000, "expires_in_ms": 30_000}
 
-    app_clock.advance(30_000 + ACTIVITY_GRACE_MS + 1)
+    app_clock.advance(30_000 + EXPIRY_TOLERANCE_MS - 1)
+    assert (await client.get("/settings", headers=auth(token))).status_code == 200
+    app_clock.advance(30_000 + EXPIRY_TOLERANCE_MS + 1)
     assert (await client.get("/passwords", headers=auth(token))).status_code == 401
 
     app.state.vault_sessions = fresh_vault_sessions(app_clock)
     fresh = await unlock(client)
     status = await client.get("/master_password/session", headers=auth(fresh))
-    assert status.json()["idle_timeout_ms"] == 30_000 + ACTIVITY_GRACE_MS
+    assert status.json()["idle_timeout_ms"] == 30_000
+
+
+async def test_the_warning_must_come_before_the_lock(
+    client: httpx.AsyncClient,
+) -> None:
+    token = await create_vault(client)
+    settings = (await client.get("/settings", headers=auth(token))).json()
+    for warn in (60_000, 90_000):
+        resp = await client.patch(
+            "/settings",
+            json={**settings, "inactivity_ms": 60_000, "warn_before_ms": warn},
+            headers=auth(token),
+        )
+        assert resp.status_code == 422
+    assert (await client.get("/settings", headers=auth(token))).json() == settings
 
 
 async def test_a_settings_change_that_fails_to_commit_keeps_the_old_timeout(
@@ -341,7 +514,7 @@ async def test_a_settings_change_that_fails_to_commit_keeps_the_old_timeout(
     )
     monkeypatch.undo()
     assert resp.status_code == 500
-    assert sessions().idle_timeout_ms == idle_timeout_for(120_000)
+    assert sessions().idle_timeout_ms == 120_000
 
 
 async def test_lock_ends_only_that_session_and_is_idempotent(

@@ -25,7 +25,7 @@ from crud.runtime_schema import ensure_runtime_schema
 from helpers import generate_key_derivation
 from main import app, get_application
 from models import SETTINGS_DEFAULTS
-from vault_sessions import Instant, VaultSessions, idle_timeout_for, system_clock
+from vault_sessions import Instant, VaultSessions, system_clock
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -40,7 +40,7 @@ engine = app.state.database.engine
 
 def fresh_vault_sessions(clock: Callable[[], Instant] = system_clock) -> VaultSessions:
     return VaultSessions(
-        idle_timeout_ms=idle_timeout_for(SETTINGS_DEFAULTS["inactivity_ms"]),
+        idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"],
         clock=clock,
     )
 

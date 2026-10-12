@@ -58,6 +58,9 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
     ("GET", "/api/master_password/session"): lambda c, h, x: c.get(
         "/master_password/session", headers=h
     ),
+    ("POST", "/api/master_password/session"): lambda c, h, x: c.post(
+        "/master_password/session", headers=h
+    ),
     ("GET", "/api/passwords"): lambda c, h, x: c.get("/passwords", headers=h),
     ("GET", "/api/passwords/trash"): lambda c, h, x: c.get(
         "/passwords/trash", headers=h

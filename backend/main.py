@@ -19,7 +19,7 @@ from crud.engine import Database
 from crud.runtime_schema import ensure_runtime_schema
 from models import SETTINGS_DEFAULTS
 from settings import get_api_settings
-from vault_sessions import VaultSessions, idle_timeout_for
+from vault_sessions import VaultSessions
 
 _SESSION_SWEEP_SECONDS = 30
 
@@ -77,7 +77,7 @@ def get_application(
     server = FastAPI(**settings.fastapi_kwargs, lifespan=lifespan)
     server.state.database = database or Database()
     server.state.vault_sessions = vault_sessions or VaultSessions(
-        idle_timeout_ms=idle_timeout_for(SETTINGS_DEFAULTS["inactivity_ms"])
+        idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"]
     )
 
     server.state.limiter = limiter

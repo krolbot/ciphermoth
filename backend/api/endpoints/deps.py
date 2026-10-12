@@ -108,6 +108,12 @@ async def get_vault_key(access: VaultAccessDep, credential: CredentialDep) -> st
     return await access.authorize(credential)
 
 
+async def get_vault_key_quietly(
+    access: VaultAccessDep, credential: CredentialDep
+) -> str:
+    return await access.authorize(credential, refresh=False)
+
+
 async def get_vault_key_for_rotation(
     access: VaultAccessDep, credential: CredentialDep
 ) -> str:

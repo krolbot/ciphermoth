@@ -5,7 +5,7 @@ from crud.base import BaseCRUD
 from crud.engine import after_commit
 from models import SETTINGS_DEFAULTS, SettingsModel
 from schemas import SettingsResponse, SettingsUpdate
-from vault_sessions import VaultSessions, idle_timeout_for
+from vault_sessions import VaultSessions
 
 
 class SettingsCRUD(BaseCRUD):
@@ -52,7 +52,7 @@ class SettingsCRUD(BaseCRUD):
             setattr(model, field, value)
         self.session.add(model)
         await self.session.flush()
-        idle_timeout_ms = idle_timeout_for(model.inactivity_ms)
+        idle_timeout_ms = model.inactivity_ms
         after_commit(
             self.session, lambda: self.vault_sessions.set_idle_timeout(idle_timeout_ms)
         )

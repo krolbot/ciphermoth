@@ -14,6 +14,7 @@ from api.endpoints.deps import (
     VaultSessionsDep,
     get_vault_key,
     get_vault_key_for_rotation,
+    get_vault_key_quietly,
     require_master_password,
 )
 from api.legacy import DEPRECATED_SINCE, DISABLED, legacy_key_auth_enabled
@@ -86,10 +87,23 @@ async def lock(
     "/session",
     name="master-password:session",
     response_model=VaultSessionStatus,
-    dependencies=[Depends(require_master_password), Depends(get_vault_key)],
+    dependencies=[Depends(require_master_password), Depends(get_vault_key_quietly)],
     responses=inject_responses({status.HTTP_403_FORBIDDEN: SimpleDetailSchema}),
 )
 async def get_session_status(
+    access: VaultAccessDep, credential: CredentialDep
+) -> VaultSessionStatus:
+    return access.status(credential)
+
+
+@router.post(
+    "/session",
+    name="master-password:session-activity",
+    response_model=VaultSessionStatus,
+    dependencies=[Depends(require_master_password), Depends(get_vault_key)],
+    responses=inject_responses({status.HTTP_403_FORBIDDEN: SimpleDetailSchema}),
+)
+async def record_session_activity(
     access: VaultAccessDep, credential: CredentialDep
 ) -> VaultSessionStatus:
     return access.status(credential)

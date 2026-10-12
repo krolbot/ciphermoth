@@ -3,11 +3,17 @@ Unlocked vault sessions, held in the memory of the one process that serves the
 vault.
 
 A session maps an opaque bearer token to the vault key derived at unlock, so
-clients never hold the key. Only a SHA-256 digest of each token is kept, as the
-lookup key. Sessions end when they sit idle longer than the configured
-inactivity timeout, after an absolute lifetime, when they are locked, when the
-master password changes, and when the process exits. Nothing is ever written to
-disk.
+session clients never hold the key. Only a SHA-256 digest of each token is kept,
+as the lookup key. Sessions end when they sit idle longer than the configured
+inactivity timeout (plus ``EXPIRY_TOLERANCE_MS``), after an absolute lifetime,
+when they are locked, when the master password changes, and when the process
+exits. An ended session is deleted and can never be used again. Nothing is ever
+written to disk.
+
+The tolerance exists only for request latency: a client measures inactivity
+from when it sent its last request, the server from when it received it, so a
+request a client sends just before its own deadline can reach the server a
+moment after it. It never lets a session outlive the setting by more than that.
 
 Server mode keeps one session per client (browser tab or CLI command), bounded
 by ``max_sessions``: when full, expired sessions are dropped first and then the
@@ -34,7 +40,7 @@ from typing import NamedTuple
 from errors import SessionRequired
 
 TOKEN_BYTES = 32
-ACTIVITY_GRACE_MS = 60_000
+EXPIRY_TOLERANCE_MS = 5_000
 MAX_LIFETIME_MS = 12 * 60 * 60 * 1000
 DEFAULT_MAX_SESSIONS = 32
 
@@ -59,10 +65,6 @@ def system_clock() -> Instant:
     return Instant(time.monotonic(), time.time())
 
 
-def idle_timeout_for(inactivity_ms: int) -> int:
-    return inactivity_ms + ACTIVITY_GRACE_MS
-
-
 def _digest(token: str) -> bytes:
     return hashlib.sha256(token.encode("ascii")).digest()
 
@@ -85,6 +87,7 @@ class VaultSessions:
         self,
         *,
         idle_timeout_ms: int,
+        tolerance_ms: int = EXPIRY_TOLERANCE_MS,
         max_lifetime_ms: int = MAX_LIFETIME_MS,
         max_sessions: int = DEFAULT_MAX_SESSIONS,
         clock: Callable[[], Instant] = system_clock,
@@ -92,6 +95,7 @@ class VaultSessions:
         if max_sessions < 1:
             raise ValueError("max_sessions must be at least 1")
         self._idle_timeout_ms = idle_timeout_ms
+        self._tolerance_ms = tolerance_ms
         self._max_lifetime_ms = max_lifetime_ms
         self._max_sessions = max_sessions
         self._clock = clock
@@ -103,7 +107,14 @@ class VaultSessions:
         return self._idle_timeout_ms
 
     def set_idle_timeout(self, idle_timeout_ms: int) -> None:
+        """
+        Apply a new inactivity timeout to every open session, measured from its
+        last activity. Sessions that already expired under the old timeout are
+        deleted first, so raising it never revives one.
+        """
+        now = self._clock()
         with self._lock:
+            self._drop_expired(now)
             self._idle_timeout_ms = idle_timeout_ms
 
     def __len__(self) -> int:
@@ -122,20 +133,30 @@ class VaultSessions:
             )
         return token
 
-    def resolve(self, token: str | None) -> str:
-        """Return the vault key of a live session and mark it as just used."""
+    def resolve(self, token: str | None, *, refresh: bool = True) -> str:
+        """
+        Return the vault key of a live session. ``refresh`` records the request
+        as activity, restarting the inactivity timeout; a session that has
+        already expired is deleted, never refreshed.
+        """
+        now = self._clock()
         with self._lock:
-            digest, session = self._live(token)
-            session.last_used = self._clock()
-            self._sessions.move_to_end(digest)
+            digest, session = self._live(token, now)
+            if refresh:
+                session.last_used = now
+                self._sessions.move_to_end(digest)
             return session.key
 
     def info(self, token: str | None) -> SessionInfo:
+        """How long the session has left, measured against the configured
+        timeout without the tolerance. Reading it is not activity."""
+        now = self._clock()
         with self._lock:
-            _, session = self._live(token)
+            _, session = self._live(token, now)
+            remaining = self._remaining_ms(session, now, tolerance=False)
             return SessionInfo(
                 idle_timeout_ms=self._idle_timeout_ms,
-                expires_in_ms=int(self._remaining_ms(session, self._clock())),
+                expires_in_ms=max(0, int(remaining)),
             )
 
     def revoke(self, token: str | None) -> bool:
@@ -154,21 +175,24 @@ class VaultSessions:
         with self._lock:
             return self._drop_expired(self._clock())
 
-    def _live(self, token: str | None) -> tuple[bytes, _Session]:
+    def _live(self, token: str | None, now: Instant) -> tuple[bytes, _Session]:
         if token is None or not _TOKEN.fullmatch(token):
             raise SessionRequired(_ENDED)
         digest = _digest(token)
         session = self._sessions.get(digest)
         if session is None:
             raise SessionRequired(_ENDED)
-        if self._remaining_ms(session, self._clock()) <= 0:
+        if self._remaining_ms(session, now) <= 0:
             del self._sessions[digest]
             raise SessionRequired(_ENDED)
         return digest, session
 
-    def _remaining_ms(self, session: _Session, now: Instant) -> float:
+    def _remaining_ms(
+        self, session: _Session, now: Instant, *, tolerance: bool = True
+    ) -> float:
+        idle_limit = self._idle_timeout_ms + (self._tolerance_ms if tolerance else 0)
         return min(
-            self._idle_timeout_ms - now.ms_since(session.last_used),
+            idle_limit - now.ms_since(session.last_used),
             self._max_lifetime_ms - now.ms_since(session.created),
         )
 

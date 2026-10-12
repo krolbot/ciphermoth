@@ -13,7 +13,7 @@ from schemas import (
     VaultSessionStatus,
     VaultUnlock,
 )
-from vault_sessions import VaultSessions, idle_timeout_for
+from vault_sessions import VaultSessions
 
 _SESSION_ENDED = "Your session expired or was locked. Unlock the vault again."
 
@@ -49,7 +49,7 @@ class VaultAccess(BaseCRUD):
         inactivity_ms = await SettingsCRUD(
             self.session, self.vault_sessions
         ).inactivity_ms()
-        self.vault_sessions.set_idle_timeout(idle_timeout_for(inactivity_ms))
+        self.vault_sessions.set_idle_timeout(inactivity_ms)
 
     def _open(self, key: str) -> str:
         token = self.vault_sessions.open(key)
@@ -78,13 +78,13 @@ class VaultAccess(BaseCRUD):
         )
 
     async def authorize(
-        self, credential: Credential, *, exclusive: bool = False
+        self, credential: Credential, *, exclusive: bool = False, refresh: bool = True
     ) -> str:
         if isinstance(credential, LegacyKey):
             return await self.master_password.verify_vault_key(
                 credential.key, exclusive=exclusive
             )
-        key = self.vault_sessions.resolve(credential.token)
+        key = self.vault_sessions.resolve(credential.token, refresh=refresh)
         try:
             return await self.master_password.verify_vault_key(key, exclusive=exclusive)
         except InvalidKey:

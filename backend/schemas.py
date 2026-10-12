@@ -8,6 +8,7 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 from validators import (
@@ -332,6 +333,12 @@ class SettingsUpdate(BaseModel):
     debounce_ms: int = Field(ge=100, le=10_000)
     clipboard_clear_ms: int = Field(ge=5_000, le=600_000)
     update_check_enabled: bool
+
+    @model_validator(mode="after")
+    def _warning_comes_before_the_lock(self) -> "SettingsUpdate":
+        if self.warn_before_ms >= self.inactivity_ms:
+            raise ValueError("warn_before_ms must be shorter than inactivity_ms.")
+        return self
 
 
 class OnConflict(StrEnum):
