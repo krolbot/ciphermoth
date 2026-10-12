@@ -10,16 +10,16 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from api.exceptions import Forbidden, NotFound, TypesMismatchError
 from crud.base import BaseCRUD
 from crud.master_password import fetch_master_password
+from errors import Forbidden, InvalidRequest, NotFound
 from helpers import (
     create_encrypted_zip,
     decrypt,
     decrypt_optional,
     encrypt,
     encrypt_optional,
-    verify_master_password,
+    password_matches,
 )
 from models import PasswordAttachmentModel, PasswordModel
 from schemas import (
@@ -114,7 +114,7 @@ class PasswordCRUD(BaseCRUD):
     def _decrypt_or_raise(self, key_derivation: str, model: PasswordModel) -> str:
         decrypted = decrypt(key_derivation, model.password_value)
         if decrypted is None:
-            raise TypesMismatchError(f"Invalid key for '{model.password_name}'.")
+            raise InvalidRequest(f"Invalid key for '{model.password_name}'.")
         return decrypted
 
     @staticmethod
@@ -170,7 +170,7 @@ class PasswordCRUD(BaseCRUD):
         try:
             await self.session.flush()
         except IntegrityError as e:
-            raise TypesMismatchError(conflict) from e
+            raise InvalidRequest(conflict) from e
 
     def _to_response(
         self, model: PasswordModel, key_derivation: str, attachment_count: int = 0
@@ -216,7 +216,7 @@ class PasswordCRUD(BaseCRUD):
         if not mp_model:
             raise NotFound("No master password found.")
 
-        if not verify_master_password(master_password, mp_model.hash_key):
+        if not await password_matches(master_password, mp_model.hash_key):
             raise Forbidden("Incorrect master password.")
 
     async def get_passwords(self, key_derivation: str) -> list[PasswordResponse]:
@@ -283,7 +283,7 @@ class PasswordCRUD(BaseCRUD):
                 )
             ).scalar()
             if conflict:
-                raise TypesMismatchError("A password with that name already exists.")
+                raise InvalidRequest("A password with that name already exists.")
             model.password_name = new_password.password_name
 
         old_value = self._decrypt_or_raise(key_derivation, model)
@@ -334,7 +334,7 @@ class PasswordCRUD(BaseCRUD):
             )
         ).scalar()
         if conflict:
-            raise TypesMismatchError(
+            raise InvalidRequest(
                 f"An active password named '{password_name}' already exists. "
                 "Rename or delete it before restoring."
             )
@@ -464,7 +464,7 @@ class PasswordCRUD(BaseCRUD):
             shown = "; ".join(problems[:_REPORTED_IMPORT_PROBLEMS])
             more = len(problems) - _REPORTED_IMPORT_PROBLEMS
             suffix = f"; and {more} more" if more > 0 else ""
-            raise TypesMismatchError(f"Nothing was imported. {shown}{suffix}.")
+            raise InvalidRequest(f"Nothing was imported. {shown}{suffix}.")
         return valid, ignored
 
     async def _store_import(
@@ -563,11 +563,11 @@ class PasswordCRUD(BaseCRUD):
                 with zf.open("ciphermoth_backup.json") as entry:
                     raw = entry.read(_MAX_JSON_BYTES + 1)
             if len(raw) > _MAX_JSON_BYTES:
-                raise TypesMismatchError("Backup content is too large.")
-        except TypesMismatchError:
+                raise InvalidRequest("Backup content is too large.")
+        except InvalidRequest:
             raise
         except Exception as e:
-            raise TypesMismatchError(
+            raise InvalidRequest(
                 "Could not read backup file. Ensure it is a valid ciphermoth backup."
             ) from e
 
@@ -576,7 +576,7 @@ class PasswordCRUD(BaseCRUD):
             if not isinstance(entries, list):
                 raise ValueError
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            raise TypesMismatchError("Invalid backup file format.") from e
+            raise InvalidRequest("Invalid backup file format.") from e
 
         passwords, ignored = self._validate_import(
             (
@@ -634,22 +634,22 @@ class PasswordCRUD(BaseCRUD):
         try:
             text = file_bytes.decode("utf-8-sig")
         except UnicodeDecodeError as e:
-            raise TypesMismatchError("CSV file must be UTF-8 encoded.") from e
+            raise InvalidRequest("CSV file must be UTF-8 encoded.") from e
 
         reader = csv.DictReader(io.StringIO(text, newline=""))
         try:
             fieldnames = reader.fieldnames
             rows = list(reader)
         except csv.Error as e:
-            raise TypesMismatchError(
+            raise InvalidRequest(
                 f"Could not read the CSV file near line {reader.line_num}."
             ) from e
         if not fieldnames:
-            raise TypesMismatchError("CSV file has no header row.")
+            raise InvalidRequest("CSV file has no header row.")
 
         column_for = self._map_csv_columns(fieldnames)
         if "name" not in column_for or "value" not in column_for:
-            raise TypesMismatchError(
+            raise InvalidRequest(
                 "CSV must have a name/title column and a password column."
             )
 

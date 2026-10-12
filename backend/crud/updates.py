@@ -5,7 +5,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from api.exceptions import Forbidden
+from errors import Forbidden
 
 _TAG_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)", re.ASCII)
 _VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)", re.ASCII)

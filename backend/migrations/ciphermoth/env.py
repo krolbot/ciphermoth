@@ -5,7 +5,7 @@ from alembic import context
 from sqlalchemy import Connection
 
 import models  # noqa: F401 - ensure models are registered
-from crud.session import engine
+from crud.engine import create_engine
 
 config = context.config
 
@@ -34,8 +34,12 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    async with engine.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+    engine = create_engine()
+    try:
+        async with engine.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    finally:
+        await engine.dispose()
 
 
 if context.is_offline_mode():

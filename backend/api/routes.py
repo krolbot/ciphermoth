@@ -8,18 +8,9 @@ from api.endpoints import (
     settings,
     updates,
 )
-from api.exceptions import (
-    Forbidden,
-    InvalidKey,
-    NotFound,
-    TypesMismatchError,
-    forbidden_handler,
-    invalid_key_handler,
-    mismatch_handler,
-    not_found_handler,
-    validation_handler,
-)
+from api.exceptions import validation_handler, vault_error_handler
 from api.responses import inject_responses
+from errors import VaultError
 
 
 def make_api_router() -> APIRouter:
@@ -37,8 +28,5 @@ def make_api_router() -> APIRouter:
 
 
 def make_api_exceptions(app: FastAPI) -> None:
-    app.add_exception_handler(InvalidKey, invalid_key_handler)
-    app.add_exception_handler(Forbidden, forbidden_handler)
-    app.add_exception_handler(NotFound, not_found_handler)
-    app.add_exception_handler(TypesMismatchError, mismatch_handler)
+    app.add_exception_handler(VaultError, vault_error_handler)
     app.add_exception_handler(RequestValidationError, validation_handler)

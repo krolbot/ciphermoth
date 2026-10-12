@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends
 
 from api.endpoints.deps import (
     SettingsCRUDDep,
-    get_key_derivation,
+    get_vault_key,
     require_master_password,
 )
 from schemas import SettingsResponse, SettingsUpdate
 
 router = APIRouter(
     tags=["settings"],
-    dependencies=[Depends(require_master_password), Depends(get_key_derivation)],
+    dependencies=[Depends(require_master_password), Depends(get_vault_key)],
 )
 
 

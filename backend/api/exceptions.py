@@ -11,42 +11,41 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from errors import (
+    Forbidden,
+    InvalidKey,
+    InvalidRequest,
+    NotFound,
+    SessionRequired,
+    VaultError,
+)
+
 logger = logging.getLogger(__name__)
 
 
-class Forbidden(Exception):
-    pass
+_ERROR_RESPONSES: tuple[tuple[type[VaultError], int, str | None], ...] = (
+    (SessionRequired, status.HTTP_401_UNAUTHORIZED, "invalid_session"),
+    (InvalidKey, status.HTTP_403_FORBIDDEN, "invalid_key"),
+    (Forbidden, status.HTTP_403_FORBIDDEN, None),
+    (NotFound, status.HTTP_404_NOT_FOUND, None),
+    (InvalidRequest, status.HTTP_400_BAD_REQUEST, None),
+    (VaultError, status.HTTP_400_BAD_REQUEST, None),
+)
 
 
-class InvalidKey(Forbidden):
-    pass
-
-
-class NotFound(Exception):
-    pass
-
-
-class TypesMismatchError(Exception):
-    pass
-
-
-def _detail_handler(status_code: int):
-    async def handler(request: Request, exc: Exception) -> JSONResponse:
-        return JSONResponse(status_code=status_code, content={"detail": str(exc)})
-
-    return handler
-
-
-forbidden_handler = _detail_handler(status.HTTP_403_FORBIDDEN)
-not_found_handler = _detail_handler(status.HTTP_404_NOT_FOUND)
-mismatch_handler = _detail_handler(status.HTTP_400_BAD_REQUEST)
-
-
-async def invalid_key_handler(request: Request, exc: Exception) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_403_FORBIDDEN,
-        content={"detail": str(exc), "code": "invalid_key"},
+async def vault_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    status_code, code = next(
+        (status_code, code)
+        for error, status_code, code in _ERROR_RESPONSES
+        if isinstance(exc, error)
     )
+    content: dict[str, str] = {"detail": str(exc)}
+    headers: dict[str, str] = {}
+    if code is not None:
+        content["code"] = code
+    if status_code == status.HTTP_401_UNAUTHORIZED:
+        headers["WWW-Authenticate"] = "CipherMoth-Session"
+    return JSONResponse(status_code=status_code, content=content, headers=headers)
 
 
 async def validation_handler(request: Request, exc: Exception) -> JSONResponse:

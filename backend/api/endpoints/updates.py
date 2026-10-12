@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request, status
 
-from api.endpoints.deps import KeyDerivationDep, require_master_password
+from api.endpoints.deps import VaultKeyDep, require_master_password
 from api.rate_limit import limiter, rate
 from api.responses import inject_responses
 from crud import updates
@@ -35,7 +35,7 @@ async def get_apply_status() -> UpdateApplyStatus:
 async def apply_update(
     request: Request,
     body: UpdateApplyPayload,
-    key_derivation: KeyDerivationDep,
+    key_derivation: VaultKeyDep,
 ) -> UpdateApplyStatus:
     return UpdateApplyStatus(
         **updates.request_update(body.target, get_api_settings().version)

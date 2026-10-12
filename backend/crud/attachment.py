@@ -1,7 +1,7 @@
 from sqlalchemy import func, select
 
-from api.exceptions import NotFound, TypesMismatchError
 from crud.base import BaseCRUD
+from errors import InvalidRequest, NotFound
 from helpers import (
     decrypt,
     decrypt_bytes,
@@ -54,7 +54,7 @@ class AttachmentCRUD(BaseCRUD):
     ) -> AttachmentResponse:
         filename = decrypt(key_derivation, model.filename)
         if filename is None:
-            raise TypesMismatchError("Invalid key for attachment.")
+            raise InvalidRequest("Invalid key for attachment.")
         return AttachmentResponse(
             id=model.id,
             filename=filename,
@@ -87,9 +87,9 @@ class AttachmentCRUD(BaseCRUD):
         key_derivation: str,
     ) -> AttachmentResponse:
         if not data:
-            raise TypesMismatchError("Attachment is empty.")
+            raise InvalidRequest("Attachment is empty.")
         if len(data) > _MAX_ATTACHMENT_BYTES:
-            raise TypesMismatchError("Attachment too large. Maximum size is 5 MB.")
+            raise InvalidRequest("Attachment too large. Maximum size is 5 MB.")
 
         password = await self._get_active_password(password_name, lock=True)
 
@@ -101,7 +101,7 @@ class AttachmentCRUD(BaseCRUD):
             )
         ).scalar() or 0
         if count >= _MAX_ATTACHMENTS_PER_ENTRY:
-            raise TypesMismatchError(
+            raise InvalidRequest(
                 f"This entry already has the maximum of "
                 f"{_MAX_ATTACHMENTS_PER_ENTRY} attachments."
             )
@@ -114,7 +114,7 @@ class AttachmentCRUD(BaseCRUD):
             )
         ).scalar() or 0
         if used + len(data) > _MAX_TOTAL_BYTES:
-            raise TypesMismatchError(
+            raise InvalidRequest(
                 "Attachments for this entry would exceed the 25 MB total limit."
             )
 
@@ -138,7 +138,7 @@ class AttachmentCRUD(BaseCRUD):
         filename = decrypt(key_derivation, model.filename)
         data = decrypt_bytes(key_derivation, model.content)
         if filename is None or data is None:
-            raise TypesMismatchError("Invalid key for attachment.")
+            raise InvalidRequest("Invalid key for attachment.")
         content_type = (
             decrypt(key_derivation, model.content_type)
             if model.content_type is not None

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -6,6 +7,8 @@ import json
 import re
 import struct
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import bcrypt
@@ -17,6 +20,11 @@ _ARGON2_MEMORY_COST = 65536
 _ARGON2_ITERATIONS = 3
 _ARGON2_LANES = 4
 _ARGON2_LENGTH = 32
+
+_KDF_WORKERS = 2
+_KDF_POOL = ThreadPoolExecutor(
+    max_workers=_KDF_WORKERS, thread_name_prefix="ciphermoth-kdf"
+)
 
 _KEY_CHECK_PREFIX = b"ciphermoth-key-check-v1:"
 _CANONICAL_KEY = re.compile(r"[A-Za-z0-9_-]{43}=", re.ASCII)
@@ -44,6 +52,28 @@ def generate_key_derivation(salt: bytes, master_password: str) -> bytes:
         memory_cost=_ARGON2_MEMORY_COST,
     )
     return base64.urlsafe_b64encode(kdf.derive(master_password.encode()))
+
+
+async def _off_the_event_loop[T](function: Callable[..., T], *args: object) -> T:
+    """
+    Run a deliberately slow KDF in a small dedicated pool, so other requests
+    keep being served while it runs and at most two Argon2id derivations (64 MiB
+    each) are in memory at once, however many unlocks arrive together.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_KDF_POOL, function, *args)
+
+
+async def derive_key(salt: bytes, master_password: str) -> bytes:
+    return await _off_the_event_loop(generate_key_derivation, salt, master_password)
+
+
+async def password_matches(master_password: str, hash_key: str) -> bool:
+    return await _off_the_event_loop(verify_master_password, master_password, hash_key)
+
+
+async def hash_password(master_password: str) -> str:
+    return await _off_the_event_loop(hash_master_password, master_password)
 
 
 def encrypt(key: bytes | str, value: bytes) -> bytes:
