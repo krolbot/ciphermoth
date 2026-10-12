@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The one-click updater was rewritten (updater v2) to be safe for database migrations.** It used to keep going when its database dump failed and could only roll back the images, which would leave a migrated vault behind. Now it pauses writes (the API answers 503 during an update), stops the backend, takes a snapshot and proves it restores identically before it continues; if the new version, its migration or its web UI fails, it restores that snapshot into a fresh database, swaps it in, and starts the exact previous images again. Updates are recorded in a journal, so a crash, `docker stop` or reboot in the middle is finished or rolled back when the updater starts again. If it cannot recover on its own it keeps the API paused and says so; `updater.sh retry` and `updater.sh resolve` then work against the running updater. It also verifies the signature of the version it would roll back to, checks that the web UI really serves the new version (not just the backend), keeps the three newest snapshots, and refuses expired, replayed or malformed requests. See [docs/UPDATING.md](docs/UPDATING.md).
+- **Updaters from v1.5.0 and older need a one-time upgrade.** They can install this release, which does not change the database, but from now on the backend only accepts one-click updates through updater v2. The update dialog shows the command (`docker compose -f docker-compose.prod.yml --profile autoupdate pull updater` then `... up -d --no-deps updater`). The updater never replaces its own container; when it is older than the app, the result of an update says so and gives the same command.
+
+### Added
+
+- `GET /api/health` reports the version, whether the database is at the release's schema, and maintenance mode. The web UI serves `/version.json`.
+- A backend refuses to migrate the database while an older updater is installing it, so a future release with a schema change cannot be applied by an updater that could not restore the database. Updating by hand is unaffected.
+- Release images carry an `io.ciphermoth.min-updater-protocol` label, and the updater refuses releases that need a newer updater.
+
 ## [1.5.0] - 2026-10-12
 
 ### Security
