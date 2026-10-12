@@ -8,7 +8,13 @@ import httpx
 import pytest
 
 from settings import get_api_settings
-from tests.support import auth, bump_patch, control_files, create_vault
+from tests.support import (
+    auth,
+    bump_patch,
+    control_files,
+    create_vault,
+    previous_version,
+)
 from tests.support import update_control_dir as control_dir
 
 UPDATER = Path(__file__).resolve().parents[2] / "docker" / "updater" / "updater.sh"
@@ -25,11 +31,11 @@ async def _apply(client: httpx.AsyncClient, key: str, target: str) -> httpx.Resp
     "target",
     [
         f"v{CURRENT}",
-        bump_patch(CURRENT, -1),
+        previous_version(CURRENT),
         "v0.0.1",
         "v1.0.0",
     ],
-    ids=["same", "previous-patch", "ancient", "older-major"],
+    ids=["same", "previous", "ancient", "older-major"],
 )
 async def test_apply_refuses_targets_that_are_not_newer(
     client: httpx.AsyncClient, target: str

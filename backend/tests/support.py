@@ -171,6 +171,15 @@ def bump_patch(version: str, delta: int = 1) -> str:
     return f"v{major}.{minor}.{patch + delta}"
 
 
+def previous_version(version: str) -> str:
+    major, minor, patch = (int(part) for part in version.lstrip("v").split("."))
+    if patch:
+        return f"v{major}.{minor}.{patch - 1}"
+    if minor:
+        return f"v{major}.{minor - 1}.99"
+    return f"v{major - 1}.99.99"
+
+
 async def db_snapshot() -> dict[str, list[tuple]]:
     snapshot: dict[str, list[tuple]] = {}
     async with engine.connect() as conn:
