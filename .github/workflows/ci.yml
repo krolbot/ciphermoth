@@ -99,3 +99,30 @@ jobs:
       - name: Test
         working-directory: frontend
         run: npm test
+
+      - name: Test the image's runtime configuration
+        run: node --test docker/frontend/runtime-config.test.mjs
+
+  frontend-browser:
+    name: Frontend image (CSP in Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docker/frontend/browser/package-lock.json
+
+      - name: Build the frontend image
+        run: docker build -f docker/frontend/Dockerfile --build-arg VITE_API_URL=__CIPHERMOTH_API_URL__ -t ciphermoth-frontend:browser-test .
+
+      - name: Install the browser
+        working-directory: docker/frontend/browser
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Check the Content-Security-Policy
+        working-directory: docker/frontend/browser
+        run: npm test

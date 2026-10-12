@@ -112,6 +112,13 @@ endef
 test:
 	$(call run_backend_tests,,)
 	cd frontend && npm test
+	node --test docker/frontend/runtime-config.test.mjs
+
+# Builds the frontend image and checks its Content-Security-Policy in Chromium.
+.PHONY: test-browser
+test-browser:
+	docker build -f docker/frontend/Dockerfile --build-arg VITE_API_URL=__CIPHERMOTH_API_URL__ -t ciphermoth-frontend:browser-test .
+	cd docker/frontend/browser && npm ci && npx playwright install chromium && npm test
 
 # Fuzzing with many more Hypothesis examples, fault injection and scale tests.
 .PHONY: test-stress

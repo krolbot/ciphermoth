@@ -16,3 +16,4 @@ frontend/dist
 
 backend/.db.env
 backend/tests
+docker/frontend/browser/node_modules

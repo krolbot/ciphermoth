@@ -1,12 +1,6 @@
 #!/bin/sh
 set -e
 
-API_URL="${VITE_API_URL:-http://localhost:8000/api}"
+node /app/runtime-config.mjs /app/dist /app/serve.json /tmp/serve.json
 
-if grep -rq "__CIPHERMOTH_API_URL__" /app/dist 2>/dev/null; then
-  echo "Setting API URL to ${API_URL}"
-  find /app/dist -type f -name '*.js' \
-    -exec sed -i "s|__CIPHERMOTH_API_URL__|${API_URL}|g" {} \;
-fi
-
-exec serve -s dist -l 3000 -c /app/serve.json
+exec serve -s dist -l 3000 -c /tmp/serve.json

@@ -1,7 +1,9 @@
 FROM node:20-alpine AS builder
 
 ARG VITE_API_URL=http://localhost:8000/api
+ARG VITE_GITHUB_REPO=mr-grj/ciphermoth
 ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_GITHUB_REPO=$VITE_GITHUB_REPO
 
 WORKDIR /app
 
@@ -16,6 +18,9 @@ RUN npm run build
 
 FROM node:20-alpine AS runtime
 
+ARG VITE_GITHUB_REPO=mr-grj/ciphermoth
+ENV CIPHERMOTH_GITHUB_REPO=$VITE_GITHUB_REPO
+
 RUN addgroup -S ciphermoth && adduser -S ciphermoth -G ciphermoth
 
 WORKDIR /app
@@ -26,6 +31,7 @@ ENV PATH="/app/server/node_modules/.bin:$PATH"
 
 COPY --from=builder --chown=ciphermoth:ciphermoth /app/dist ./dist
 COPY --from=builder /app/serve.json ./serve.json
+COPY docker/frontend/runtime-config.mjs /app/runtime-config.mjs
 COPY docker/frontend/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
