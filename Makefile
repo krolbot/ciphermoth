@@ -77,16 +77,16 @@ release-dry:
 
 .PHONY: lint
 lint:
-	cd backend && uv run ruff check .
+	cd backend && uv run ruff check . ../docker/updater
 	cd frontend && npm run lint
 
 .PHONY: typecheck
 typecheck:
-	cd backend && uv run ty check .
+	cd backend && uv run ty check . ../docker/updater/updater.py
 
 .PHONY: format
 format:
-	cd backend && uv run ruff format .
+	cd backend && uv run ruff format . ../docker/updater
 	cd frontend && npm run format
 
 # Tests run against a throwaway Postgres in a tmpfs container (no volume), removed afterwards.
@@ -127,5 +127,5 @@ test-stress:
 
 .PHONY: check
 check:
-	cd backend && uv run ruff check . && uv run ruff format --check . && uv run ty check .
+	cd backend && uv run ruff check . ../docker/updater && uv run ruff format --check . ../docker/updater && uv run ty check . ../docker/updater/updater.py
 	cd frontend && npm run lint && npm run format:check

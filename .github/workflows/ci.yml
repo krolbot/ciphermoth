@@ -23,15 +23,15 @@ jobs:
 
       - name: Lint
         working-directory: backend
-        run: uv run ruff check .
+        run: uv run ruff check . ../docker/updater
 
       - name: Format check
         working-directory: backend
-        run: uv run ruff format --check .
+        run: uv run ruff format --check . ../docker/updater
 
       - name: Type check
         working-directory: backend
-        run: uv run ty check .
+        run: uv run ty check . ../docker/updater/updater.py
 
   backend-tests:
     name: Backend tests (pytest)
@@ -64,9 +64,6 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: uv sync --group dev
-
-      - name: Install jq
-        run: command -v jq || sudo apt-get install -y jq
 
       - name: Test
         working-directory: backend
