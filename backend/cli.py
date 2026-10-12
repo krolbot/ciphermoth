@@ -1,9 +1,12 @@
 import binascii
+import contextlib
 import os
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, Any, NoReturn
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -34,6 +37,8 @@ _LABEL_WIDTH = 13
 _KINDS = ("login", "note")
 _CONFLICTS = ("skip", "overwrite")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+_SESSION_HEADER = "x-ciphermoth-session"
+_SLASH_NAMES = "entry-names-with-slash"
 
 
 def _api_url() -> str:
@@ -80,21 +85,113 @@ def _warn_plaintext_transport() -> None:
     )
 
 
-def _unlock(client: httpx.Client) -> tuple[str, str]:
-    _warn_plaintext_transport()
-    master = typer.prompt("Master password", hide_input=True)
+def _features(client: httpx.Client) -> list[str]:
     try:
-        resp = client.post("/master_password/check", json={"master_password": master})
+        resp = client.get("/meta")
     except httpx.ConnectError:
         _die(f"Cannot reach the API at {_api_url()!r}. Is the service running?")
+    except httpx.HTTPError:
+        return []
+    try:
+        features = resp.json().get("features", []) if resp.is_success else []
+    except (ValueError, AttributeError):
+        return []
+    if not isinstance(features, list):
+        return []
+    return [feature for feature in features if isinstance(feature, str)]
 
-    _check(resp)
-    data = resp.json()
-    if not data.get("valid"):
-        _die("Invalid master password.")
 
-    key: str = data["key_derivation"]
-    return master, key
+class _Vault:
+    """
+    One unlocked vault for the length of a command. Servers that offer vault
+    sessions get a session that is locked again when the command ends; older
+    servers (v1.4.x), which have no unlock route, get their vault key header, as
+    those releases expect.
+    """
+
+    def __init__(self, client: httpx.Client) -> None:
+        self.client = client
+        self.features = _features(client)
+        self.master = ""
+        self._auth: dict[str, str] = {}
+        self._session = False
+
+    def unlock(self) -> None:
+        self.master = typer.prompt("Master password", hide_input=True)
+        self._authenticate()
+
+    def _post_password(self, path: str) -> httpx.Response:
+        try:
+            return self.client.post(path, json={"master_password": self.master})
+        except httpx.ConnectError:
+            _die(f"Cannot reach the API at {_api_url()!r}. Is the service running?")
+
+    def _authenticate(self) -> None:
+        resp = self._post_password("/master_password/unlock")
+        sessions = resp.status_code not in (404, 405)
+        if not sessions:
+            resp = self._post_password("/master_password/check")
+
+        _check(resp)
+        data = resp.json()
+        if not data.get("valid"):
+            _die("Invalid master password.")
+
+        if sessions:
+            self._auth = {_SESSION_HEADER: data["session_token"]}
+        else:
+            self._auth = {"x-ciphermoth-key-derivation": data["key_derivation"]}
+        self._session = sessions
+
+    def headers(self, name: str | None = None) -> dict[str, str]:
+        headers = dict(self._auth)
+        if name is not None:
+            headers["x-ciphermoth-entry"] = quote(name, safe="")
+        return headers
+
+    def send(
+        self, method: str, url: str, *, name: str | None = None, **kwargs: Any
+    ) -> httpx.Response:
+        resp = self.client.request(method, url, headers=self.headers(name), **kwargs)
+        if resp.status_code == 401 and self._session:
+            self._authenticate()
+            resp = self.client.request(
+                method, url, headers=self.headers(name), **kwargs
+            )
+        return resp
+
+    def entry_path(self, name: str, suffix: str = "") -> str:
+        if "/" in name and _SLASH_NAMES not in self.features:
+            _die(
+                "This server can't address entry names containing '/'. "
+                "Update CipherMoth, or rename the entry in the web UI."
+            )
+        encoded = quote(name, safe="")
+        if encoded in (".", ".."):
+            encoded = encoded.replace(".", "%2E")
+        return f"/passwords/{encoded}{suffix}"
+
+    def lock(self) -> None:
+        if self._session:
+            with contextlib.suppress(httpx.HTTPError):
+                self.client.post("/master_password/lock", headers=self._auth)
+        self._auth = {}
+        self._session = False
+        self.master = ""
+
+
+@contextmanager
+def _vault(timeout: float = 30) -> Iterator[_Vault]:
+    _warn_plaintext_transport()
+    with httpx.Client(
+        base_url=_api_url(), timeout=timeout, follow_redirects=False
+    ) as client:
+        vault = _Vault(client)
+        try:
+            vault.unlock()
+            yield vault
+        finally:
+            vault.lock()
 
 
 def _entry(resp: httpx.Response, name: str) -> dict:
@@ -106,33 +203,6 @@ def _entry(resp: httpx.Response, name: str) -> dict:
             "to manage it from the CLI."
         )
     return item
-
-
-def _hdr(key: str, name: str | None = None) -> dict[str, str]:
-    headers = {"x-ciphermoth-key-derivation": key}
-    if name is not None:
-        headers["x-ciphermoth-entry"] = quote(name, safe="")
-    return headers
-
-
-def _routes_slash_names(client: httpx.Client) -> bool:
-    try:
-        features = client.get("/meta").json().get("features", [])
-    except (httpx.HTTPError, ValueError, AttributeError):
-        return False
-    return "entry-names-with-slash" in features
-
-
-def _entry_path(client: httpx.Client, name: str, suffix: str = "") -> str:
-    if "/" in name and not _routes_slash_names(client):
-        _die(
-            "This server can't address entry names containing '/'. "
-            "Update CipherMoth, or rename the entry in the web UI."
-        )
-    encoded = quote(name, safe="")
-    if encoded in (".", ".."):
-        encoded = encoded.replace(".", "%2E")
-    return f"/passwords/{encoded}{suffix}"
 
 
 def _optional(label: str, current: str | None = None) -> str | None:
@@ -207,11 +277,8 @@ def _print_details(item: dict) -> None:
 
 @pw_app.command("list", help="List every entry in the vault.")
 def pw_list() -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        resp = client.get("/passwords", headers=_hdr(key))
+    with _vault() as vault:
+        resp = vault.send("GET", "/passwords")
 
     _check(resp)
 
@@ -237,11 +304,8 @@ def pw_list() -> None:
 
 @pw_app.command("get", help="Reveal one entry, including its live 2FA code.")
 def pw_get(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        resp = client.get(_entry_path(client, name), headers=_hdr(key, name))
+    with _vault() as vault:
+        resp = vault.send("GET", vault.entry_path(name), name=name)
 
     _print_details(_entry(resp, name))
 
@@ -260,13 +324,8 @@ def pw_create(
 
     is_note = kind == "note"
 
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        headers = _hdr(key, name)
-
-        existing = client.get(_entry_path(client, name), headers=headers)
+    with _vault() as vault:
+        existing = vault.send("GET", vault.entry_path(name), name=name)
         if existing.is_success and isinstance(existing.json(), dict):
             _die(f"An entry named '{name}' already exists.")
 
@@ -276,8 +335,10 @@ def pw_create(
         totp_secret = None if is_note else _optional("TOTP secret")
         description = _optional("Description")
         folder = _optional("Folder")
-        resp = client.post(
+        resp = vault.send(
+            "POST",
             "/passwords/create",
+            name=name,
             json={
                 "password_name": name,
                 "kind": kind,
@@ -288,7 +349,6 @@ def pw_create(
                 "description": description,
                 "folder": folder,
             },
-            headers=headers,
         )
 
     _check(resp)
@@ -301,13 +361,8 @@ def pw_create(
     help="Edit an entry. Leave a prompt blank to keep the current value.",
 )
 def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        headers = _hdr(key, name)
-
-        current = _entry(client.get(_entry_path(client, name), headers=headers), name)
+    with _vault() as vault:
+        current = _entry(vault.send("GET", vault.entry_path(name), name=name), name)
         is_note = current.get("kind") == "note"
 
         secret_label = "New note" if is_note else "New password value"
@@ -332,8 +387,10 @@ def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
             "custom_fields": current.get("custom_fields", []),
             "favorite": current.get("favorite", False),
         }
-        resp = client.patch(
+        resp = vault.send(
+            "PATCH",
             "/passwords/update",
+            name=name,
             json={
                 "password": {
                     **shared,
@@ -354,7 +411,6 @@ def pw_update(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
                     "folder": new_folder,
                 },
             },
-            headers=headers,
         )
 
     _check(resp)
@@ -369,20 +425,15 @@ def pw_delete(
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
 ) -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        headers = _hdr(key, name)
-
-        exists = client.get(_entry_path(client, name), headers=headers)
+    with _vault() as vault:
+        exists = vault.send("GET", vault.entry_path(name), name=name)
         if exists.status_code == 404:
             _check(exists)
 
         if not yes:
             typer.confirm(f"Move '{name}' to trash?", abort=True)
 
-        resp = client.delete(_entry_path(client, name), headers=headers)
+        resp = vault.send("DELETE", vault.entry_path(name), name=name)
 
     _check(resp)
 
@@ -391,11 +442,8 @@ def pw_delete(
 
 @pw_app.command("trash", help="List the entries waiting in the trash.")
 def pw_trash() -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        resp = client.get("/passwords/trash", headers=_hdr(key))
+    with _vault() as vault:
+        resp = vault.send("GET", "/passwords/trash")
 
     _check(resp)
 
@@ -423,13 +471,8 @@ def pw_trash() -> None:
     "restore", help="Move an entry out of the trash and back into the vault."
 )
 def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        resp = client.post(
-            _entry_path(client, name, "/restore"), headers=_hdr(key, name)
-        )
+    with _vault() as vault:
+        resp = vault.send("POST", vault.entry_path(name, "/restore"), name=name)
 
     _check(resp)
 
@@ -448,13 +491,8 @@ def pw_purge(
     if not yes:
         typer.confirm(f"Permanently delete '{name}' from trash?", abort=True)
 
-    with httpx.Client(
-        base_url=_api_url(), timeout=30, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        resp = client.delete(
-            _entry_path(client, name, "/purge"), headers=_hdr(key, name)
-        )
+    with _vault() as vault:
+        resp = vault.send("DELETE", vault.entry_path(name, "/purge"), name=name)
 
     _check(resp)
 
@@ -469,14 +507,9 @@ def cmd_backup(
         Path, typer.Option("--out", "-o", help="Directory to save the backup file.")
     ] = Path("."),
 ) -> None:
-    with httpx.Client(
-        base_url=_api_url(), timeout=60, follow_redirects=False
-    ) as client:
-        master, key = _unlock(client)
-        resp = client.post(
-            "/passwords/backup",
-            json={"master_password": master},
-            headers=_hdr(key),
+    with _vault(timeout=60) as vault:
+        resp = vault.send(
+            "POST", "/passwords/backup", json={"master_password": vault.master}
         )
 
     _check(resp)
@@ -536,15 +569,12 @@ def cmd_import(
 ) -> None:
     file_bytes = _read_import_file(file, on_conflict)
 
-    with httpx.Client(
-        base_url=_api_url(), timeout=60, follow_redirects=False
-    ) as client:
-        master, key = _unlock(client)
-        resp = client.post(
+    with _vault(timeout=60) as vault:
+        resp = vault.send(
+            "POST",
             "/passwords/import",
-            data={"master_password": master, "on_conflict": on_conflict},
+            data={"master_password": vault.master, "on_conflict": on_conflict},
             files={"file": (file.name, file_bytes, "application/zip")},
-            headers=_hdr(key),
         )
 
     _check(resp)
@@ -569,15 +599,12 @@ def cmd_import_csv(
 ) -> None:
     file_bytes = _read_import_file(file, on_conflict)
 
-    with httpx.Client(
-        base_url=_api_url(), timeout=60, follow_redirects=False
-    ) as client:
-        _, key = _unlock(client)
-        resp = client.post(
+    with _vault(timeout=60) as vault:
+        resp = vault.send(
+            "POST",
             "/passwords/import/csv",
             data={"on_conflict": on_conflict},
             files={"file": (file.name, file_bytes, "text/csv")},
-            headers=_hdr(key),
         )
 
     _check(resp)

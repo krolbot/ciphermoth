@@ -1,4 +1,5 @@
 import http.server
+import importlib.util
 import io
 import json
 import os
@@ -24,7 +25,9 @@ from helpers import encrypt
 from tests.support import (
     MASTER_PASSWORD,
     WRONG_MASTER_PASSWORD,
+    api_server,
     db_execute,
+    stored_vault_key,
 )
 
 runner = CliRunner()
@@ -275,9 +278,9 @@ COMPARED = (
 @pytest.fixture
 def key(api: str) -> dict[str, str]:
     resp = httpx.post(
-        f"{api}/master_password/check", json={"master_password": MASTER_PASSWORD}
+        f"{api}/master_password/unlock", json={"master_password": MASTER_PASSWORD}
     )
-    return {"x-ciphermoth-key-derivation": resp.json()["key_derivation"]}
+    return {"x-ciphermoth-session": resp.json()["session_token"]}
 
 
 def _api_create(api: str, key: dict[str, str], item: dict) -> None:
@@ -354,7 +357,7 @@ async def test_cli_reaches_exactly_the_named_entry(
         await db_execute(
             "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
             n=name,
-            v=encrypt(key["x-ciphermoth-key-derivation"], b"target-Value-1"),
+            v=encrypt(await stored_vault_key(), b"target-Value-1"),
         )
     else:
         _api_create(
@@ -422,11 +425,7 @@ def test_cli_refuses_slash_names_against_a_server_that_would_misroute_them(
     command: list[str],
 ) -> None:
     def respond(handler: _Recorder) -> None:
-        if handler.path.endswith("/master_password/check"):
-            handler.send(200, {"valid": True, "key_derivation": "K" * 43 + "="})
-        elif handler.path.endswith("/meta"):
-            handler.send(200, {"version": "1.4.6"})
-        else:
+        if not _answer_unlock(handler, "v1.4.6"):
             handler.send(200, {})
 
     with _fake_server(respond) as (api, requests):
@@ -447,7 +446,7 @@ async def test_cli_explains_an_entry_it_cannot_open_by_name(
 ) -> None:
     await db_execute(
         "INSERT INTO passwords (password_name, password_value) VALUES ('trash', :v)",
-        v=encrypt(key["x-ciphermoth-key-derivation"], b"legacy-v"),
+        v=encrypt(await stored_vault_key(), b"legacy-v"),
     )
     for command in ("get", "update"):
         result = cli(api, "password", command, "trash")
@@ -566,19 +565,63 @@ def _fake_server(respond: Callable[[_Recorder], None]) -> Iterator[tuple[str, li
         server.server_close()
 
 
-@pytest.mark.parametrize("redirect_check", [False, True])
+TOKEN = "T" * 43
+FAKE_KEY = "K" * 43 + "="
+SERVERS = {
+    "v1.4.6": {"version": "1.4.6"},
+    "v1.4.7": {"version": "1.4.7", "features": ["entry-names-with-slash"]},
+    "sessions": {
+        "version": "1.5.0",
+        "features": ["entry-names-with-slash", "vault-sessions", "legacy-key-auth"],
+    },
+}
+
+
+def _answer_unlock(handler: _Recorder, server: str) -> bool:
+    path = handler.path
+    sessions = "vault-sessions" in SERVERS[server].get("features", [])
+    if path.endswith("/meta"):
+        handler.send(200, SERVERS[server])
+    elif path.endswith("/master_password/unlock"):
+        if sessions:
+            handler.send(200, {"valid": True, "session_token": TOKEN})
+        else:
+            handler.send(404, {"detail": "Not Found"})
+    elif path.endswith("/master_password/check"):
+        handler.send(200, {"valid": True, "key_derivation": FAKE_KEY})
+    elif path.endswith("/master_password/lock") and sessions:
+        handler.send(200, {"locked": True})
+    else:
+        return False
+    return True
+
+
+def _lower(headers: dict) -> dict:
+    return {name.lower(): value for name, value in headers.items()}
+
+
+@pytest.mark.parametrize("server", sorted(SERVERS))
+@pytest.mark.parametrize("redirect_unlock", [False, True])
 def test_cli_never_follows_redirects_with_the_key_or_password(
-    redirect_check: bool,
+    redirect_unlock: bool, server: str
 ) -> None:
     with _fake_server(lambda handler: handler.send(200, [])) as (evil, evil_requests):
 
         def respond(handler: _Recorder) -> None:
-            if redirect_check or not handler.path.endswith("/master_password/check"):
+            unlocking = handler.path.endswith(
+                ("/master_password/check", "/master_password/unlock")
+            )
+            legacy_probe = server != "sessions" and handler.path.endswith("/unlock")
+            if (
+                handler.path.endswith("/meta")
+                or legacy_probe
+                or (unlocking and not redirect_unlock)
+            ):
+                _answer_unlock(handler, server)
+            else:
                 handler.send(
                     307, b"", location=f"{evil.removesuffix('/api')}{handler.path}"
                 )
-            else:
-                handler.send(200, {"valid": True, "key_derivation": "K" * 43 + "="})
 
         with _fake_server(respond) as (api, _):
             result = runner.invoke(
@@ -590,6 +633,225 @@ def test_cli_never_follows_redirects_with_the_key_or_password(
 
     assert result.exit_code == 1
     assert evil_requests == []
+
+
+def test_cli_uses_a_session_and_locks_it_when_the_command_ends() -> None:
+    def respond(handler: _Recorder) -> None:
+        if _answer_unlock(handler, "sessions"):
+            return
+        if handler.path.endswith("/passwords/missing"):
+            handler.send(404, {"detail": "No password found."})
+        else:
+            handler.send(200, [])
+
+    with _fake_server(respond) as (api, requests):
+        for command in (["list"], ["get", "missing"]):
+            runner.invoke(
+                cli_app,
+                ["password", *command],
+                input=MASTER_PASSWORD + "\n",
+                env={"CIPHERMOTH_API_URL": api},
+            )
+
+    paths = [path.removeprefix("/api") for _, path, _ in requests]
+    assert paths == [
+        "/meta",
+        "/master_password/unlock",
+        "/passwords",
+        "/master_password/lock",
+        "/meta",
+        "/master_password/unlock",
+        "/passwords/missing",
+        "/master_password/lock",
+    ]
+    for _, path, headers in requests:
+        headers = _lower(headers)
+        assert "x-ciphermoth-key-derivation" not in headers
+        assert "authorization" not in headers
+        if path.endswith(("/passwords", "/missing", "/lock")):
+            assert headers["x-ciphermoth-session"] == TOKEN
+
+
+@pytest.mark.parametrize("server", ["v1.4.6", "v1.4.7"])
+def test_cli_uses_the_vault_key_with_servers_that_predate_sessions(
+    server: str,
+) -> None:
+    def respond(handler: _Recorder) -> None:
+        if not _answer_unlock(handler, server):
+            handler.send(200, [])
+
+    with _fake_server(respond) as (api, requests):
+        result = runner.invoke(
+            cli_app,
+            ["password", "list"],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": api},
+        )
+
+    assert result.exit_code == 0, result.output
+    paths = [path.removeprefix("/api") for _, path, _ in requests]
+    assert paths == [
+        "/meta",
+        "/master_password/unlock",
+        "/master_password/check",
+        "/passwords",
+    ]
+    headers = _lower(requests[-1][2])
+    assert headers["x-ciphermoth-key-derivation"] == FAKE_KEY
+    assert "x-ciphermoth-session" not in headers
+
+
+@pytest.mark.parametrize("meta", ["unreachable", "broken"])
+def test_cli_does_not_fall_back_to_the_vault_key_when_meta_fails(meta: str) -> None:
+    def respond(handler: _Recorder) -> None:
+        if handler.path.endswith("/meta"):
+            if meta == "broken":
+                handler.send(502, b"<html>bad gateway</html>")
+            else:
+                handler.send(500, {"detail": "boom"})
+        elif not _answer_unlock(handler, "sessions"):
+            handler.send(200, [])
+
+    with _fake_server(respond) as (api, requests):
+        result = runner.invoke(
+            cli_app,
+            ["password", "list"],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": api},
+        )
+
+    assert result.exit_code == 0, result.output
+    paths = [path.removeprefix("/api") for _, path, _ in requests]
+    assert "/master_password/check" not in paths
+    assert all("x-ciphermoth-key-derivation" not in _lower(h) for _, _, h in requests)
+
+
+def test_cli_keeps_credentials_in_the_url_for_a_proxy() -> None:
+    def respond(handler: _Recorder) -> None:
+        if not _answer_unlock(handler, "sessions"):
+            handler.send(200, [])
+
+    with _fake_server(respond) as (api, requests):
+        proxied = api.replace("http://", "http://moth:proxy-pass@")
+        result = runner.invoke(
+            cli_app,
+            ["password", "list"],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": proxied},
+        )
+
+    assert result.exit_code == 0, result.output
+    listing = next(h for _, path, h in requests if path.endswith("/passwords"))
+    assert _lower(listing)["authorization"].startswith("Basic ")
+    assert _lower(listing)["x-ciphermoth-session"] == TOKEN
+
+
+@pytest.mark.parametrize("expires_again", [False, True])
+def test_cli_unlocks_again_once_when_its_session_ends_mid_command(
+    expires_again: bool,
+) -> None:
+    listings = 0
+
+    def respond(handler: _Recorder) -> None:
+        nonlocal listings
+        if _answer_unlock(handler, "sessions"):
+            return
+        listings += 1
+        if listings == 1 or expires_again:
+            handler.send(
+                401,
+                {"detail": "Your session expired.", "code": "invalid_session"},
+            )
+        else:
+            handler.send(200, [])
+
+    with _fake_server(respond) as (api, requests):
+        result = runner.invoke(
+            cli_app,
+            ["password", "list"],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": api},
+        )
+
+    paths = [path.removeprefix("/api") for _, path, _ in requests]
+    assert paths.count("/master_password/unlock") == 2
+    assert paths.count("/passwords") == 2
+    assert paths[-1] == "/master_password/lock"
+    if expires_again:
+        assert result.exit_code == 1
+        assert "Your session expired." in result.output
+    else:
+        assert result.exit_code == 0, result.output
+
+
+async def test_cli_ends_its_sessions_on_the_live_server(
+    api: str, live_server_log: Path
+) -> None:
+    log_start = live_server_log.stat().st_size
+    ok(cli(api, "password", "list"))
+    result = cli(api, "password", "get", "does-not-exist")
+    assert result.exit_code == 1
+
+    log = live_server_log.read_bytes()[log_start:].decode(errors="replace")
+    assert log.count("POST /api/master_password/unlock") == 2
+    assert log.count("POST /api/master_password/lock") == 2
+    assert "/master_password/check" not in log
+
+
+def _old_cli() -> typer.Typer:
+    path = Path(__file__).resolve().parents[2] / "testdata/clients/cli_v1_4_7.py"
+    spec = importlib.util.spec_from_file_location("ciphermoth_cli_v1_4_7", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.app
+
+
+def old_cli(api: str, *args: str, answers: list[str] | None = None) -> Result:
+    lines = [MASTER_PASSWORD, *(answers or [])]
+    return runner.invoke(
+        _old_cli(),
+        list(args),
+        input="\n".join(lines) + "\n",
+        env={"CIPHERMOTH_API_URL": api, "COLUMNS": "200"},
+    )
+
+
+async def test_the_v147_cli_still_works_against_this_server(
+    api: str, tmp_path: Path
+) -> None:
+    ok(
+        old_cli(
+            api,
+            "password",
+            "create",
+            "from-old-cli",
+            answers=["old-cli-Pass-1", "old-cli-Pass-1", "moth", "", "", "", ""],
+        )
+    )
+    assert "from-old-cli" in ok(old_cli(api, "password", "list"))
+    assert "old-cli-Pass-1" in ok(old_cli(api, "password", "get", "from-old-cli"))
+    assert "old-cli-Pass-1" in ok(cli(api, "password", "get", "from-old-cli"))
+    ok(old_cli(api, "backup", "--out", str(tmp_path)))
+    ok(old_cli(api, "password", "delete", "from-old-cli", "--yes"))
+    assert "from-old-cli" in ok(cli(api, "password", "trash"))
+
+
+async def test_the_v147_cli_is_told_to_update_once_legacy_keys_are_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CIPHERMOTH_LEGACY_KEY_AUTH", "false")
+    with api_server(tmp_path / "server.log") as server:
+        resp = httpx.post(
+            f"{server.base_url}/master_password/create",
+            json={"master_password": MASTER_PASSWORD},
+        )
+        assert resp.status_code == 200
+        result = old_cli(server.base_url, "password", "list")
+        assert result.exit_code == 1
+        assert "no longer accepts the vault key" in result.output
+        assert "Traceback" not in result.output
+        assert "The vault is empty" in ok(cli(server.base_url, "password", "list"))
 
 
 @pytest.mark.parametrize(
@@ -741,13 +1003,9 @@ async def test_cli_reports_renamed_records(api: str, tmp_path: Path) -> None:
 
 def test_cli_names_the_entry_on_every_entry_request() -> None:
     def respond(handler: _Recorder) -> None:
-        if handler.path.endswith("/master_password/check"):
-            handler.send(200, {"valid": True, "key_derivation": "K" * 43 + "="})
-        elif handler.path.endswith("/meta"):
-            handler.send(
-                200, {"version": "1.4.7", "features": ["entry-names-with-slash"]}
-            )
-        elif handler.command == "GET":
+        if _answer_unlock(handler, "v1.4.7"):
+            return
+        if handler.command == "GET":
             handler.send(200, {"password_name": "x/purge", "password_value": "v"})
         else:
             handler.send(200, {})
