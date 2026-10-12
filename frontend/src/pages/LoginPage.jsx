@@ -9,6 +9,7 @@ import PasswordField from "../components/PasswordField";
 import ThemeToggle from "../components/ThemeToggle";
 import { getMasterPasswordStrength } from "../lib/passwordStrength";
 import { GLOW, GLOW_SOFT, INK, WARN } from "../lib/brand";
+import { LOGOUT_NOTICE } from "../utils";
 
 const unlockButtonSx = {
   bgcolor: GLOW,
@@ -23,7 +24,7 @@ const unlockButtonSx = {
 const LoginPage = () => {
   const { enqueueSnackbar } = useSnackbar();
 
-  const { fetchStatus, check, create, setValue, setConfirm, setError } = useStoreActions(
+  const { fetchStatus, unlock, create, setValue, setConfirm, setError } = useStoreActions(
     (a) => a.ciphermothModels.masterPassword
   );
   const { initialized, error, value, confirm, loading } = useStoreState(
@@ -32,9 +33,9 @@ const LoginPage = () => {
 
   useEffect(() => {
     fetchStatus();
-    const notice = sessionStorage.getItem("logout_notice");
+    const notice = sessionStorage.getItem(LOGOUT_NOTICE);
     if (notice) {
-      sessionStorage.removeItem("logout_notice");
+      sessionStorage.removeItem(LOGOUT_NOTICE);
       enqueueSnackbar(notice, { variant: "info" });
     }
   }, [fetchStatus, enqueueSnackbar]);
@@ -52,7 +53,7 @@ const LoginPage = () => {
       enqueueSnackbar("Please enter your master password.", { variant: "error" });
       return;
     }
-    check({ master_password: value });
+    unlock({ master_password: value });
   };
 
   const handleCreate = () => {

@@ -4,10 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client";
 import { routes } from "../test/adapter";
 import { stubBrowser } from "../test/globals";
-import { setKeyDerivation } from "../utils";
+import { setSessionToken } from "../utils";
 import Passwords from "./passwords";
 
-const KEY = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY=";
+const TOKEN = "kM3x1y8Qe0bWv7c2Z9pL4tR6sN5aH1jD0fG3uY8iO2w";
 const RESULT = { imported: 2, skipped: 1, overwritten: 0, total: 3 };
 const originalAdapter = apiClient.defaults.adapter;
 
@@ -27,7 +27,7 @@ const fields = (formData) => Object.fromEntries(formData.entries());
 beforeEach(() => {
   vi.unstubAllGlobals();
   stubBrowser();
-  setKeyDerivation(KEY);
+  setSessionToken(TOKEN);
 });
 
 afterEach(() => {
@@ -49,7 +49,8 @@ describe("imports", () => {
     expect(sent.master_password).toBe("Moth-Test-Vault-2026!");
     expect(sent.on_conflict).toBe("skip");
     expect(sent.file.name).toBe("backup.zip");
-    expect(request.headers["x-ciphermoth-key-derivation"]).toBe(KEY);
+    expect(request.headers["x-ciphermoth-session"]).toBe(TOKEN);
+    expect(request.headers["x-ciphermoth-key-derivation"]).toBeUndefined();
     expect(`${refresh.method} ${refresh.url}`).toBe("get /passwords");
   });
 

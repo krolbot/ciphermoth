@@ -7,6 +7,9 @@ import "@fontsource/space-mono/700.css";
 
 import App from "./App";
 import { store } from "./store";
+import { forgetLegacyKey } from "./utils";
+
+forgetLegacyKey();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 

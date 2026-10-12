@@ -15,7 +15,8 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import { useStoreActions, useStoreState } from "easy-peasy";
 
-import { isAuth, removeKeyDerivation } from "../utils";
+import { endSession } from "../api/session";
+import { isAuth } from "../utils";
 import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
 import { GLOW } from "../lib/brand";
 import EnvBadge from "./EnvBadge";
@@ -45,10 +46,7 @@ const TopMenu = () => {
     if (userIsAuth && updateCheckEnabled) checkForUpdates();
   }, [userIsAuth, updateCheckEnabled, checkForUpdates]);
 
-  const handleLogout = () => {
-    removeKeyDerivation();
-    window.location.replace("/login");
-  };
+  const handleLogout = () => endSession();
 
   return (
     <AppBar

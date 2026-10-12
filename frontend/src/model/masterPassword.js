@@ -2,7 +2,7 @@ import { action, thunk } from "easy-peasy";
 
 import apiClient from "../api/client";
 import { errorDetail } from "../lib/http";
-import { setKeyDerivation } from "../utils";
+import { setSessionToken } from "../utils";
 
 const MasterPassword = {
   initialized: null,
@@ -36,13 +36,13 @@ const MasterPassword = {
     }
   }),
 
-  check: thunk(async (actions, masterPasswordPayload) => {
+  unlock: thunk(async (actions, masterPasswordPayload) => {
     actions.setError(null);
     actions.setLoading(true);
     try {
-      const { data } = await apiClient.post("/master_password/check", masterPasswordPayload);
-      if (data.valid && data.key_derivation) {
-        setKeyDerivation(data.key_derivation);
+      const { data } = await apiClient.post("/master_password/unlock", masterPasswordPayload);
+      if (data.valid && data.session_token) {
+        setSessionToken(data.session_token);
         window.location.replace("/passwords");
       } else {
         actions.setError("Invalid master password.");
@@ -63,7 +63,12 @@ const MasterPassword = {
     actions.setLoading(true);
     try {
       const { data } = await apiClient.post("/master_password/create", masterPasswordPayload);
-      setKeyDerivation(data.key_derivation);
+      if (!data.session_token) {
+        actions.setError("The vault was created, but it could not be unlocked. Unlock it now.");
+        actions.setInitialized(true);
+        return;
+      }
+      setSessionToken(data.session_token);
       window.location.replace("/passwords");
     } catch (err) {
       actions.setError(await errorDetail(err, "An error occurred."));

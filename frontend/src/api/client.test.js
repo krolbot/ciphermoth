@@ -2,11 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { replyWith } from "../test/adapter";
 import { stubBrowser } from "../test/globals";
-import { getKeyDerivation, isAuth, removeKeyDerivation, setKeyDerivation } from "../utils";
-import apiClient from "./client";
+import {
+  LOGOUT_NOTICE,
+  clearSession,
+  forgetLegacyKey,
+  getSessionToken,
+  isAuth,
+  setSessionToken,
+} from "../utils";
+import apiClient, { SESSION_ENDED } from "./client";
 
-const KEY = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY=";
-const HEADER = "x-ciphermoth-key-derivation";
+const TOKEN = "kM3x1y8Qe0bWv7c2Z9pL4tR6sN5aH1jD0fG3uY8iO2w";
+const LEGACY_KEY = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY=";
 
 let browser;
 
@@ -23,82 +30,115 @@ const failWith = async (status, data) => {
   return error;
 };
 
-describe("session key helpers", () => {
-  it("stores, reads and removes the key in sessionStorage only", () => {
+describe("session helpers", () => {
+  it("keeps only the session token in sessionStorage", () => {
     expect(isAuth()).toBe(false);
-    setKeyDerivation(KEY);
+    setSessionToken(TOKEN);
     expect(isAuth()).toBe(true);
-    expect(getKeyDerivation()).toBe(KEY);
-    expect(browser.storage.getItem("keyDerivation")).toBe(KEY);
-    removeKeyDerivation();
+    expect(getSessionToken()).toBe(TOKEN);
+    expect(browser.storage.entries()).toEqual({ ciphermothSession: TOKEN });
+    clearSession();
+    expect(isAuth()).toBe(false);
+    expect(browser.storage.entries()).toEqual({});
+  });
+
+  it("ignores empty tokens", () => {
+    setSessionToken("");
+    setSessionToken(undefined);
     expect(isAuth()).toBe(false);
   });
 
-  it("ignores empty keys", () => {
-    setKeyDerivation("");
-    setKeyDerivation(undefined);
+  it("forgets a vault key left behind by an older release", () => {
+    browser.storage.setItem("keyDerivation", LEGACY_KEY);
+    forgetLegacyKey();
+    expect(browser.storage.entries()).toEqual({});
+    browser.storage.setItem("keyDerivation", LEGACY_KEY);
     expect(isAuth()).toBe(false);
+    clearSession();
+    expect(browser.storage.entries()).toEqual({});
   });
 });
 
 describe("request interceptor", () => {
-  it("sends the vault key header when unlocked", async () => {
-    setKeyDerivation(KEY);
+  it("sends the session token in its own header when unlocked", async () => {
+    setSessionToken(TOKEN);
     const seen = [];
     await apiClient.get("/passwords", { adapter: replyWith(200, [], seen) });
-    expect(seen[0].headers[HEADER]).toBe(KEY);
+    expect(seen[0].headers["x-ciphermoth-session"]).toBe(TOKEN);
+    expect(seen[0].headers.Authorization).toBeUndefined();
+    expect(seen[0].headers["x-ciphermoth-key-derivation"]).toBeUndefined();
   });
 
-  it("sends no key header when locked", async () => {
+  it("never sends a vault key left in storage", async () => {
+    browser.storage.setItem("keyDerivation", LEGACY_KEY);
+    const seen = [];
+    await apiClient.get("/meta", { adapter: replyWith(200, {}, seen) });
+    expect(JSON.stringify(seen[0].headers)).not.toContain(LEGACY_KEY);
+  });
+
+  it("sends no credential when locked", async () => {
     const seen = [];
     await apiClient.get("/master_password/status", { adapter: replyWith(200, {}, seen) });
-    expect(seen[0].headers[HEADER]).toBeUndefined();
+    expect(seen[0].headers["x-ciphermoth-session"]).toBeUndefined();
+  });
+
+  it("keeps an explicit session header", async () => {
+    setSessionToken(TOKEN);
+    const seen = [];
+    await apiClient.post("/master_password/lock", null, {
+      adapter: replyWith(200, {}, seen),
+      headers: { "x-ciphermoth-session": "other" },
+    });
+    expect(seen[0].headers["x-ciphermoth-session"]).toBe("other");
   });
 });
 
 describe("response interceptor", () => {
-  it("locks and reloads on an invalid_key 403", async () => {
-    setKeyDerivation(KEY);
-    const error = await failWith(403, {
-      detail: "Invalid or expired vault key.",
-      code: "invalid_key",
-    });
-    expect(error.response.data.code).toBe("invalid_key");
+  it.each([
+    ["an ended session", 401, { detail: "expired", code: "invalid_session" }],
+    ["a rejected vault key", 403, { detail: "Invalid key.", code: "invalid_key" }],
+  ])("locks and reloads on %s", async (_, status, data) => {
+    setSessionToken(TOKEN);
+    const error = await failWith(status, data);
+    expect(error.response.data.code).toBe(data.code);
     expect(isAuth()).toBe(false);
+    expect(browser.storage.entries()).toEqual({ [LOGOUT_NOTICE]: SESSION_ENDED });
     expect(browser.location.reload).toHaveBeenCalledTimes(1);
   });
 
   it("reads the code from a Blob body as well", async () => {
-    setKeyDerivation(KEY);
-    const body = new Blob([JSON.stringify({ detail: "x", code: "invalid_key" })], {
+    setSessionToken(TOKEN);
+    const body = new Blob([JSON.stringify({ detail: "x", code: "invalid_session" })], {
       type: "application/json",
     });
-    await failWith(403, body);
+    await failWith(401, body);
     expect(isAuth()).toBe(false);
     expect(browser.location.reload).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    ["a 403 without the code", 403, { detail: "Incorrect master password." }],
+    ["a 403 without a code", 403, { detail: "Incorrect master password." }],
     ["a 403 with another code", 403, { detail: "x", code: "other" }],
+    ["a 403 with the session code", 403, { code: "invalid_session" }],
+    ["a 401 with the key code", 401, { code: "invalid_key" }],
+    ["a 401 without a code", 401, { detail: "Unauthorized" }],
     ["a 403 with a non-JSON Blob", 403, new Blob(["<html>"])],
-    ["a 401", 401, { code: "invalid_key" }],
     ["a 500", 500, { detail: "An internal server error occurred." }],
     ["a 429", 429, { detail: "Too many attempts." }],
   ])("keeps the session on %s", async (_, status, data) => {
-    setKeyDerivation(KEY);
+    setSessionToken(TOKEN);
     await failWith(status, data);
-    expect(getKeyDerivation()).toBe(KEY);
+    expect(getSessionToken()).toBe(TOKEN);
     expect(browser.location.reload).not.toHaveBeenCalled();
   });
 
   it("does not reload when the vault is already locked", async () => {
-    await failWith(403, { code: "invalid_key" });
+    await failWith(401, { code: "invalid_session" });
     expect(browser.location.reload).not.toHaveBeenCalled();
   });
 
   it("passes successful responses through untouched", async () => {
-    setKeyDerivation(KEY);
+    setSessionToken(TOKEN);
     const { data } = await apiClient.get("/meta", { adapter: replyWith(200, { version: "1" }) });
     expect(data).toEqual({ version: "1" });
     expect(isAuth()).toBe(true);

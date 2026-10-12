@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 
-import { isAuth, removeKeyDerivation } from "../utils";
+import { endSession, touchSession } from "../api/session";
+import { isAuth } from "../utils";
 
 const CountdownMessage = ({ seconds }) => {
   const [remaining, setRemaining] = useState(seconds);
@@ -15,6 +16,7 @@ const CountdownMessage = ({ seconds }) => {
 };
 
 const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+const HEARTBEAT_MS = 30_000;
 
 const useAutoLogout = () => {
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -30,16 +32,21 @@ const useAutoLogout = () => {
   const hiddenRef = useRef(null);
   const warnKeyRef = useRef(null);
   const lastResetRef = useRef(0);
+  const lastHeartbeatRef = useRef(Date.now());
 
   const logout = useCallback(() => {
     clearTimeout(inactivityRef.current);
     clearTimeout(warnRef.current);
     clearTimeout(hiddenRef.current);
     if (warnKeyRef.current) closeSnackbar(warnKeyRef.current);
-    removeKeyDerivation();
-    sessionStorage.setItem("logout_notice", "Logged out due to inactivity.");
-    window.location.replace("/login");
+    endSession("Logged out due to inactivity.");
   }, [closeSnackbar]);
+
+  const heartbeat = useCallback((now) => {
+    if (now - lastHeartbeatRef.current < HEARTBEAT_MS) return;
+    lastHeartbeatRef.current = now;
+    touchSession();
+  }, []);
 
   const reset = useCallback(() => {
     if (!isAuth()) return;
@@ -47,6 +54,7 @@ const useAutoLogout = () => {
     const now = Date.now();
     if (now - lastResetRef.current < debounceMs) return;
     lastResetRef.current = now;
+    heartbeat(now);
 
     clearTimeout(inactivityRef.current);
     clearTimeout(warnRef.current);
@@ -64,7 +72,7 @@ const useAutoLogout = () => {
     }, inactivityMs - warnBeforeMs);
 
     inactivityRef.current = setTimeout(logout, inactivityMs);
-  }, [inactivityMs, warnBeforeMs, debounceMs, enqueueSnackbar, closeSnackbar, logout]);
+  }, [inactivityMs, warnBeforeMs, debounceMs, enqueueSnackbar, closeSnackbar, logout, heartbeat]);
 
   useEffect(() => {
     if (!isAuth()) return;
@@ -89,6 +97,8 @@ const useAutoLogout = () => {
         if (!isAuth()) {
           logout();
         } else {
+          lastHeartbeatRef.current = Date.now();
+          touchSession();
           reset();
         }
       }

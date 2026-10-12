@@ -7,6 +7,7 @@ export const memoryStorage = () => {
     setItem: (key, value) => items.set(key, String(value)),
     removeItem: (key) => items.delete(key),
     clear: () => items.clear(),
+    entries: () => Object.fromEntries(items),
   };
 };
 
