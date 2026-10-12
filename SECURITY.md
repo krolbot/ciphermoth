@@ -29,10 +29,28 @@ Things that are out of scope:
 So you can judge reports (and your own deployment) against what CipherMoth actually does:
 
 - The master password is only ever stored as a bcrypt hash. The vault key is derived from it with Argon2id and is never written to disk or logs.
-- When you unlock, the server keeps the vault key in its own memory and gives your browser (or the CLI) a random session token instead. Only a SHA-256 digest of the token is kept. Every request checks the session, then checks its key against an encrypted check value in the vault. Sessions end after the configured inactivity timeout (plus one minute), after 12 hours at most, on logout, when the master password changes, and when the server restarts; nothing about them is written to disk or logs. The inactivity timeout is a vault setting, so anyone holding a session can raise it (to 60 minutes at most); the 12-hour limit cannot be changed. While you're using the vault, the server process sees your secrets in plaintext, and Python cannot reliably erase a key from memory after a session ends.
-- Clients from v1.4.x and earlier still receive the vault key itself and send it back with every request. Until v1.6.0 the server accepts that so older CLIs and open browser tabs keep working; `CIPHERMOTH_LEGACY_KEY_AUTH=false` turns it off now.
+- When you unlock, the server keeps the vault key in its own memory and gives your browser (or the CLI) a random session token instead. Only a SHA-256 digest of the token is kept. Every request checks the session, then checks its key against an encrypted check value in the vault. Sessions end after the configured inactivity timeout (plus at most 5 seconds for request latency), after 12 hours at most, on logout, when the master password changes, and when the server restarts; nothing about them is written to disk or logs. The inactivity timeout is a vault setting, so anyone holding a session can raise it (to 60 minutes at most); the 12-hour limit cannot be changed. While you're using the vault, the server process sees your secrets in plaintext, and Python cannot reliably erase a key from memory after a session ends.
+- The modern web UI and CLI never receive the vault key, but the deprecated `/check` route still returns it to any client that sends the correct master password, and accepts it back in the `x-ciphermoth-key-derivation` header, so that v1.4.x CLIs and open browser tabs keep working until v1.6.0, when both are removed. `CIPHERMOTH_LEGACY_KEY_AUTH=false` turns them off now (installs from before v1.5.0 must also add that variable to their own compose file; `/api/meta` stops listing `legacy-key-auth` once it is off).
 - Passwords, notes, URLs, 2FA secrets, tags, folders, custom fields, password history and attachments are encrypted in the database. Entry **names, usernames and descriptions are not** (nor the entry type, favorite flag, timestamps and attachment sizes), so a copy of the database reveals which entries you have and their usernames.
 - Backup ZIPs are AES-256 encrypted with your master password, but the ZIP format derives that key with PBKDF2-SHA1 at 1,000 iterations. A stolen backup is much cheaper to brute-force than the vault itself.
+
+## Where the web UI keeps its session, and why
+
+The browser keeps the session token in `sessionStorage` and sends it in an `x-ciphermoth-session` header. JavaScript running in the page can read it, so a cross-site scripting (XSS) bug could steal it. We considered an `HttpOnly`, `Secure`, `SameSite` cookie instead and decided against it for now:
+
+- **It would not contain an XSS bug.** Injected script runs inside the unlocked UI, so it can call the API with the cookie and read every decrypted password directly. An `HttpOnly` cookie only stops it from copying the token for later use elsewhere, and a stolen token is already limited to the session's inactivity timeout and 12 hours.
+- **It would break real deployments.** The UI and API are separate origins (ports 3000 and 8000 by default, often separate host names). Cookies across them need credentialed CORS. `Secure` cookies are dropped on the plain-`http` LAN addresses many people use. Browsers increasingly block cookies between unrelated sites.
+- **It would add risks the header doesn't have.** Cookies are sent automatically, so every state-changing route would need cross-site request forgery (CSRF) protection; a custom header can't be sent cross-site without CORS approval. The CLI would still need the header, so there would be two authentication paths to keep correct.
+
+What limits XSS instead:
+
+- **A strict Content-Security-Policy.** No inline or remote scripts, no `eval`. Connections only to the UI's own origin, its API and GitHub's release address. Images only from the UI.
+- **No HTML sinks.** The UI renders all text through React, and lint rules reject `innerHTML`, `dangerouslySetInnerHTML`, `eval` and similar sinks.
+- **Little to steal.** The token is per tab, never in a URL, removed on logout and auto-lock, and useless after the session ends. API responses are `no-store`.
+
+A policy cannot stop injected code from navigating the tab to another site with the token in the address, or from using WebRTC, and it ignores query strings on the allowed GitHub address; that is one more reason the UI accepts no HTML from anywhere.
+
+Two session details worth knowing: closing a tab without logging out leaves its session open on the server until the inactivity timeout (a browser's "reopen closed tab" can restore it until then), and a duplicated tab shares the original's session, so logging out in one locks both.
 
 ## Updates and the supply chain
 

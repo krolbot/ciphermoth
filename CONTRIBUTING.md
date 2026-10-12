@@ -69,6 +69,8 @@ What the suite protects, and where:
 | Every route rejects missing, forged, expired and locked sessions and forged or stale legacy keys | `test_authz.py`, `test_vault_key.py`, `test_adversarial.py` |
 | Vault sessions expire, lock, end on rotation and survive races | `test_sessions.py` |
 | Old and new CLIs work with old and new servers | `test_cli.py`, with the released v1.4.7 CLI frozen in `testdata/clients` |
+| The frontend image validates its API URL and renders its CSP | `docker/frontend/runtime-config.test.mjs` (part of `make test`) |
+| The CSP lets the UI reach its API and blocks every other destination | `docker/frontend/browser/csp.browser.test.mjs`, run with `make test-browser` (builds the image, drives Chromium) |
 | Old vaults still open, upgrade and restore | `test_golden.py` with the fixtures in [`testdata/golden`](testdata/golden/README.md) |
 | Cryptography is byte-compatible | `test_vectors.py` with [`testdata/vectors`](testdata/vectors/README.md), shared with `frontend/src/lib/totp.test.js` |
 | Imports cannot damage a vault | `test_imports.py` (including Hypothesis property tests), `test_hostile_files.py` |
@@ -120,13 +122,13 @@ Everything is optional, the defaults work fine for local use.
 | `DISABLE_DOCS` | `false` | Set `true` to hide `/docs` and `/redoc` |
 | `DEBUG` | `false` | FastAPI debug mode |
 | `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
-| `CIPHERMOTH_LEGACY_KEY_AUTH` | `true` | Set `false` to refuse clients from v1.4.x and earlier, which receive the vault key and send it back with every request. This compatibility is removed in v1.6.0 |
+| `CIPHERMOTH_LEGACY_KEY_AUTH` | `true` | Set `false` to refuse clients from v1.4.x and earlier, which receive the vault key and send it back with every request. This compatibility is removed in v1.6.0. Compose files from before v1.5.0 don't pass it on; add it to the backend's `environment` and confirm `/api/meta` no longer lists `legacy-key-auth` |
 
 **Frontend:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_API_URL` | `http://localhost:8000/api` | Backend API base URL |
+| `VITE_API_URL` | `http://localhost:8000/api` | Backend API base URL: an `http(s)` URL without user name, query or fragment, or a path such as `/api` when a proxy serves the API on the UI's own origin. The image allows browser connections only to this origin (plus GitHub's release address for the update check) and refuses to start if the value is not a plain URL or path. With an IPv6 address the policy can only restrict the scheme (`http:`/`https:`), so prefer a host name. In Compose it comes from `CIPHERMOTH_API_URL` |
 
 **CLI:**
 

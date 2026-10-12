@@ -104,10 +104,13 @@ How it works:
   attachment sizes. Someone with the database can see which entries you have and the usernames on them, just not the
   passwords. Encrypting those too is planned;
 - when you unlock, the server derives the key and keeps it in memory for a **session**; your browser only gets a
-  random session token (kept in `sessionStorage`, gone when you close the tab), never the key. The server ends the
-  session after the inactivity timeout from Settings, when you log out, when the master password changes, and when it
-  restarts, and never stores or logs the key or the token. So while you're using the vault, the server does see your
-  passwords: run it on a machine you trust;
+  random session token (kept in `sessionStorage` for that tab), never the key. The server ends the session after the
+  inactivity timeout from Settings, when you log out, when the master password changes, and when it restarts (closing
+  a tab without logging out leaves its session until the timeout), and never stores or logs the key or the token. Until v1.6.0 a v1.4.x CLI or browser tab can still ask for
+  the key the old way (it needs the master password); `CIPHERMOTH_LEGACY_KEY_AUTH=false` turns that off. While you're
+  using the vault, the server does see your passwords: run it on a machine you trust;
+- a strict Content-Security-Policy restricts the web UI to connecting to its own API (and GitHub's release address
+  for the update check);
 - backups are AES-256 encrypted ZIPs locked with your master password, but the ZIP format derives that key with
   PBKDF2-SHA1 at 1,000 iterations, which is far cheaper to brute-force than the vault itself. Keep backup files
   somewhere safe, and use a strong master password. A backup holds your active entries only, not the trash, password
