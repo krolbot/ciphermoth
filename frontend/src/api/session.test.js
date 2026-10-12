@@ -4,7 +4,7 @@ import { routes } from "../test/adapter";
 import { stubBrowser } from "../test/globals";
 import { LOGOUT_NOTICE, isAuth, setSessionToken } from "../utils";
 import apiClient from "./client";
-import { endSession, touchSession } from "./session";
+import { endSession, readSession, touchSession } from "./session";
 
 const TOKEN = "kM3x1y8Qe0bWv7c2Z9pL4tR6sN5aH1jD0fG3uY8iO2w";
 const originalAdapter = apiClient.defaults.adapter;
@@ -61,25 +61,50 @@ describe("ending a session", () => {
 });
 
 describe("keeping a session alive", () => {
-  it("asks the server, which refreshes the session", async () => {
+  it("reports activity with a POST, which refreshes the session", async () => {
     apiClient.defaults.adapter = routes(
-      { "GET /master_password/session": [200, { idle_timeout_ms: 180000 }] },
+      { "POST /master_password/session": [200, { idle_timeout_ms: 120000 }] },
       seen
     );
     setSessionToken(TOKEN);
-    await touchSession();
+    await expect(touchSession()).resolves.toEqual({ idle_timeout_ms: 120000 });
+    expect(seen[0].method).toBe("post");
     expect(seen[0].headers["x-ciphermoth-session"]).toBe(TOKEN);
     expect(seen[0].headers.Authorization).toBeUndefined();
   });
 
   it("lets the interceptor lock the vault when the server already ended it", async () => {
     apiClient.defaults.adapter = routes(
+      { "POST /master_password/session": [401, { code: "invalid_session" }] },
+      seen
+    );
+    setSessionToken(TOKEN);
+    await expect(touchSession()).resolves.toBeNull();
+    expect(isAuth()).toBe(false);
+    expect(browser.location.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reading the session", () => {
+  it("uses a GET, which the server does not count as activity", async () => {
+    apiClient.defaults.adapter = routes(
+      {
+        "GET /master_password/session": [200, { idle_timeout_ms: 120000, expires_in_ms: 40000 }],
+      },
+      seen
+    );
+    setSessionToken(TOKEN);
+    await expect(readSession()).resolves.toEqual({ idle_timeout_ms: 120000, expires_in_ms: 40000 });
+    expect(seen[0].method).toBe("get");
+  });
+
+  it("returns nothing when the session has ended", async () => {
+    apiClient.defaults.adapter = routes(
       { "GET /master_password/session": [401, { code: "invalid_session" }] },
       seen
     );
     setSessionToken(TOKEN);
-    await expect(touchSession()).resolves.toBeUndefined();
+    await expect(readSession()).resolves.toBeNull();
     expect(isAuth()).toBe(false);
-    expect(browser.location.reload).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,7 +3,17 @@ import apiClient, { SESSION_HEADER } from "./client";
 
 const LOCK_TIMEOUT_MS = 3000;
 
-export const touchSession = () => apiClient.get("/master_password/session").catch(() => undefined);
+export const touchSession = () =>
+  apiClient
+    .post("/master_password/session")
+    .then(({ data }) => data)
+    .catch(() => null);
+
+export const readSession = () =>
+  apiClient
+    .get("/master_password/session")
+    .then(({ data }) => data)
+    .catch(() => null);
 
 export const endSession = async (notice) => {
   const token = getSessionToken();
