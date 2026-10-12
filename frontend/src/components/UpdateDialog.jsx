@@ -16,21 +16,41 @@ import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 
 import { GLOW } from "../lib/brand";
+import {
+  DONE_STATES,
+  MANUAL_UPDATE_COMMAND,
+  RECREATE_UPDATER_COMMAND,
+  START_UPDATER_COMMAND,
+  STATE_COPY,
+  failureMessage,
+  progressOutcome,
+  updaterMode,
+} from "../lib/updateProgress";
 
-const DONE = new Set(["success", "failed", "rolled_back"]);
 const POLL_MS = 3000;
-const TIMEOUT_MS = 6 * 60 * 1000;
+const TIMEOUT_MS = 10 * 60 * 1000;
 
 const stripV = (v) => String(v ?? "").replace(/^v/, "");
 
-const STATE_COPY = {
-  requested: "Starting…",
-  verifying: "Verifying image signatures…",
-  applying: "Applying update and restarting…",
-  success: "Updated. Reloading…",
-  failed: "Update failed, your vault is untouched.",
-  rolled_back: "Update failed and was rolled back, you're on the previous version.",
-};
+const Command = ({ children }) => (
+  <Box
+    component="pre"
+    sx={{
+      m: 0,
+      p: 1.5,
+      borderRadius: 1,
+      border: "1px solid",
+      borderColor: "divider",
+      bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(255,255,255,0.06)" : "#141416"),
+      color: (t) => (t.palette.mode === "dark" ? t.palette.text.primary : "#f4f4f2"),
+      fontSize: 12,
+      overflowX: "auto",
+      whiteSpace: "pre-wrap",
+    }}
+  >
+    {children}
+  </Box>
+);
 
 const UpdateDialog = ({ open, onClose }) => {
   const { enqueueSnackbar } = useSnackbar();
@@ -43,8 +63,11 @@ const UpdateDialog = ({ open, onClose }) => {
 
   const [busy, setBusy] = useState(false);
   const bootVersion = useRef(null);
+  const requestId = useRef(null);
+  const protocol = useRef(null);
 
-  const updaterPresent = apply?.updater_present;
+  const mode = updaterMode(apply);
+  const updaterPresent = mode === "ready";
 
   useEffect(() => {
     if (open) fetchApplyStatus();
@@ -69,25 +92,23 @@ const UpdateDialog = ({ open, onClose }) => {
       });
 
     const tick = async () => {
-      const live = stripV(await fetchLiveVersion());
-      const boot = bootVersion.current;
-      const target = stripV(latest);
-      if (live && ((boot && live !== boot) || (target && live === target))) {
-        reloadDone();
-        return;
-      }
-
+      const live = await fetchLiveVersion();
       const status = await fetchApplyStatus();
-      const state = status?.state;
-      if (state && DONE.has(state)) {
-        if (state === "success") {
-          reloadDone();
-        } else {
-          finish(() => {
-            setBusy(false);
-            enqueueSnackbar(STATE_COPY[state], { variant: "error" });
-          });
-        }
+      const outcome = progressOutcome({
+        status,
+        requestId: requestId.current,
+        live,
+        boot: bootVersion.current,
+        target: latest,
+        protocol: protocol.current,
+      });
+      if (outcome === "success") {
+        reloadDone();
+      } else if (outcome === "failed") {
+        finish(() => {
+          setBusy(false);
+          enqueueSnackbar(failureMessage(status), { variant: "error" });
+        });
       } else if (Date.now() > deadline) {
         finish(() => {
           setBusy(false);
@@ -109,20 +130,19 @@ const UpdateDialog = ({ open, onClose }) => {
 
   const handleApply = async () => {
     bootVersion.current = stripV(current);
+    protocol.current = apply?.updater_protocol ?? null;
     setBusy(true);
     try {
-      await applyUpdate(latest);
+      const accepted = await applyUpdate(latest);
+      requestId.current = accepted?.request_id ?? null;
     } catch (err) {
       setBusy(false);
       enqueueSnackbar(err.message, { variant: "error" });
     }
   };
 
-  const inProgress = busy || (apply?.state && !DONE.has(apply.state) && apply.state !== "idle");
-
-  const manualCommand =
-    "docker compose -f docker-compose.prod.yml pull && \\\n" +
-    "docker compose -f docker-compose.prod.yml up -d";
+  const inProgress =
+    busy || (apply?.state && !DONE_STATES.has(apply.state) && apply.state !== "idle");
 
   return (
     <Dialog open={open} onClose={inProgress ? undefined : onClose} maxWidth="xs" fullWidth>
@@ -147,36 +167,38 @@ const UpdateDialog = ({ open, onClose }) => {
 
           {inProgress ? (
             <Alert severity="info">{STATE_COPY[apply?.state] ?? "Working…"}</Alert>
-          ) : updaterPresent ? (
+          ) : apply?.state === "intervention" ? (
+            <Alert severity="warning">{apply.detail ?? STATE_COPY.intervention}</Alert>
+          ) : mode === "ready" ? (
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              CipherMoth will verify the new images are signed by the official release, back up your
-              database, restart, and roll back automatically if anything looks wrong. Your master
-              password is never needed and your vault stays encrypted throughout.
+              CipherMoth will verify the new images are signed by the official release, take a
+              verified backup of your database, restart, and restore everything automatically if
+              anything looks wrong. Your master password is never needed and your vault stays
+              encrypted throughout.
             </Typography>
+          ) : mode === "upgrade" ? (
+            <Box>
+              <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
+                One-click updates need a newer updater first: the one installed here can&apos;t
+                restore your database if an update goes wrong. Run this once in your CipherMoth
+                folder, then come back:
+              </Typography>
+              <Command>{RECREATE_UPDATER_COMMAND}</Command>
+            </Box>
+          ) : mode === "stopped" ? (
+            <Box>
+              <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
+                The updater isn&apos;t running. Start it from your CipherMoth folder:
+              </Typography>
+              <Command>{START_UPDATER_COMMAND}</Command>
+            </Box>
           ) : (
             <Box>
               <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
                 One-click updates aren&apos;t enabled on this instance. Update from a terminal in
                 your CipherMoth folder:
               </Typography>
-              <Box
-                component="pre"
-                sx={{
-                  m: 0,
-                  p: 1.5,
-                  borderRadius: 1,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark" ? "rgba(255,255,255,0.06)" : "#141416",
-                  color: (t) => (t.palette.mode === "dark" ? t.palette.text.primary : "#f4f4f2"),
-                  fontSize: 12,
-                  overflowX: "auto",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {manualCommand}
-              </Box>
+              <Command>{MANUAL_UPDATE_COMMAND}</Command>
             </Box>
           )}
         </Stack>
