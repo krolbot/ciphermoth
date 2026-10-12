@@ -1018,6 +1018,43 @@ async def test_the_legacy_key_can_be_switched_off(
     assert (await client.get("/passwords", headers=auth(token))).status_code == 200
 
 
+@pytest.mark.parametrize("legacy_on", [True, False], ids=["legacy on", "legacy off"])
+async def test_a_v147_web_ui_creating_a_vault_gets_a_working_vault(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, legacy_on: bool
+) -> None:
+    monkeypatch.setattr(get_api_settings(), "legacy_key_auth", legacy_on)
+    resp = await client.post(
+        "/master_password/create", json={"master_password": MASTER_PASSWORD}
+    )
+    assert resp.status_code == 200
+    created = resp.json()
+    assert created["created"] is True
+    assert created.get("key_derivation") is None
+    status = await client.get("/master_password/status")
+    assert status.json() == {"initialized": True}
+
+    resp = await client.post(
+        "/master_password/check", json={"master_password": MASTER_PASSWORD}
+    )
+    if legacy_on:
+        key = resp.json()["key_derivation"]
+        assert key == await stored_vault_key()
+        resp = await client.post(
+            "/passwords/create", json=entry("from-old-ui"), headers=key_auth(key)
+        )
+        assert resp.status_code == 200
+    else:
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == legacy.DISABLED
+
+    token = await unlock(client)
+    assert (await client.get("/passwords", headers=auth(token))).status_code == 200
+    resp = await client.post(
+        "/master_password/create", json={"master_password": MASTER_PASSWORD}
+    )
+    assert resp.status_code == 403
+
+
 def test_the_legacy_key_is_removed_on_schedule() -> None:
     version = tuple(int(part) for part in get_api_settings().version.split("."))
     assert version < legacy.REMOVED_IN, (
