@@ -60,10 +60,26 @@ class MasterPasswordCheck(BaseModel):
     key_derivation: str | None = None
 
 
+class VaultUnlock(BaseModel):
+    valid: bool
+    session_token: str | None = None
+    idle_timeout_ms: int | None = None
+
+
 class MasterPasswordCreate(BaseModel):
     created: bool
     detail: str
-    key_derivation: str
+    session_token: str
+    idle_timeout_ms: int
+
+
+class VaultSessionStatus(BaseModel):
+    idle_timeout_ms: int
+    expires_in_ms: int | None
+
+
+class VaultLock(BaseModel):
+    locked: bool
 
 
 class MasterPasswordUpdate(BaseModel):

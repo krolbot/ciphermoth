@@ -4,7 +4,14 @@ import httpx
 import pytest
 
 from helpers import encrypt
-from tests.support import Headers, auth, create_vault, db_execute, entry
+from tests.support import (
+    Headers,
+    auth,
+    create_vault,
+    db_execute,
+    entry,
+    stored_vault_key,
+)
 
 HOSTILE_NAMES = [
     "a/b",
@@ -146,7 +153,7 @@ async def test_a_literal_nul_in_the_path_is_refused(
 async def test_legacy_unaddressable_names_are_readable_and_can_be_renamed(
     client: httpx.AsyncClient, vault: Headers, name: str
 ) -> None:
-    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    key = await stored_vault_key()
     await db_execute(
         "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
         n=name,
@@ -182,7 +189,7 @@ async def test_meta_advertises_slash_routing(client: httpx.AsyncClient) -> None:
 async def test_a_legacy_entry_named_trash_is_managed_without_touching_the_trash(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    key = await stored_vault_key()
     await db_execute(
         "INSERT INTO passwords (password_name, password_value) VALUES ('trash', :v)",
         v=encrypt(key, b"legacy-Value-1"),
@@ -204,7 +211,7 @@ async def test_a_legacy_entry_named_trash_is_managed_without_touching_the_trash(
 async def test_editing_a_name_with_surrounding_spaces_never_touches_another_entry(
     client: httpx.AsyncClient, vault: Headers, legacy: str
 ) -> None:
-    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    key = await stored_vault_key()
     await client.post(
         "/passwords/create",
         json=entry("foo", "real-foo", username="real"),

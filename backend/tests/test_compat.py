@@ -14,6 +14,8 @@ from tests.support import (
     create_vault,
     db_execute,
     entry,
+    legacy_unlock,
+    stored_vault_key,
     unlock,
 )
 
@@ -46,7 +48,7 @@ async def test_vault_lifecycle_and_unlock(client: httpx.AsyncClient) -> None:
     assert resp.json() == {"initialized": False}
     assert (await client.get("/meta")).json() == {
         "version": get_api_settings().version,
-        "features": ["entry-names-with-slash"],
+        "features": ["entry-names-with-slash", "vault-sessions", "legacy-key-auth"],
     }
 
     resp = await client.post(
@@ -61,12 +63,25 @@ async def test_vault_lifecycle_and_unlock(client: httpx.AsyncClient) -> None:
     )
     assert resp.status_code == 403
 
-    assert await unlock(client) == key
-    assert await unlock(client, f"  {MASTER_PASSWORD}  ") == key
+    tokens = {key, await unlock(client), await unlock(client, f"  {MASTER_PASSWORD}  ")}
+    assert len(tokens) == 3
+    for token in tokens:
+        assert (await client.get("/passwords", headers=auth(token))).status_code == 200
+    vault_key = await stored_vault_key()
+    assert await legacy_unlock(client) == vault_key
+    assert await legacy_unlock(client, f"  {MASTER_PASSWORD}  ") == vault_key
     resp = await client.post(
         "/master_password/check", json={"master_password": WRONG_MASTER_PASSWORD}
     )
     assert resp.json() == {"valid": False, "key_derivation": None}
+    resp = await client.post(
+        "/master_password/unlock", json={"master_password": WRONG_MASTER_PASSWORD}
+    )
+    assert resp.json() == {
+        "valid": False,
+        "session_token": None,
+        "idle_timeout_ms": None,
+    }
 
 
 async def test_entries_notes_totp_history_and_favorites(

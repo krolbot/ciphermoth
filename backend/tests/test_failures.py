@@ -229,9 +229,10 @@ async def test_a_rotation_failing_halfway_leaves_the_old_vault(
 
     assert resp.status_code == 500
     assert await db_snapshot() == before
+    assert (await client.get("/passwords", headers=headers)).status_code == 200
     assert (
-        await unlock(client) == dict(headers)[b"x-ciphermoth-key-derivation"].decode()
-    )
+        await client.get("/passwords", headers=auth(await unlock(client)))
+    ).is_success
 
 
 async def test_concurrent_uploads_cannot_exceed_the_attachment_cap(

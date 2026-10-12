@@ -17,6 +17,7 @@ from tests.support import (
     db_execute,
     db_snapshot,
     entry,
+    stored_vault_key,
 )
 
 KIB = 1024
@@ -398,7 +399,7 @@ async def test_the_ignored_report_is_bounded(
 async def test_a_vault_poisoned_by_an_older_import_can_be_read_and_repaired(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    key = await stored_vault_key()
     long_name = "n" * 300
     await db_execute(
         "INSERT INTO passwords (password_name, username, description, "
@@ -686,7 +687,7 @@ async def test_arbitrary_backup_entries_never_break_the_vault(
 async def test_secrets_stored_by_older_imports_still_produce_codes(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    key = dict(vault)[b"x-ciphermoth-key-derivation"].decode()
+    key = await stored_vault_key()
     await db_execute(
         "INSERT INTO passwords (password_name, password_value, totp_secret, folder) "
         "VALUES ('legacy uri', :value, :totp, :folder)",

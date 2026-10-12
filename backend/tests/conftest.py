@@ -9,12 +9,13 @@ from hypothesis import HealthCheck, settings
 from sqlalchemy import text
 
 from api.rate_limit import limiter
-from crud.session import engine
 from main import app
 from tests.support import (
     TABLES,
     api_server,
     apply_runtime_schema,
+    engine,
+    fresh_vault_sessions,
     reset_schema,
     run_alembic,
     update_control_dir,
@@ -51,6 +52,7 @@ async def clean_state() -> AsyncIterator[None]:
             text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
         )
     limiter.reset()
+    app.state.vault_sessions = fresh_vault_sessions()
     control = update_control_dir()
     shutil.rmtree(control, ignore_errors=True)
     control.mkdir(parents=True)

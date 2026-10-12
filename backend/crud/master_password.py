@@ -5,24 +5,20 @@ from typing import Literal
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.exceptions import Forbidden, InvalidKey, NotFound, TypesMismatchError
 from crud.base import BaseCRUD
+from errors import Forbidden, InvalidKey, InvalidRequest, NotFound
 from helpers import (
     create_key_check,
     decrypt,
     decrypt_bytes,
+    derive_key,
     encrypt,
-    generate_key_derivation,
-    hash_master_password,
+    hash_password,
+    password_matches,
     verify_key_check,
-    verify_master_password,
 )
 from models import MasterPasswordModel, PasswordAttachmentModel, PasswordModel
-from schemas import (
-    MasterPasswordCheck,
-    MasterPasswordCreate,
-    MasterPasswordUpdate,
-)
+from schemas import MasterPasswordCheck, MasterPasswordUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +52,7 @@ class MasterPasswordCRUD(BaseCRUD):
     ) -> bytes:
         plaintext = decrypt(old_key, token)
         if plaintext is None:
-            raise TypesMismatchError(
-                f"Could not decrypt password '{pwd.password_name}'."
-            )
+            raise InvalidRequest(f"Could not decrypt password '{pwd.password_name}'.")
         return encrypt(new_key, plaintext.encode())
 
     @classmethod
@@ -81,7 +75,7 @@ class MasterPasswordCRUD(BaseCRUD):
             return None
         plaintext = decrypt(old_key, token)
         if plaintext is None:
-            raise TypesMismatchError("Could not decrypt an attachment.")
+            raise InvalidRequest("Could not decrypt an attachment.")
         return encrypt(new_key, plaintext.encode())
 
     @staticmethod
@@ -90,7 +84,7 @@ class MasterPasswordCRUD(BaseCRUD):
     ) -> bytes:
         raw = decrypt_bytes(old_key, token)
         if raw is None:
-            raise TypesMismatchError("Could not decrypt an attachment.")
+            raise InvalidRequest("Could not decrypt an attachment.")
         return encrypt(new_key, raw)
 
     async def is_initialized(self) -> bool:
@@ -160,28 +154,46 @@ class MasterPasswordCRUD(BaseCRUD):
         )
         return stored.scalar() is not None
 
-    async def check_master_password(self, master_password: str) -> MasterPasswordCheck:
+    async def unlock(self, master_password: str) -> str | None:
+        """
+        Return the vault key for ``master_password``, or None if it is wrong.
+
+        A verified password (re)writes a missing or stale key check. The result is
+        confirmed under the shared vault row lock, so a password that a concurrent
+        master password change has just replaced is refused, not turned into a key
+        that every route would reject. The read-only transaction is ended before
+        the slow KDFs so a queue of unlocks holds no database connections.
+        """
         model = await self._get_model()
-        if not verify_master_password(master_password, model.hash_key):
-            return MasterPasswordCheck(valid=False)
-        key_derivation = generate_key_derivation(model.salt, master_password)
-        if not verify_key_check(key_derivation, model.key_check, model.salt):
+        await self.session.commit()
+        if not await password_matches(master_password, model.hash_key):
+            return None
+        key = (await derive_key(model.salt, master_password)).decode()
+        if not verify_key_check(key, model.key_check, model.salt):
             if model.key_check is not None:
                 logger.warning(
                     "Stored vault key check did not match the verified master "
                     "password; replacing it."
                 )
-            await self.store_key_check(model, key_derivation)
-        return MasterPasswordCheck(valid=True, key_derivation=key_derivation.decode())
+            await self.store_key_check(model, key)
+        current = await fetch_master_password(self.session, lock="share")
+        if current is None or not verify_key_check(
+            key, current.key_check, current.salt
+        ):
+            return None
+        return key
 
-    async def create_master_password(
-        self, master_password: str
-    ) -> MasterPasswordCreate:
+    async def check_master_password(self, master_password: str) -> MasterPasswordCheck:
+        key = await self.unlock(master_password)
+        return MasterPasswordCheck(valid=key is not None, key_derivation=key)
+
+    async def create_master_password(self, master_password: str) -> str:
         if await self.is_initialized():
             raise Forbidden("Master password already exists.")
+        await self.session.commit()
         salt = os.urandom(16)
-        key_derivation = generate_key_derivation(salt, master_password)
-        hash_key = hash_master_password(master_password)
+        key_derivation = await derive_key(salt, master_password)
+        hash_key = await hash_password(master_password)
 
         await self.session.execute(
             text("LOCK TABLE master_password IN SHARE ROW EXCLUSIVE MODE")
@@ -197,25 +209,22 @@ class MasterPasswordCRUD(BaseCRUD):
             )
         )
         await self.session.flush()
-        return MasterPasswordCreate(
-            created=True,
-            detail="Master password created successfully.",
-            key_derivation=key_derivation.decode(),
-        )
+        return key_derivation.decode()
 
     async def update_master_password(
         self, master_password: str, new_master_password: str
     ) -> MasterPasswordUpdate:
         model = await self._get_model(lock="update")
-        if not verify_master_password(master_password, model.hash_key):
+        if not await password_matches(master_password, model.hash_key):
             raise Forbidden("Current master password is incorrect.")
 
-        key_derivation = generate_key_derivation(model.salt, master_password)
+        key_derivation = await derive_key(model.salt, master_password)
         if not verify_key_check(key_derivation, model.key_check, model.salt):
             raise InvalidKey(_INVALID_KEY)
 
         new_salt = os.urandom(16)
-        new_key_derivation = generate_key_derivation(new_salt, new_master_password)
+        new_key_derivation = await derive_key(new_salt, new_master_password)
+        new_hash_key = await hash_password(new_master_password)
 
         passwords = (
             await self.session.execute(
@@ -251,7 +260,7 @@ class MasterPasswordCRUD(BaseCRUD):
             )
 
         model.salt = new_salt
-        model.hash_key = hash_master_password(new_master_password)
+        model.hash_key = new_hash_key
         model.key_check = create_key_check(new_key_derivation, new_salt)
         self.session.add(model)
         await self.session.flush()

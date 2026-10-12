@@ -4,7 +4,14 @@ import httpx
 import pytest
 
 from crud.password import PasswordCRUD
-from tests.support import auth, create_vault, entry
+from tests.support import (
+    auth,
+    create_legacy_vault,
+    create_vault,
+    entry,
+    key_auth,
+    stored_vault_key,
+)
 
 SECRET_NAME = "bank-of-moth-private"
 SECRET_QUERY = "query-secret-7f3a"
@@ -60,7 +67,8 @@ async def test_unhandled_errors_log_the_route_template_not_the_request(
     logged = server_logs(capture_all)
     assert "api.endpoints.password.get_password (/{password_name})" in logged
     assert "RuntimeError" in logged
-    for secret in (SECRET_NAME, SECRET_QUERY, SECRET_MESSAGE, key):
+    vault_key = await stored_vault_key()
+    for secret in (SECRET_NAME, SECRET_QUERY, SECRET_MESSAGE, key, vault_key):
         assert secret not in logged
 
 
@@ -90,13 +98,32 @@ async def test_database_errors_do_not_leak_statement_parameters(
 async def test_rejected_keys_are_not_logged(
     client: httpx.AsyncClient, capture_all: pytest.LogCaptureFixture
 ) -> None:
-    key = await create_vault(client)
+    key = await create_legacy_vault(client)
     forged = key[:-6] + "AAAAA="
     capture_all.clear()
 
-    resp = await client.get("/passwords", headers=auth(forged))
+    resp = await client.get("/passwords", headers=key_auth(forged))
 
     assert resp.status_code == 403
     logged = server_logs(capture_all)
     assert forged not in logged
     assert key not in logged
+
+
+async def test_session_tokens_and_keys_are_never_logged(
+    client: httpx.AsyncClient, capture_all: pytest.LogCaptureFixture
+) -> None:
+    capture_all.clear()
+    token = await create_vault(client)
+    vault_key = await stored_vault_key()
+    forged = token[:-4] + "AAAA"
+    for headers in (auth(token), auth(forged)):
+        await client.get("/passwords", headers=headers)
+        await client.get("/master_password/session", headers=headers)
+    await client.post("/master_password/lock", headers=auth(token))
+    resp = await client.get("/passwords", headers=auth(token))
+
+    assert resp.status_code == 401
+    logged = server_logs(capture_all)
+    for secret in (token, forged, vault_key, token[:16]):
+        assert secret not in logged

@@ -5,7 +5,6 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 
-from crud.session import engine
 from helpers import encrypt
 from tests.integrity import (
     VaultContents,
@@ -19,11 +18,12 @@ from tests.integrity import (
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
-    auth,
-    create_vault,
+    create_legacy_vault,
     db_execute,
+    engine,
     entry,
-    unlock,
+    key_auth,
+    legacy_unlock,
 )
 
 BLOB = os.urandom(4096) + b"\x00\xff"
@@ -35,8 +35,8 @@ async def _scan(key: str, **options: object) -> VaultContents:
 
 
 async def _rich_vault(client: httpx.AsyncClient) -> str:
-    key = await create_vault(client)
-    headers = auth(key)
+    key = await create_legacy_vault(client)
+    headers = key_auth(key)
     login = entry(
         "GitHub",
         "first-Value-1",
@@ -98,7 +98,7 @@ async def test_a_healthy_vault_scans_clean_and_matches_the_api(
     assert vault.active["Notes ✉"].value == "  body\n\n"
     assert [e.name for e in vault.trash] == ["Old"]
 
-    listing = (await client.get("/passwords", headers=auth(key))).json()
+    listing = (await client.get("/passwords", headers=key_auth(key))).json()
     for item in listing:
         scanned = vault.active[item["password_name"]]
         assert scanned.value == item["password_value"]
@@ -242,10 +242,10 @@ async def test_rotation_keeps_every_plaintext_and_replaces_every_token(
             "master_password": MASTER_PASSWORD,
             "new_master_password": NEW_MASTER_PASSWORD,
         },
-        headers=auth(key),
+        headers=key_auth(key),
     )
     assert resp.status_code == 200, resp.text
-    new_key = await unlock(client, NEW_MASTER_PASSWORD)
+    new_key = await legacy_unlock(client, NEW_MASTER_PASSWORD)
 
     after = await _scan(new_key, master_password=NEW_MASTER_PASSWORD)
     assert_same_vault(before, after)
@@ -287,19 +287,19 @@ async def test_a_backup_restore_is_lossy_exactly_where_documented(
     resp = await client.post(
         "/passwords/backup",
         json={"master_password": MASTER_PASSWORD},
-        headers=auth(key),
+        headers=key_auth(key),
     )
     archive = resp.content
     await db_execute(
         "TRUNCATE master_password, passwords, password_attachments, settings "
         "RESTART IDENTITY CASCADE"
     )
-    new_key = await create_vault(client)
+    new_key = await create_legacy_vault(client)
     resp = await client.post(
         "/passwords/import",
         data={"master_password": MASTER_PASSWORD},
         files={"file": ("b.zip", archive, "application/zip")},
-        headers=auth(new_key),
+        headers=key_auth(new_key),
     )
     assert resp.status_code == 200, resp.text
     restored = await _scan(new_key)

@@ -9,7 +9,9 @@ from pathlib import Path
 import httpx
 import pytest
 import pyzipper
+from sqlalchemy import text
 
+from helpers import generate_key_derivation
 from tests.integrity import (
     Entry,
     VaultContents,
@@ -29,6 +31,7 @@ from tests.support import (
     database_engine,
     db_snapshot,
     ensure_database,
+    key_auth,
     reset_schema,
     run_alembic,
 )
@@ -156,7 +159,7 @@ async def test_historical_vault_upgrades_unlocks_and_rotates(release: str) -> No
     assert_same_vault(before, after)
 
     async with client_for_database(GOLDEN_DB) as api:
-        stale = await api.get("/passwords", headers=auth(data["key"]))
+        stale = await api.get("/passwords", headers=key_auth(data["key"]))
         if "key_check" in data["features"]:
             assert stale.status_code == 200
         else:
@@ -168,7 +171,14 @@ async def test_historical_vault_upgrades_unlocks_and_rotates(release: str) -> No
             json={"master_password": f"  {data['master_password']}  "},
         )
         assert resp.json() == {"valid": True, "key_derivation": data["key"]}
-        headers = auth(data["key"])
+        resp = await api.get("/passwords", headers=key_auth(data["key"]))
+        assert resp.status_code == 200
+        resp = await api.post(
+            "/master_password/unlock",
+            json={"master_password": f"  {data['master_password']}  "},
+        )
+        assert data["key"] not in resp.text
+        headers = auth(resp.json()["session_token"])
 
         listing = (await api.get("/passwords", headers=headers)).json()
         assert [i["password_name"] for i in listing] == [
@@ -203,12 +213,12 @@ async def test_historical_vault_upgrades_unlocks_and_rotates(release: str) -> No
             headers=headers,
         )
         assert resp.status_code == 200, resp.text
-        new_key = (
-            await api.post(
-                "/master_password/check", json={"master_password": NEW_MASTER_PASSWORD}
-            )
-        ).json()["key_derivation"]
-        assert (await api.get("/passwords", headers=headers)).status_code == 403
+        assert (await api.get("/passwords", headers=headers)).status_code == 401
+        stale = await api.get("/passwords", headers=key_auth(data["key"]))
+        assert stale.status_code == 403
+        async with database_engine(GOLDEN_DB) as golden, golden.connect() as conn:
+            salt = await conn.scalar(text("SELECT salt FROM master_password"))
+        new_key = generate_key_derivation(salt, NEW_MASTER_PASSWORD).decode()
 
     _, rotated = await scan(new_key, NEW_MASTER_PASSWORD)
     assert rotated.key_check == "valid"
@@ -231,14 +241,14 @@ async def test_historical_backup_restores_into_the_current_release(
     data = expected(release)
     archive = (GOLDEN / release / "backup.zip").read_bytes()
     assert hashlib.sha256(archive).hexdigest() == data["backup_sha256"]
-    key = await create_vault(client, data["master_password"])
+    token = await create_vault(client, data["master_password"])
     before = await db_snapshot()
 
     resp = await client.post(
         "/passwords/import",
         data={"master_password": data["master_password"]},
         files={"file": ("backup.zip", archive, "application/zip")},
-        headers=auth(key),
+        headers=auth(token),
     )
 
     entries = backup_entries(release, data["master_password"])
@@ -251,7 +261,7 @@ async def test_historical_backup_restores_into_the_current_release(
     assert resp.json()["imported"] == len(entries)
     restored = {
         p["password_name"]: p
-        for p in (await client.get("/passwords", headers=auth(key))).json()
+        for p in (await client.get("/passwords", headers=auth(token))).json()
     }
     active = {i["password_name"]: i for i in data["active"]}
     for item in entries:

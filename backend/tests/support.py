@@ -1,11 +1,12 @@
 import asyncio
 import base64
 import os
+import secrets
 import socket
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,15 +17,15 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
     create_async_engine,
 )
 
-from api.endpoints.deps import get_session
+from crud.engine import Database
 from crud.runtime_schema import ensure_runtime_schema
-from crud.session import engine
-from main import app
+from helpers import generate_key_derivation
+from main import app, get_application
+from models import SETTINGS_DEFAULTS
+from vault_sessions import Instant, VaultSessions, idle_timeout_for, system_clock
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -34,6 +35,15 @@ WRONG_MASTER_PASSWORD = "Not-The-Vault-Password-1"
 
 TABLES = ("master_password", "passwords", "password_attachments", "settings")
 
+engine = app.state.database.engine
+
+
+def fresh_vault_sessions(clock: Callable[[], Instant] = system_clock) -> VaultSessions:
+    return VaultSessions(
+        idle_timeout_ms=idle_timeout_for(SETTINGS_DEFAULTS["inactivity_ms"]),
+        clock=clock,
+    )
+
 
 def update_control_dir() -> Path:
     return Path(os.environ["UPDATE_CONTROL_DIR"])
@@ -42,7 +52,16 @@ def update_control_dir() -> Path:
 Headers = list[tuple[bytes, bytes]]
 
 
-def auth(key: str | bytes | None) -> Headers:
+def auth(token: str | bytes | None) -> Headers:
+    """Headers for a vault session token, the credential current clients use."""
+    if token is None:
+        return []
+    value = token if isinstance(token, bytes) else token.encode("latin-1")
+    return [(b"x-ciphermoth-session", value)]
+
+
+def key_auth(key: str | bytes | None) -> Headers:
+    """Headers for the deprecated vault key credential of v1.4.x clients."""
     if key is None:
         return []
     value = key if isinstance(key, bytes) else key.encode("latin-1")
@@ -56,10 +75,25 @@ async def create_vault(
         "/master_password/create", json={"master_password": master_password}
     )
     assert resp.status_code == 200, resp.text
-    return resp.json()["key_derivation"]
+    body = resp.json()
+    assert "key_derivation" not in body
+    return body["session_token"]
 
 
 async def unlock(
+    client: httpx.AsyncClient, master_password: str = MASTER_PASSWORD
+) -> str:
+    resp = await client.post(
+        "/master_password/unlock", json={"master_password": master_password}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["valid"] is True
+    assert "key_derivation" not in body
+    return body["session_token"]
+
+
+async def legacy_unlock(
     client: httpx.AsyncClient, master_password: str = MASTER_PASSWORD
 ) -> str:
     resp = await client.post(
@@ -69,6 +103,19 @@ async def unlock(
     body = resp.json()
     assert body["valid"] is True
     return body["key_derivation"]
+
+
+async def stored_vault_key(master_password: str = MASTER_PASSWORD) -> str:
+    """The vault key, derived from the stored salt without asking the API."""
+    [(salt,)] = await db_execute("SELECT salt FROM master_password ORDER BY id LIMIT 1")
+    return generate_key_derivation(bytes(salt), master_password).decode()
+
+
+async def create_legacy_vault(
+    client: httpx.AsyncClient, master_password: str = MASTER_PASSWORD
+) -> str:
+    await create_vault(client, master_password)
+    return await legacy_unlock(client, master_password)
 
 
 def entry(name: str, value: str = "s3cret-Value!", **fields: object) -> dict:
@@ -90,6 +137,32 @@ def forged_keys(real_key: str) -> dict[str, str | bytes | None]:
             os.urandom(16) + raw[16:]
         ).decode(),
         "non-ascii": "ключ-вольта".encode(),
+    }
+
+
+async def forged_tokens(
+    client: httpx.AsyncClient, real_token: str, vault_key: str
+) -> dict[str, Headers]:
+    """Session credentials that must never open the vault whose live session is
+    ``real_token``."""
+    locked = await unlock(client)
+    resp = await client.post("/master_password/lock", headers=auth(locked))
+    assert resp.status_code == 200, resp.text
+    return {
+        "missing": [],
+        "empty": [(b"x-ciphermoth-session", b"")],
+        "bearer prefixed": auth("Bearer " + real_token),
+        "malformed": auth("not a session token"),
+        "random": auth(secrets.token_urlsafe(32)),
+        "truncated": auth(real_token[:-1]),
+        "extended": auth(real_token + "A"),
+        "case flipped": auth(real_token.swapcase()),
+        "padded": auth(real_token + "="),
+        "non-ascii": auth("сессия-токен".encode()),
+        "in Authorization": [(b"authorization", b"Bearer " + real_token.encode())],
+        "vault key as token": auth(vault_key),
+        "token as vault key": key_auth(real_token),
+        "locked": auth(locked),
     }
 
 
@@ -198,32 +271,19 @@ async def database_engine(database: str) -> AsyncIterator[AsyncEngine]:
 
 @asynccontextmanager
 async def client_for_database(database: str) -> AsyncIterator[httpx.AsyncClient]:
-    """An API client whose requests run against ``database`` instead of the
-    default test database, committing and rolling back like get_session."""
-    async with database_engine(database) as other:
-        sessions = async_sessionmaker(
-            other, expire_on_commit=False, class_=AsyncSession
-        )
-
-        async def session() -> AsyncIterator[AsyncSession]:
-            async with sessions() as db_session:
-                try:
-                    yield db_session
-                    await db_session.commit()
-                except Exception:
-                    await db_session.rollback()
-                    raise
-
-        app.dependency_overrides[get_session] = session
-        try:
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://testserver/api",
-                timeout=60,
-            ) as http:
-                yield http
-        finally:
-            app.dependency_overrides.pop(get_session, None)
+    """An API client of a separate app instance, with its own vault sessions,
+    whose requests run against ``database`` instead of the default test
+    database."""
+    other = Database(engine_url(database))
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=get_application(database=other)),
+            base_url="http://testserver/api",
+            timeout=60,
+        ) as http:
+            yield http
+    finally:
+        await other.dispose()
 
 
 @dataclass

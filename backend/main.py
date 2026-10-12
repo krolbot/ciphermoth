@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -13,9 +15,13 @@ from api.exceptions import UnhandledErrorMiddleware
 from api.path_guard import EntryNamePaths
 from api.rate_limit import limiter
 from api.routes import make_api_exceptions, make_api_router
+from crud.engine import Database
 from crud.runtime_schema import ensure_runtime_schema
-from crud.session import engine
+from models import SETTINGS_DEFAULTS
 from settings import get_api_settings
+from vault_sessions import VaultSessions, idle_timeout_for
+
+_SESSION_SWEEP_SECONDS = 30
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -42,15 +48,37 @@ def rate_limit_exceeded(request: Request, exc: Exception) -> Response:
     )
 
 
+async def _drop_expired_sessions(vault_sessions: VaultSessions) -> None:
+    while True:
+        await asyncio.sleep(_SESSION_SWEEP_SECONDS)
+        vault_sessions.drop_expired()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    await ensure_runtime_schema(engine)
-    yield
+    database: Database = app.state.database
+    vault_sessions: VaultSessions = app.state.vault_sessions
+    await ensure_runtime_schema(database.engine)
+    sweeper = asyncio.create_task(_drop_expired_sessions(vault_sessions))
+    try:
+        yield
+    finally:
+        sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
+        vault_sessions.revoke_all()
+        await database.dispose()
 
 
-def get_application() -> FastAPI:
+def get_application(
+    database: Database | None = None, vault_sessions: VaultSessions | None = None
+) -> FastAPI:
     settings = get_api_settings()
     server = FastAPI(**settings.fastapi_kwargs, lifespan=lifespan)
+    server.state.database = database or Database()
+    server.state.vault_sessions = vault_sessions or VaultSessions(
+        idle_timeout_ms=idle_timeout_for(SETTINGS_DEFAULTS["inactivity_ms"])
+    )
 
     server.state.limiter = limiter
     server.add_exception_handler(RateLimitExceeded, rate_limit_exceeded)
@@ -67,6 +95,7 @@ def get_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=[
             "Content-Type",
+            "x-ciphermoth-session",
             "x-ciphermoth-key-derivation",
             "x-ciphermoth-entry",
         ],

@@ -2,68 +2,119 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 from urllib.parse import unquote
 
-from fastapi import Depends, Header, Path
+from fastapi import Depends, Header, Path, Request
+from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.exceptions import Forbidden, TypesMismatchError
+from api.legacy import DISABLED, LEGACY_KEY_HEADER, legacy_key_auth_enabled
 from api.path_guard import entry_name
 from crud.attachment import AttachmentCRUD
+from crud.engine import Database
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
-from crud.session import AsyncSessionLocal
 from crud.settings import SettingsCRUD
+from crud.vault_access import Credential, LegacyKey, SessionToken, VaultAccess
+from errors import Forbidden, InvalidKey, InvalidRequest, SessionRequired
+from vault_sessions import VaultSessions
+
+SESSION_HEADER = "x-ciphermoth-session"
+_session_header = APIKeyHeader(
+    name=SESSION_HEADER,
+    auto_error=False,
+    description="A vault session token from POST /master_password/unlock.",
+)
 
 
-async def get_session() -> AsyncGenerator[AsyncSession]:
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+async def get_database(request: Request) -> Database:
+    return request.app.state.database
+
+
+async def get_vault_sessions(request: Request) -> VaultSessions:
+    return request.app.state.vault_sessions
+
+
+VaultSessionsDep = Annotated[VaultSessions, Depends(get_vault_sessions)]
+
+
+async def get_session(
+    database: Annotated[Database, Depends(get_database)],
+) -> AsyncGenerator[AsyncSession]:
+    async with database.transaction() as session:
+        yield session
 
 
 SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 
 
-def get_master_password_crud(session: SessionDep) -> MasterPasswordCRUD:
+async def get_master_password_crud(session: SessionDep) -> MasterPasswordCRUD:
     return MasterPasswordCRUD(session)
 
 
-def get_password_crud(session: SessionDep) -> PasswordCRUD:
+async def get_password_crud(session: SessionDep) -> PasswordCRUD:
     return PasswordCRUD(session)
 
 
-def get_settings_crud(session: SessionDep) -> SettingsCRUD:
-    return SettingsCRUD(session)
+async def get_settings_crud(
+    session: SessionDep, vault_sessions: VaultSessionsDep
+) -> SettingsCRUD:
+    return SettingsCRUD(session, vault_sessions)
 
 
-def get_attachment_crud(session: SessionDep) -> AttachmentCRUD:
+async def get_attachment_crud(session: SessionDep) -> AttachmentCRUD:
     return AttachmentCRUD(session)
+
+
+async def get_vault_access(
+    session: SessionDep, vault_sessions: VaultSessionsDep
+) -> VaultAccess:
+    return VaultAccess(session, vault_sessions)
 
 
 MasterPasswordCRUDDep = Annotated[MasterPasswordCRUD, Depends(get_master_password_crud)]
 PasswordCRUDDep = Annotated[PasswordCRUD, Depends(get_password_crud)]
 SettingsCRUDDep = Annotated[SettingsCRUD, Depends(get_settings_crud)]
 AttachmentCRUDDep = Annotated[AttachmentCRUD, Depends(get_attachment_crud)]
+VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
+SessionTokenHeader = Annotated[str | None, Depends(_session_header)]
+LegacyKeyHeader = Annotated[
+    str | None, Header(alias=LEGACY_KEY_HEADER, include_in_schema=False)
+]
 
 
-async def get_key_derivation(
-    crud: MasterPasswordCRUDDep,
-    x_ciphermoth_key_derivation: Annotated[str | None, Header()] = None,
+async def get_credential(
+    token: SessionTokenHeader, legacy_key: LegacyKeyHeader = None
+) -> Credential:
+    """
+    The credential a request carries: a session token in the
+    ``x-ciphermoth-session`` header, or (deprecated, see ``api.legacy``) the vault
+    key itself. ``Authorization`` is left alone, so a reverse proxy can still put
+    its own authentication in front of the vault.
+    """
+    if token is not None and legacy_key is not None:
+        raise InvalidRequest("Send either a session token or a vault key, not both.")
+    if token is not None:
+        return SessionToken(token)
+    if legacy_key is not None:
+        if not legacy_key_auth_enabled():
+            raise InvalidKey(DISABLED)
+        return LegacyKey(legacy_key)
+    raise SessionRequired("The vault is locked. Unlock it first.")
+
+
+CredentialDep = Annotated[Credential, Depends(get_credential)]
+
+
+async def get_vault_key(access: VaultAccessDep, credential: CredentialDep) -> str:
+    return await access.authorize(credential)
+
+
+async def get_vault_key_for_rotation(
+    access: VaultAccessDep, credential: CredentialDep
 ) -> str:
-    return await crud.verify_vault_key(x_ciphermoth_key_derivation)
+    return await access.authorize(credential, exclusive=True)
 
 
-async def get_key_derivation_for_rotation(
-    crud: MasterPasswordCRUDDep,
-    x_ciphermoth_key_derivation: Annotated[str | None, Header()] = None,
-) -> str:
-    return await crud.verify_vault_key(x_ciphermoth_key_derivation, exclusive=True)
-
-
-KeyDerivationDep = Annotated[str, Depends(get_key_derivation)]
+VaultKeyDep = Annotated[str, Depends(get_vault_key)]
 _PATH_CHANGED = (
     "The entry name in the request path was changed before it reached "
     "CipherMoth, so nothing was done. A reverse proxy in front of the API is "
@@ -71,7 +122,7 @@ _PATH_CHANGED = (
 )
 
 
-def get_entry_name(
+async def get_entry_name(
     password_name: Annotated[str, Path()],
     x_ciphermoth_entry: Annotated[str | None, Header()] = None,
 ) -> str:
@@ -84,7 +135,7 @@ def get_entry_name(
     """
     name = entry_name(password_name)
     if x_ciphermoth_entry is not None and unquote(x_ciphermoth_entry) != name:
-        raise TypesMismatchError(_PATH_CHANGED)
+        raise InvalidRequest(_PATH_CHANGED)
     return name
 
 

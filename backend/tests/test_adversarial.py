@@ -9,12 +9,12 @@ from helpers import encrypt
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
-    auth,
-    create_vault,
+    create_legacy_vault,
     db_execute,
     db_snapshot,
     entry,
-    unlock,
+    key_auth,
+    legacy_unlock,
 )
 
 ROTATE = {
@@ -39,9 +39,9 @@ async def _value_tokens() -> list[bytes]:
 async def test_method_and_path_variants_stay_protected(
     client: httpx.AsyncClient,
 ) -> None:
-    key = await create_vault(client)
-    await client.post("/passwords/create", json=entry("alpha"), headers=auth(key))
-    forged = auth(Fernet.generate_key())
+    key = await create_legacy_vault(client)
+    await client.post("/passwords/create", json=entry("alpha"), headers=key_auth(key))
+    forged = key_auth(Fernet.generate_key())
 
     for path in ("/passwords", "/passwords/alpha", "/settings"):
         resp = await client.head(path, headers=forged)
@@ -57,7 +57,7 @@ async def test_method_and_path_variants_stay_protected(
 async def test_duplicate_or_misspelled_key_headers_do_not_help(
     client: httpx.AsyncClient,
 ) -> None:
-    key = await create_vault(client)
+    key = await create_legacy_vault(client)
     forged = Fernet.generate_key()
     name = b"x-ciphermoth-key-derivation"
     variants = [
@@ -93,36 +93,36 @@ async def test_duplicate_or_misspelled_key_headers_do_not_help(
             },
             headers=headers,
         )
-        assert resp.status_code == 403, headers
+        assert resp.status_code in (401, 403), headers
     assert await db_execute("SELECT id FROM settings") == []
 
 
 async def test_concurrent_rotations_with_the_same_key_apply_once(
     client: httpx.AsyncClient,
 ) -> None:
-    old_key = await create_vault(client)
-    await client.post("/passwords/create", json=entry("one"), headers=auth(old_key))
+    old_key = await create_legacy_vault(client)
+    await client.post("/passwords/create", json=entry("one"), headers=key_auth(old_key))
 
     first, second = await asyncio.gather(
-        client.patch("/master_password/update", json=ROTATE, headers=auth(old_key)),
-        client.patch("/master_password/update", json=ROTATE, headers=auth(old_key)),
+        client.patch("/master_password/update", json=ROTATE, headers=key_auth(old_key)),
+        client.patch("/master_password/update", json=ROTATE, headers=key_auth(old_key)),
     )
 
     assert sorted([first.status_code, second.status_code]) == [200, 403]
-    new_key = await unlock(client, NEW_MASTER_PASSWORD)
+    new_key = await legacy_unlock(client, NEW_MASTER_PASSWORD)
     assert _all_decrypt(new_key, await _value_tokens())
 
 
 async def test_write_burst_racing_a_rotation_never_corrupts_or_deadlocks(
     client: httpx.AsyncClient,
 ) -> None:
-    old_key = await create_vault(client)
+    old_key = await create_legacy_vault(client)
     writes = [
-        client.post("/passwords/create", json=entry(f"e{i}"), headers=auth(old_key))
+        client.post("/passwords/create", json=entry(f"e{i}"), headers=key_auth(old_key))
         for i in range(20)
     ]
     rotation = client.patch(
-        "/master_password/update", json=ROTATE, headers=auth(old_key)
+        "/master_password/update", json=ROTATE, headers=key_auth(old_key)
     )
 
     responses = await asyncio.gather(*writes[:10], rotation, *writes[10:])
@@ -131,7 +131,7 @@ async def test_write_burst_racing_a_rotation_never_corrupts_or_deadlocks(
     assert 500 not in statuses, [r.text for r in responses if r.status_code == 500]
     assert responses[10].status_code == 200
     assert set(statuses) <= {200, 403}
-    new_key = await unlock(client, NEW_MASTER_PASSWORD)
+    new_key = await legacy_unlock(client, NEW_MASTER_PASSWORD)
     assert _all_decrypt(new_key, await _value_tokens())
     created = sum(1 for r in responses if r.status_code == 200) - 1
     assert len(await _value_tokens()) == created
@@ -140,8 +140,8 @@ async def test_write_burst_racing_a_rotation_never_corrupts_or_deadlocks(
 async def test_vault_damaged_before_the_patch_can_be_recovered(
     client: httpx.AsyncClient,
 ) -> None:
-    key = await create_vault(client)
-    headers = auth(key)
+    key = await create_legacy_vault(client)
+    headers = key_auth(key)
     await client.post("/passwords/create", json=entry("good"), headers=headers)
     await db_execute(
         "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
@@ -173,7 +173,7 @@ async def test_vault_damaged_before_the_patch_can_be_recovered(
 
 
 async def test_unauthenticated_bodies_are_bounded(client: httpx.AsyncClient) -> None:
-    await create_vault(client)
+    await create_legacy_vault(client)
     resp = await client.post(
         "/passwords/import/csv",
         content=b"x" * (13 * 1024 * 1024),
@@ -185,7 +185,7 @@ async def test_unauthenticated_bodies_are_bounded(client: httpx.AsyncClient) -> 
 async def test_forged_keys_never_wait_on_vault_locks(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    old_key = await create_vault(client)
+    old_key = await create_legacy_vault(client)
     gate = asyncio.Event()
     original = MasterPasswordCRUD.update_master_password
 
@@ -196,12 +196,12 @@ async def test_forged_keys_never_wait_on_vault_locks(
 
     monkeypatch.setattr(MasterPasswordCRUD, "update_master_password", slow_rotation)
     rotation = asyncio.create_task(
-        client.patch("/master_password/update", json=ROTATE, headers=auth(old_key))
+        client.patch("/master_password/update", json=ROTATE, headers=key_auth(old_key))
     )
     await asyncio.sleep(1.5)
     try:
         forged = await asyncio.wait_for(
-            client.get("/passwords", headers=auth(Fernet.generate_key())), timeout=3
+            client.get("/passwords", headers=key_auth(Fernet.generate_key())), timeout=3
         )
         assert forged.status_code == 403
     finally:
