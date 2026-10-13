@@ -1,32 +1,25 @@
 import asyncio
 import base64
-import json
 import os
 import secrets
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
-import asyncpg
 import httpx
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    create_async_engine,
-)
+from sqlalchemy import insert, text
 
 from crud.engine import Database
-from crud.runtime_schema import ensure_runtime_schema
 from helpers import generate_key_derivation
 from main import app, get_application
-from models import SETTINGS_DEFAULTS
+from models import SETTINGS_DEFAULTS, SettingsModel
+from storage import VAULT_FILE
 from vault_sessions import Instant, VaultSessions, system_clock
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -40,15 +33,25 @@ TABLES = ("master_password", "passwords", "password_attachments", "settings")
 engine = app.state.database.engine
 
 
+def data_dir() -> Path:
+    return Path(os.environ["CIPHERMOTH_DATA_DIR"])
+
+
+async def reset_vault() -> None:
+    """Return the shared test vault to the state of a fresh install."""
+    async with engine.begin() as conn:
+        for table in ("password_attachments", "passwords", "master_password"):
+            await conn.execute(text(f"DELETE FROM {table}"))
+        await conn.execute(text("DELETE FROM settings"))
+        await conn.execute(text("DELETE FROM sqlite_sequence"))
+        await conn.execute(insert(SettingsModel).values(**SETTINGS_DEFAULTS))
+
+
 def fresh_vault_sessions(clock: Callable[[], Instant] = system_clock) -> VaultSessions:
     return VaultSessions(
         idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"],
         clock=clock,
     )
-
-
-def update_control_dir() -> Path:
-    return Path(os.environ["UPDATE_CONTROL_DIR"])
 
 
 Headers = list[tuple[bytes, bytes]]
@@ -178,111 +181,44 @@ async def db_execute(sql: str, **params: object) -> list[tuple]:
         return [tuple(row) for row in result.all()] if result.returns_rows else []
 
 
-def updater_alive(protocol: int = 2, age: int = 0, running: bool = True) -> None:
-    beat = (datetime.now(UTC) - timedelta(seconds=age)).isoformat()
-    (update_control_dir() / "updater.json").write_text(
-        json.dumps(
-            {
-                "protocol": protocol,
-                "version": "1.5.1",
-                "heartbeat_at": beat,
-                "running": running,
-                "busy": False,
-            }
+@contextmanager
+def write_lock_held(folder: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """Hold the vault's write lock from another connection, like a second
+    process in the middle of a write, until the block ends."""
+    blocker = sqlite3.connect(
+        (folder or data_dir()) / VAULT_FILE, isolation_level=None, timeout=30
+    )
+    try:
+        blocker.execute("BEGIN IMMEDIATE")
+        yield blocker
+        if blocker.in_transaction:
+            blocker.execute("ROLLBACK")
+    finally:
+        blocker.close()
+
+
+async def wait_for_queued_requests(count: int, timeout: float = 30) -> None:
+    """Wait until ``count`` requests of the test app have checked out a database
+    connection, which while ``write_lock_held`` means they wait for the lock."""
+    pool = engine.sync_engine.pool
+    deadline = time.monotonic() + timeout
+    while pool.checkedout() < count:
+        assert time.monotonic() < deadline, (
+            f"only {pool.checkedout()} of {count} requests reached the database"
         )
-    )
-
-
-def control_files() -> list[str]:
-    return sorted(path.name for path in update_control_dir().iterdir())
-
-
-async def admin_connection(database: str | None = None) -> asyncpg.Connection:
-    return await asyncpg.connect(
-        host=os.environ["POSTGRES_HOST"],
-        port=int(os.environ["POSTGRES_PORT"]),
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-        database=database or os.environ["POSTGRES_DB"],
-    )
-
-
-async def _reset_schema(database: str) -> None:
-    conn = await admin_connection(database)
-    try:
-        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-    finally:
-        await conn.close()
-
-
-def reset_schema(database: str) -> None:
-    asyncio.run(_reset_schema(database))
-
-
-def engine_url(database: str) -> str:
-    return (
-        f"postgresql+asyncpg://{os.environ['POSTGRES_USER']}:"
-        f"{quote(os.environ['POSTGRES_PASSWORD'])}@{os.environ['POSTGRES_HOST']}:"
-        f"{os.environ['POSTGRES_PORT']}/{database}"
-    )
-
-
-async def _apply_runtime_schema(database: str) -> None:
-    temporary = create_async_engine(engine_url(database))
-    try:
-        await ensure_runtime_schema(temporary)
-    finally:
-        await temporary.dispose()
-
-
-def apply_runtime_schema(database: str) -> None:
-    asyncio.run(_apply_runtime_schema(database))
-
-
-def run_alembic(*args: str, database: str | None = None) -> str:
-    env = dict(os.environ)
-    if database:
-        env["POSTGRES_DB"] = database
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", *args],
-        cwd=BACKEND_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    output = result.stdout + result.stderr
-    if result.returncode != 0:
-        raise RuntimeError(f"alembic {' '.join(args)} failed:\n{output}")
-    return output
-
-
-async def ensure_database(database: str) -> None:
-    conn = await admin_connection()
-    try:
-        if not await conn.fetchval(
-            "SELECT 1 FROM pg_database WHERE datname = $1", database
-        ):
-            await conn.execute(f'CREATE DATABASE "{database}"')
-    finally:
-        await conn.close()
+        await asyncio.sleep(0.02)
 
 
 @asynccontextmanager
-async def database_engine(database: str) -> AsyncIterator[AsyncEngine]:
-    other = create_async_engine(engine_url(database))
+async def client_for_data_dir(
+    folder: Path | None = None,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """An API client of a separate app instance, with its own vault sessions and
+    connections, on the vault in ``folder`` (by default the shared test vault),
+    like a second CipherMoth process."""
+    other = Database(folder or data_dir())
     try:
-        yield other
-    finally:
-        await other.dispose()
-
-
-@asynccontextmanager
-async def client_for_database(database: str) -> AsyncIterator[httpx.AsyncClient]:
-    """An API client of a separate app instance, with its own vault sessions,
-    whose requests run against ``database`` instead of the default test
-    database."""
-    other = Database(engine_url(database))
-    try:
+        await other.prepare()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=get_application(database=other)),
             base_url="http://testserver/api",
@@ -306,14 +242,29 @@ def _free_port() -> int:
 
 
 @contextmanager
-def api_server(log_path: Path) -> Iterator[ApiServer]:
-    """A real uvicorn process serving the app against the test database."""
+def api_server(
+    log_path: Path,
+    folder: Path | None = None,
+    *,
+    pause_marker: Path | None = None,
+) -> Iterator[ApiServer]:
+    """A real uvicorn process serving the vault in ``folder``, by default the
+    shared test vault. Only one server can hold a vault folder at a time. With
+    ``pause_marker`` its write transactions stop right before committing
+    (``tests/paused_server.py``)."""
     port = _free_port()
+    env = dict(os.environ)
+    if folder is not None:
+        env["CIPHERMOTH_DATA_DIR"] = str(folder)
+    target = ["main:app"]
+    if pause_marker is not None:
+        env["CIPHERMOTH_TEST_PAUSE_MARKER"] = str(pause_marker)
+        target = ["--app-dir", "tests", "--factory", "paused_server:create_app"]
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "main:app", "--port", str(port)],
+            [sys.executable, "-m", "uvicorn", *target, "--port", str(port)],
             cwd=BACKEND_DIR,
-            env=dict(os.environ),
+            env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )

@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import math
-import os
 import threading
 import time
 from collections import Counter
@@ -12,17 +11,18 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import crud.master_password
 import helpers
 from api.retired_clients import UPGRADE_REQUIRED
-from crud.engine import Database
+from crud.engine import Database, create_engine
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
 from errors import SessionRequired
 from main import app, get_application
 from settings import get_api_settings
+from storage import VAULT_FILE
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
@@ -30,8 +30,8 @@ from tests.support import (
     api_server,
     auth,
     create_vault,
+    data_dir,
     db_execute,
-    engine_url,
     entry,
     fresh_vault_sessions,
     retired_key_header,
@@ -604,9 +604,7 @@ async def test_a_session_whose_key_was_changed_elsewhere_is_ended(
     client: httpx.AsyncClient,
 ) -> None:
     token = await create_vault(client)
-    other_process = get_application(
-        database=Database(engine_url(os.environ["POSTGRES_DB"]))
-    )
+    other_process = get_application(database=Database(data_dir()))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=other_process),
         base_url="http://testserver/api",
@@ -638,9 +636,7 @@ async def test_a_session_does_not_survive_a_vault_recreated_from_scratch(
 
 async def test_sessions_belong_to_one_app_instance(client: httpx.AsyncClient) -> None:
     token = await create_vault(client)
-    other_process = get_application(
-        database=Database(engine_url(os.environ["POSTGRES_DB"]))
-    )
+    other_process = get_application(database=Database(data_dir()))
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=other_process),
@@ -819,13 +815,13 @@ async def test_unlocks_waiting_for_the_kdf_hold_no_database_connection(
     client: httpx.AsyncClient,
 ) -> None:
     await create_vault(client)
-    engine = create_async_engine(
-        engine_url(os.environ["POSTGRES_DB"]),
+    engine = create_engine(
+        data_dir() / VAULT_FILE,
         pool_size=1,
         max_overflow=0,
         pool_timeout=10,
     )
-    one_connection = get_application(database=Database(engine=engine))
+    one_connection = get_application(database=Database(data_dir(), engine=engine))
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=one_connection),
@@ -928,13 +924,10 @@ def _fail_commit_number(monkeypatch: pytest.MonkeyPatch, failing: int) -> None:
     monkeypatch.setattr(AsyncSession, "commit", commit)
 
 
-@pytest.mark.parametrize("legacy_vault", [False, True])
 async def test_unlock_that_fails_to_commit_leaves_no_session(
-    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, legacy_vault: bool
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await create_vault(client)
-    if legacy_vault:
-        await db_execute("UPDATE master_password SET key_check = NULL")
     before = len(sessions())
 
     _fail_commit_number(monkeypatch, 2)
@@ -945,9 +938,6 @@ async def test_unlock_that_fails_to_commit_leaves_no_session(
     assert resp.status_code == 500
     assert "session_token" not in resp.text
     assert len(sessions()) == before
-    if legacy_vault:
-        rows = await db_execute("SELECT key_check FROM master_password")
-        assert rows == [(None,)]
 
 
 @pytest.mark.parametrize("failing", [1, 2])
@@ -1082,7 +1072,7 @@ async def test_old_browser_tabs_can_read_the_refusal(client: httpx.AsyncClient) 
 
 
 async def test_a_restarted_server_has_no_sessions(tmp_path: Path) -> None:
-    with api_server(tmp_path / "first.log") as server:
+    with api_server(tmp_path / "first.log", tmp_path / "vault") as server:
         resp = httpx.post(
             f"{server.base_url}/master_password/create",
             json={"master_password": MASTER_PASSWORD},
@@ -1090,7 +1080,7 @@ async def test_a_restarted_server_has_no_sessions(tmp_path: Path) -> None:
         token = resp.json()["session_token"]
         resp = httpx.get(f"{server.base_url}/passwords", headers=dict(auth(token)))
         assert resp.status_code == 200
-    with api_server(tmp_path / "second.log") as server:
+    with api_server(tmp_path / "second.log", tmp_path / "vault") as server:
         resp = httpx.get(f"{server.base_url}/passwords", headers=dict(auth(token)))
         assert resp.status_code == 401
         assert resp.json()["code"] == "invalid_session"

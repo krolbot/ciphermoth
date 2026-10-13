@@ -91,7 +91,7 @@ ImportRow = tuple[str, dict[str, object] | _Ignored | None]
 
 class PasswordCRUD(BaseCRUD):
     async def _get_password_model(
-        self, password_name: str, *, deleted: bool = False, lock: bool = False
+        self, password_name: str, *, deleted: bool = False
     ) -> PasswordModel:
         trashed = (
             PasswordModel.deleted.is_not(None)
@@ -103,8 +103,6 @@ class PasswordCRUD(BaseCRUD):
             stmt = select(PasswordModel).where(
                 PasswordModel.password_name == password_name, trashed
             )
-            if lock:
-                stmt = stmt.with_for_update().execution_options(populate_existing=True)
             result = (await self.session.execute(stmt)).scalar()
         if not result:
             where = "trash" if deleted else "vault"
@@ -271,7 +269,7 @@ class PasswordCRUD(BaseCRUD):
     async def update_password(
         self, password_name: str, new_password: Password, key_derivation: str
     ) -> PasswordUpdate:
-        model = await self._get_password_model(password_name, lock=True)
+        model = await self._get_password_model(password_name)
 
         if model.password_name != new_password.password_name:
             conflict = (

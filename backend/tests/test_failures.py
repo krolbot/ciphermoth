@@ -11,13 +11,14 @@ from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     Headers,
-    admin_connection,
     auth,
     create_vault,
     db_execute,
     db_snapshot,
     entry,
     unlock,
+    wait_for_queued_requests,
+    write_lock_held,
 )
 
 ALPHA = entry("alpha", "alpha-Value-1", username="moth")
@@ -142,23 +143,6 @@ async def test_every_write_is_visible_as_soon_as_it_is_acknowledged(
     assert await db_snapshot() != before
 
 
-async def test_first_unlock_of_a_legacy_vault_fails_cleanly_if_its_commit_fails(
-    client: httpx.AsyncClient, failing_commit: Callable[[], None]
-) -> None:
-    await _populated_vault(client)
-    await db_execute("UPDATE master_password SET key_check = NULL")
-    before = await db_snapshot()
-    failing_commit()
-
-    resp = await client.post(
-        "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
-    )
-
-    assert resp.status_code == 500
-    assert "session_token" not in resp.text
-    assert await db_snapshot() == before
-
-
 async def test_vault_creation_rolls_back_if_its_commit_fails(
     client: httpx.AsyncClient, failing_commit: Callable[[], None]
 ) -> None:
@@ -244,12 +228,7 @@ async def test_concurrent_uploads_cannot_exceed_the_attachment_cap(
             "/passwords/alpha/attachments", headers=headers, **_upload(f"f{i}.bin")
         )
         assert resp.status_code == 200
-    blocker = await admin_connection()
-    try:
-        await blocker.execute("BEGIN")
-        await blocker.execute(
-            "SELECT 1 FROM passwords WHERE password_name = 'alpha' FOR UPDATE"
-        )
+    with write_lock_held():
         uploads = asyncio.gather(
             *(
                 client.post(
@@ -260,34 +239,12 @@ async def test_concurrent_uploads_cannot_exceed_the_attachment_cap(
                 for i in range(6)
             )
         )
-        await _wait_for_blocked_sessions(6)
-        await blocker.execute("ROLLBACK")
-        responses = await uploads
-    finally:
-        await blocker.close()
+        await wait_for_queued_requests(6)
+    responses = await uploads
 
     assert sorted(r.status_code for r in responses) == [200, 400, 400, 400, 400, 400]
     rows = await db_execute("SELECT count(*) FROM password_attachments")
     assert rows == [(20,)]
-
-
-async def _wait_for_blocked_sessions(count: int, timeout: float = 30) -> None:
-    observer = await admin_connection()
-    try:
-        deadline = asyncio.get_running_loop().time() + timeout
-        while True:
-            blocked = await observer.fetchval(
-                "SELECT count(*) FROM pg_stat_activity "
-                "WHERE datname = current_database() AND wait_event_type = 'Lock'"
-            )
-            if blocked >= count:
-                return
-            assert asyncio.get_running_loop().time() < deadline, (
-                f"only {blocked} of {count} requests waited on the entry lock"
-            )
-            await asyncio.sleep(0.05)
-    finally:
-        await observer.close()
 
 
 async def test_concurrent_uploads_cannot_exceed_the_size_cap(

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     TIMESTAMP,
@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    false,
     func,
     text,
 )
@@ -19,10 +20,12 @@ SETTINGS_DEFAULTS = {
     "hidden_ms": 60_000,
     "debounce_ms": 1_000,
     "clipboard_clear_ms": 30_000,
-    # When true, the browser (never the server) checks GitHub for a newer
-    # release. Off by choice keeps the instance fully third-party-free.
     "update_check_enabled": True,
 }
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class BaseModel(DeclarativeBase):
@@ -33,15 +36,20 @@ class MasterPasswordModel(BaseModel):
     __tablename__ = "master_password"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
     updated: Mapped[datetime] = mapped_column(
-        TIMESTAMP, server_default=func.now(), onupdate=func.now()
+        TIMESTAMP,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
     )
     deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
 
     salt: Mapped[bytes] = mapped_column(LargeBinary)
     hash_key: Mapped[str] = mapped_column(String)
-    key_check: Mapped[bytes | None] = mapped_column(LargeBinary)
+    key_check: Mapped[bytes] = mapped_column(LargeBinary)
 
 
 class PasswordModel(BaseModel):
@@ -51,14 +59,20 @@ class PasswordModel(BaseModel):
             "uq_passwords_name_active",
             "password_name",
             unique=True,
-            postgresql_where=text("deleted IS NULL"),
+            sqlite_where=text("deleted IS NULL"),
         ),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
     updated: Mapped[datetime] = mapped_column(
-        TIMESTAMP, server_default=func.now(), onupdate=func.now()
+        TIMESTAMP,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
     )
     deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
 
@@ -74,18 +88,21 @@ class PasswordModel(BaseModel):
     folder: Mapped[bytes | None] = mapped_column(LargeBinary)
     password_history: Mapped[bytes | None] = mapped_column(LargeBinary)
     favorite: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
+        Boolean, default=False, server_default=false()
     )
     backed_up: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
+        Boolean, default=False, server_default=false()
     )
 
 
 class PasswordAttachmentModel(BaseModel):
     __tablename__ = "password_attachments"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
     password_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("passwords.id", ondelete="CASCADE"),
@@ -102,26 +119,19 @@ class SettingsModel(BaseModel):
     __tablename__ = "settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
     updated: Mapped[datetime] = mapped_column(
-        TIMESTAMP, server_default=func.now(), onupdate=func.now()
+        TIMESTAMP,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
     )
 
-    inactivity_ms: Mapped[int] = mapped_column(
-        Integer, server_default=str(SETTINGS_DEFAULTS["inactivity_ms"])
-    )
-    warn_before_ms: Mapped[int] = mapped_column(
-        Integer, server_default=str(SETTINGS_DEFAULTS["warn_before_ms"])
-    )
-    hidden_ms: Mapped[int] = mapped_column(
-        Integer, server_default=str(SETTINGS_DEFAULTS["hidden_ms"])
-    )
-    debounce_ms: Mapped[int] = mapped_column(
-        Integer, server_default=str(SETTINGS_DEFAULTS["debounce_ms"])
-    )
-    clipboard_clear_ms: Mapped[int] = mapped_column(
-        Integer, server_default=str(SETTINGS_DEFAULTS["clipboard_clear_ms"])
-    )
-    update_check_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default="true"
-    )
+    inactivity_ms: Mapped[int] = mapped_column(Integer)
+    warn_before_ms: Mapped[int] = mapped_column(Integer)
+    hidden_ms: Mapped[int] = mapped_column(Integer)
+    debounce_ms: Mapped[int] = mapped_column(Integer)
+    clipboard_clear_ms: Mapped[int] = mapped_column(Integer)
+    update_check_enabled: Mapped[bool] = mapped_column(Boolean)

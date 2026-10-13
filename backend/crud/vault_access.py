@@ -27,9 +27,8 @@ class VaultAccess(BaseCRUD):
     """
     Turns a master password into a vault session and a session back into the
     vault key, for one request. Every use of a session still checks its key
-    against the vault's key check under the shared row lock, so a session can
-    never outlive the key it was opened with, whichever process or release
-    changed it.
+    against the vault's key check inside the request's transaction, so a session
+    can never outlive the key it was opened with, whichever process changed it.
     """
 
     def __init__(self, session: AsyncSession, vault_sessions: VaultSessions) -> None:
@@ -69,12 +68,10 @@ class VaultAccess(BaseCRUD):
             idle_timeout_ms=self.vault_sessions.idle_timeout_ms,
         )
 
-    async def authorize(
-        self, credential: SessionToken, *, exclusive: bool = False, refresh: bool = True
-    ) -> str:
+    async def authorize(self, credential: SessionToken, *, refresh: bool = True) -> str:
         key = self.vault_sessions.resolve(credential.token, refresh=refresh)
         try:
-            return await self.master_password.verify_vault_key(key, exclusive=exclusive)
+            return await self.master_password.verify_vault_key(key)
         except InvalidKey:
             self.vault_sessions.revoke(credential.token)
             raise SessionRequired(_SESSION_ENDED) from None
@@ -86,10 +83,17 @@ class VaultAccess(BaseCRUD):
         )
 
     async def change_master_password(
-        self, master_password: str, new_master_password: str
+        self,
+        credential: SessionToken,
+        master_password: str,
+        new_master_password: str,
     ) -> MasterPasswordUpdate:
-        result = await self.master_password.update_master_password(
-            master_password, new_master_password
-        )
+        try:
+            result = await self.master_password.update_master_password(
+                master_password, new_master_password
+            )
+        except InvalidKey:
+            self.vault_sessions.revoke(credential.token)
+            raise SessionRequired(_SESSION_ENDED) from None
         after_commit(self.session, self.vault_sessions.revoke_all)
         return result

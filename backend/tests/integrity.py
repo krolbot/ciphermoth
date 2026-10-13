@@ -88,7 +88,7 @@ class Entry:
 
 @dataclass(frozen=True)
 class VaultContents:
-    revision: str | None
+    revision: int | None
     master_rows: int
     key_check: str
     entries: tuple[Entry, ...]
@@ -229,7 +229,6 @@ def _check_master(
     rows: list[dict[str, Any]],
     key: str,
     master_password: str | None,
-    require_key_check: bool,
 ) -> str:
     if not rows:
         reader.flag("master_password", None, "*", "no master password row")
@@ -242,8 +241,7 @@ def _check_master(
     ):
         reader.flag("master_password", first["id"], "hash_key", "password rejected")
     if first.get("key_check") is None:
-        if require_key_check:
-            reader.flag("master_password", first["id"], "key_check", "absent")
+        reader.flag("master_password", first["id"], "key_check", "absent")
         return "absent"
     if verify_key_check(key, first["key_check"], first["salt"]):
         return "valid"
@@ -331,21 +329,15 @@ async def read_vault(
     key: str,
     *,
     master_password: str | None = None,
-    known_revisions: Iterable[str] | None = None,
-    require_key_check: bool = False,
     strict: bool = True,
 ) -> VaultContents:
     """
     Decrypt every encrypted column of every entry, active and trashed, and every
-    attachment, and check the structural invariants of a v1 vault. Works on any
-    schema from v1.0.0 on, reading missing columns as their later defaults.
+    attachment, and check the structural invariants of a vault.
 
     Unlike the application's read path nothing is silently replaced: a token
     that does not decrypt, text that is not UTF-8 or JSON of the wrong shape is
-    a problem. With ``strict`` any problem raises VaultIntegrityError. A vault
-    from before v1.4.6 has no key check; pass ``require_key_check`` for vaults
-    that must have one. Columns missing from older schemas read as their later
-    defaults, but a NULL where the current schema has a value is a problem.
+    a problem. With ``strict`` any problem raises VaultIntegrityError.
     """
     reader = _Reader(key)
     raw = await raw_vault(conn)
@@ -354,14 +346,9 @@ async def read_vault(
         list(raw["master_password"].values()),
         key,
         master_password,
-        require_key_check,
     )
 
-    revision = None
-    if await table_columns(conn, "alembic_version") is not None:
-        revision = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-        if known_revisions is not None and revision not in set(known_revisions):
-            reader.flag("alembic_version", None, "version_num", f"unknown {revision}")
+    revision = await conn.scalar(text("PRAGMA user_version"))
 
     attachments = _attachments(
         reader, raw["password_attachments"], set(raw["passwords"])

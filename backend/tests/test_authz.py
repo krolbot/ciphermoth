@@ -5,16 +5,12 @@ import pytest
 
 from helpers import create_encrypted_zip
 from main import app
-from settings import get_api_settings
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     Headers,
     auth,
-    bump_patch,
-    control_files,
     create_vault,
-    db_execute,
     db_snapshot,
     entry,
     forged_keys,
@@ -22,7 +18,6 @@ from tests.support import (
     retired_key_header,
     stored_vault_key,
     unlock,
-    updater_alive,
 )
 
 Spec = Callable[[httpx.AsyncClient, Headers, dict], Awaitable[httpx.Response]]
@@ -34,7 +29,6 @@ PUBLIC_ROUTES = {
     ("POST", "/api/master_password/create"),
     ("GET", "/api/meta"),
     ("GET", "/api/health"),
-    ("GET", "/api/updates/apply/status"),
 }
 
 SETTINGS_BODY = {
@@ -126,11 +120,6 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
     ("PATCH", "/api/settings"): lambda c, h, x: c.patch(
         "/settings", json=SETTINGS_BODY, headers=h
     ),
-    ("POST", "/api/updates/apply"): lambda c, h, x: c.post(
-        "/updates/apply",
-        json={"target": bump_patch(get_api_settings().version)},
-        headers=h,
-    ),
     ("PATCH", "/api/master_password/update"): lambda c, h, x: c.patch(
         "/master_password/update",
         json={
@@ -162,7 +151,6 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
     resp = await client.delete("/passwords/beta", headers=headers)
     assert resp.status_code == 200, resp.text
     await client.get("/settings", headers=headers)
-    updater_alive()
     backup_zip = create_encrypted_zip(
         [{"name": "from-backup", "value": "restored-Value-1"}], MASTER_PASSWORD
     )
@@ -185,7 +173,6 @@ async def _assert_rejected_without_side_effects(
     expect_code: bool = True,
 ) -> None:
     before = await db_snapshot()
-    files_before = control_files()
     for label, headers in credentials.items():
         resp = await spec(client, headers, ctx)
         status, code = _expected_rejection(headers)
@@ -197,7 +184,6 @@ async def _assert_rejected_without_side_effects(
         else:
             assert resp.status_code in (401, 403), f"{label}: {resp.text}"
         assert await db_snapshot() == before, f"{label} changed the database"
-        assert control_files() == files_before, f"{label} wrote an update request"
 
 
 def _as_key_headers(keys: dict[str, str | bytes | None]) -> dict[str, Headers]:
@@ -290,39 +276,9 @@ async def test_sessions_and_keys_from_before_a_rotation_are_rejected(
 
 
 @pytest.mark.parametrize("route", list(PROTECTED_ROUTES), ids=ROUTE_IDS)
-async def test_legacy_vault_fails_closed_until_unlocked(
-    client: httpx.AsyncClient, route: tuple[str, str]
-) -> None:
-    token = await create_vault(client)
-    ctx = await seed(client, auth(token))
-    key = await stored_vault_key()
-    await db_execute("UPDATE master_password SET key_check = NULL")
-    spec = PROTECTED_ROUTES[route]
-
-    await _assert_rejected_without_side_effects(
-        client,
-        spec,
-        ctx,
-        {
-            "correct-but-unverified key": retired_key_header(key),
-            "open session": auth(token),
-        },
-    )
-
-    fresh = await unlock(client)
-    resp = await client.get("/passwords", headers=auth(fresh))
-    assert resp.status_code == 200, resp.text
-    resp = await spec(client, auth(token), ctx)
-    assert resp.status_code == 401, resp.text
-    resp = await spec(client, auth(await unlock(client)), ctx)
-    assert resp.status_code == 200, resp.text
-
-
-@pytest.mark.parametrize("route", list(PROTECTED_ROUTES), ids=ROUTE_IDS)
 async def test_uninitialized_vault_rejects_everything(
     client: httpx.AsyncClient, route: tuple[str, str]
 ) -> None:
-    updater_alive()
     ctx = {"attachment_id": 1, "backup_zip": b"PK"}
     credentials = {
         **_as_key_headers(forged_keys("A" * 43 + "=")),

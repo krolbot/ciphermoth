@@ -358,27 +358,7 @@ class PasswordImportResult(BaseModel):
     renamed_rows: list[ImportRowReport] = Field(default_factory=list)
 
 
-class UpdateApplyPayload(BaseModel):
-    target: str = Field(pattern=r"^v\d+\.\d+\.\d+$")
-
-
-class UpdateApplyStatus(BaseModel):
-    state: str
-    detail: str | None = None
-    target: str | None = None
-    finished_at: str | None = None
-    id: str | None = None
-    request_id: str | None = None
-    updater_present: bool = False
-    updater_protocol: int | None = None
-    updater_version: str | None = None
-    updater_upgrade_required: bool = False
-    required_protocol: int | None = None
-    maintenance: bool = False
-
-
 class HealthResponse(BaseModel):
     status: str
     version: str
     schema_state: str = Field(serialization_alias="schema")
-    maintenance: bool = False

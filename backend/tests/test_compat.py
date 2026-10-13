@@ -14,6 +14,7 @@ from tests.support import (
     create_vault,
     db_execute,
     entry,
+    reset_vault,
     stored_vault_key,
     unlock,
 )
@@ -278,10 +279,7 @@ async def test_backup_export_and_restore_into_a_fresh_vault(
     assert {p["name"] for p in payload["passwords"]} == {"GitHub #work", "Wi-Fi ключ"}
     exported = await client.get("/passwords", headers=headers)
 
-    await db_execute(
-        "TRUNCATE master_password, passwords, password_attachments, settings "
-        "RESTART IDENTITY CASCADE"
-    )
+    await reset_vault()
     new_key = await create_vault(client)
     assert new_key != key
     resp = await client.post(

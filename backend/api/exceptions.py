@@ -17,6 +17,7 @@ from errors import (
     InvalidRequest,
     NotFound,
     SessionRequired,
+    VaultBusy,
     VaultError,
 )
 
@@ -29,6 +30,7 @@ _ERROR_RESPONSES: tuple[tuple[type[VaultError], int, str | None], ...] = (
     (Forbidden, status.HTTP_403_FORBIDDEN, None),
     (NotFound, status.HTTP_404_NOT_FOUND, None),
     (InvalidRequest, status.HTTP_400_BAD_REQUEST, None),
+    (VaultBusy, status.HTTP_503_SERVICE_UNAVAILABLE, "busy"),
     (VaultError, status.HTTP_400_BAD_REQUEST, None),
 )
 
@@ -45,6 +47,8 @@ async def vault_error_handler(request: Request, exc: Exception) -> JSONResponse:
         content["code"] = code
     if status_code == status.HTTP_401_UNAUTHORIZED:
         headers["WWW-Authenticate"] = "CipherMoth-Session"
+    if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+        headers["Retry-After"] = "2"
     return JSONResponse(status_code=status_code, content=content, headers=headers)
 
 

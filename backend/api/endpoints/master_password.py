@@ -12,7 +12,6 @@ from api.endpoints.deps import (
     VaultAccessDep,
     VaultSessionsDep,
     get_vault_key,
-    get_vault_key_for_rotation,
     get_vault_key_quietly,
     require_master_password,
 )
@@ -127,7 +126,7 @@ async def create_master_password(
     "/update",
     name="master-password:update",
     response_model=MasterPasswordUpdate,
-    dependencies=[Depends(get_vault_key_for_rotation)],
+    dependencies=[Depends(get_vault_key)],
     responses=inject_responses(
         {
             status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
@@ -142,8 +141,10 @@ async def update_master_password(
     request: Request,
     body: MasterPasswordUpdatePayload,
     access: VaultAccessDep,
+    credential: CredentialDep,
 ) -> MasterPasswordUpdate:
     return await access.change_master_password(
+        credential,
         master_password=body.master_password,
         new_master_password=body.new_master_password,
     )

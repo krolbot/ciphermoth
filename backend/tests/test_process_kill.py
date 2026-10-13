@@ -2,28 +2,32 @@ import asyncio
 import os
 import random
 import signal
+import sqlite3
 import time
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 
-import asyncpg
 import httpx
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from helpers import verify_master_password
+from crud.engine import Database
+from helpers import generate_key_derivation, verify_master_password
+from storage import VAULT_FILE, check_file
 from tests.integrity import VaultContents, assert_same_vault, raw_vault, read_vault
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     ApiServer,
-    admin_connection,
     api_server,
-    db_execute,
-    engine,
-    stored_vault_key,
 )
 
+ATTACHMENT_BYTES = 4 * 1024 * 1024
 
-async def _seed(base_url: str, entries: int = 40) -> str:
+
+async def _seed(base_url: str, entries: int = 40, attachments: int = 1) -> str:
     async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
         resp = await http.post(
             "/master_password/create", json={"master_password": MASTER_PASSWORD}
@@ -41,52 +45,53 @@ async def _seed(base_url: str, entries: int = 40) -> str:
                 headers=headers,
             )
             assert resp.status_code == 200, resp.text
-        resp = await http.post(
-            "/passwords/entry-000/attachments",
-            files={"file": ("a.bin", os.urandom(200_000), "application/octet-stream")},
-            headers=headers,
-        )
-        assert resp.status_code == 200
+        for i in range(attachments):
+            resp = await http.post(
+                "/passwords/entry-000/attachments",
+                files={
+                    "file": (
+                        f"a{i}.bin",
+                        os.urandom(ATTACHMENT_BYTES),
+                        "application/octet-stream",
+                    )
+                },
+                headers=headers,
+            )
+            assert resp.status_code == 200
         return headers["x-ciphermoth-session"]
 
 
-async def _state() -> tuple[dict, list]:
-    async with engine.connect() as conn:
-        return await raw_vault(conn), await db_execute("SELECT * FROM settings")
+@asynccontextmanager
+async def _connection(folder: Path) -> AsyncIterator[AsyncConnection]:
+    database = Database(folder)
+    try:
+        async with database.engine.connect() as conn:
+            yield conn
+    finally:
+        await database.dispose()
 
 
-async def _scan(key: str) -> VaultContents:
-    async with engine.connect() as conn:
+async def _state(folder: Path) -> tuple[dict, list]:
+    async with _connection(folder) as conn:
+        settings = await conn.execute(text("SELECT * FROM settings"))
+        return await raw_vault(conn), [tuple(row) for row in settings]
+
+
+async def _scan(folder: Path, key: str) -> VaultContents:
+    async with _connection(folder) as conn:
         return await read_vault(conn, key)
 
 
-async def _wait_for_lock_wait(statement: str, timeout: float = 30) -> int:
-    conn = await admin_connection()
-    try:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            pid = await conn.fetchval(
-                "SELECT pid FROM pg_stat_activity WHERE datname = current_database() "
-                "AND wait_event_type = 'Lock' AND query LIKE $1",
-                f"{statement}%",
-            )
-            if pid:
-                return pid
-            await asyncio.sleep(0.05)
-    finally:
-        await conn.close()
-    raise AssertionError(f"no session blocked on {statement!r}")
+def _master(folder: Path) -> tuple[bytes, str]:
+    with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
+        salt, hash_key = connection.execute(
+            "SELECT salt, hash_key FROM master_password"
+        ).fetchone()
+    return salt, hash_key
 
 
-async def _wait_until_gone(pid: int, timeout: float = 30) -> None:
-    conn = await admin_connection()
-    try:
-        deadline = time.monotonic() + timeout
-        while await conn.fetchval("SELECT 1 FROM pg_stat_activity WHERE pid = $1", pid):
-            assert time.monotonic() < deadline, f"backend {pid} still running"
-            await asyncio.sleep(0.05)
-    finally:
-        await conn.close()
+def _key(folder: Path, password: str = MASTER_PASSWORD) -> str:
+    return generate_key_derivation(_master(folder)[0], password).decode()
 
 
 def _kill(server: ApiServer) -> None:
@@ -94,89 +99,97 @@ def _kill(server: ApiServer) -> None:
     server.process.wait(timeout=10)
 
 
-async def _send_and_kill_when_blocked(
-    server: ApiServer, blocker: asyncpg.Connection, send, statement: str
-) -> None:
-    request = asyncio.create_task(send())
-    pid = await _wait_for_lock_wait(statement)
-    _kill(server)
-    await blocker.execute("ROLLBACK")
-    await _wait_until_gone(pid)
-    with pytest.raises(httpx.TransportError):
-        await request
+def _wal_bytes(folder: Path) -> int:
+    wal = folder / f"{VAULT_FILE}-wal"
+    return wal.stat().st_size if wal.exists() else 0
 
 
-async def _lock_row(name: str) -> asyncpg.Connection:
-    blocker = await admin_connection()
-    await blocker.execute("BEGIN")
-    await blocker.execute(
-        "SELECT 1 FROM passwords WHERE password_name = $1 FOR UPDATE", name
-    )
-    return blocker
+def _checkpoint(folder: Path) -> None:
+    with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
-async def test_killing_the_server_mid_rotation_leaves_the_old_vault(
+async def _kill_before_commit(
+    tmp_path: Path, send: Callable[[httpx.AsyncClient, dict], Coroutine]
+) -> int:
+    """Send one write to a server that stops right before committing it, kill
+    the server there, and return how many WAL bytes it had written."""
+    folder = tmp_path / "vault"
+    _checkpoint(folder)
+    marker = tmp_path / "paused"
+    with api_server(tmp_path / "paused.log", folder, pause_marker=marker) as server:
+        async with httpx.AsyncClient(base_url=server.base_url, timeout=60) as http:
+            resp = await http.post(
+                "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
+            )
+            headers = {"x-ciphermoth-session": resp.json()["session_token"]}
+            request = asyncio.create_task(send(http, headers))
+            deadline = time.monotonic() + 60
+            while not marker.exists():
+                assert time.monotonic() < deadline, "the write never reached commit"
+                assert not request.done(), request.result()
+                await asyncio.sleep(0.02)
+            written = _wal_bytes(folder)
+            _kill(server)
+            with pytest.raises(httpx.TransportError):
+                await request
+    return written
+
+
+async def _seeded(tmp_path: Path, **sizes: int) -> Path:
+    folder = tmp_path / "vault"
+    with api_server(tmp_path / "seed.log", folder) as server:
+        await _seed(server.base_url, **sizes)
+    return folder
+
+
+async def test_killing_the_server_before_a_rotation_commits_keeps_the_old_vault(
     tmp_path: Path,
 ) -> None:
-    with api_server(tmp_path / "server.log") as server:
-        token = await _seed(server.base_url)
-        key = await stored_vault_key()
-        before_raw, before_settings = await _state()
-        before = await _scan(key)
-        blocker = await _lock_row("entry-039")
-        try:
-            async with httpx.AsyncClient(base_url=server.base_url, timeout=60) as http:
-                await _send_and_kill_when_blocked(
-                    server,
-                    blocker,
-                    lambda: http.patch(
-                        "/master_password/update",
-                        json={
-                            "master_password": MASTER_PASSWORD,
-                            "new_master_password": NEW_MASTER_PASSWORD,
-                        },
-                        headers={"x-ciphermoth-session": token},
-                    ),
-                    "UPDATE passwords",
-                )
-        finally:
-            await blocker.close()
+    folder = await _seeded(tmp_path, attachments=3)
+    key = _key(folder)
+    before_state = await _state(folder)
+    before = await _scan(folder, key)
 
-    assert await _state() == (before_raw, before_settings)
-    assert_same_vault(before, await _scan(key))
-    [(hash_key,)] = await db_execute("SELECT hash_key FROM master_password")
-    assert verify_master_password(MASTER_PASSWORD, hash_key)
+    written = await _kill_before_commit(
+        tmp_path,
+        lambda http, headers: http.patch(
+            "/master_password/update",
+            json={
+                "master_password": MASTER_PASSWORD,
+                "new_master_password": NEW_MASTER_PASSWORD,
+            },
+            headers=headers,
+        ),
+    )
+
+    assert written > ATTACHMENT_BYTES, "the rotation never spilled into the WAL"
+    assert check_file(folder / VAULT_FILE) == []
+    assert await _state(folder) == before_state
+    assert_same_vault(before, await _scan(folder, key))
+    assert verify_master_password(MASTER_PASSWORD, _master(folder)[1])
 
 
-async def test_killing_the_server_mid_import_writes_nothing(tmp_path: Path) -> None:
-    with api_server(tmp_path / "server.log") as server:
-        token = await _seed(server.base_url, entries=5)
-        before = await _state()
-        rows = "\n".join(f"import-{i:04d},pass-{i}" for i in range(2000))
-        csv = f"name,password\nentry-004,overwritten\n{rows}\n".encode()
-        blocker = await admin_connection()
-        await blocker.execute("BEGIN")
-        await blocker.execute(
-            "INSERT INTO passwords (password_name, password_value) "
-            "VALUES ('import-1999', 'x')"
-        )
-        try:
-            async with httpx.AsyncClient(base_url=server.base_url, timeout=60) as http:
-                await _send_and_kill_when_blocked(
-                    server,
-                    blocker,
-                    lambda: http.post(
-                        "/passwords/import/csv",
-                        data={"on_conflict": "overwrite"},
-                        files={"file": ("x.csv", csv, "text/csv")},
-                        headers={"x-ciphermoth-session": token},
-                    ),
-                    "INSERT INTO passwords",
-                )
-        finally:
-            await blocker.close()
+async def test_killing_the_server_before_an_import_commits_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    folder = await _seeded(tmp_path, entries=5)
+    before = await _state(folder)
+    rows = "\n".join(f"import-{i:04d},pass-{i}" for i in range(2000))
+    csv = f"name,password\nentry-004,overwritten\n{rows}\n".encode()
 
-    assert await _state() == before
+    await _kill_before_commit(
+        tmp_path,
+        lambda http, headers: http.post(
+            "/passwords/import/csv",
+            data={"on_conflict": "overwrite"},
+            files={"file": ("x.csv", csv, "text/csv")},
+            headers=headers,
+        ),
+    )
+
+    assert check_file(folder / VAULT_FILE) == []
+    assert await _state(folder) == before
 
 
 @pytest.mark.stress
@@ -185,14 +198,13 @@ async def test_rotations_killed_at_random_points_are_all_or_nothing(
 ) -> None:
     passwords = [MASTER_PASSWORD, NEW_MASTER_PASSWORD]
     rng = random.Random(1729)
-    with api_server(tmp_path / "seed.log") as server:
-        await _seed(server.base_url, entries=150)
-    reference = await _scan(await stored_vault_key())
+    folder = await _seeded(tmp_path, entries=150, attachments=3)
+    reference = await _scan(folder, _key(folder))
     current = 0
     outcomes = {"old": 0, "new": 0}
 
     for attempt in range(25):
-        with api_server(tmp_path / f"server-{attempt}.log") as server:
+        with api_server(tmp_path / f"server-{attempt}.log", folder) as server:
             async with httpx.AsyncClient(base_url=server.base_url, timeout=60) as http:
                 resp = await http.post(
                     "/master_password/unlock",
@@ -215,9 +227,9 @@ async def test_rotations_killed_at_random_points_are_all_or_nothing(
                     await request
                 except httpx.TransportError:
                     pass
-        await asyncio.sleep(0.5)
 
-        [(hash_key,)] = await db_execute("SELECT hash_key FROM master_password")
+        assert check_file(folder / VAULT_FILE) == []
+        hash_key = _master(folder)[1]
         if verify_master_password(passwords[1 - current], hash_key):
             current = 1 - current
             outcomes["new"] += 1
@@ -225,7 +237,7 @@ async def test_rotations_killed_at_random_points_are_all_or_nothing(
             assert verify_master_password(passwords[current], hash_key)
             outcomes["old"] += 1
         assert_same_vault(
-            reference, await _scan(await stored_vault_key(passwords[current]))
+            reference, await _scan(folder, _key(folder, passwords[current]))
         )
 
     assert outcomes["old"] and outcomes["new"], outcomes

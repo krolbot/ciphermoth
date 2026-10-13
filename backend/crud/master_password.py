@@ -1,8 +1,7 @@
 import logging
 import os
-from typing import Literal
 
-from sqlalchemy import select, text, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crud.base import BaseCRUD
@@ -25,14 +24,19 @@ logger = logging.getLogger(__name__)
 _INVALID_KEY = "Invalid or expired vault key. Unlock the vault again."
 
 
-async def fetch_master_password(
-    session: AsyncSession, *, lock: Literal["share", "update"] | None = None
-) -> MasterPasswordModel | None:
-    stmt = select(MasterPasswordModel).order_by(MasterPasswordModel.id).limit(1)
-    if lock is not None:
-        stmt = stmt.with_for_update(read=lock == "share").execution_options(
-            populate_existing=True
-        )
+_DAMAGED = (
+    "The vault's key check does not match its master password. The vault file may "
+    "be damaged; restore a snapshot (docs/UPDATING.md)."
+)
+
+
+async def fetch_master_password(session: AsyncSession) -> MasterPasswordModel | None:
+    stmt = (
+        select(MasterPasswordModel)
+        .order_by(MasterPasswordModel.id)
+        .limit(1)
+        .execution_options(populate_existing=True)
+    )
     return (await session.execute(stmt)).scalar()
 
 
@@ -90,26 +94,19 @@ class MasterPasswordCRUD(BaseCRUD):
     async def is_initialized(self) -> bool:
         return await fetch_master_password(self.session) is not None
 
-    async def _get_model(
-        self, lock: Literal["share", "update"] | None = None
-    ) -> MasterPasswordModel:
-        model = await fetch_master_password(self.session, lock=lock)
+    async def _get_model(self) -> MasterPasswordModel:
+        model = await fetch_master_password(self.session)
         if not model:
             raise NotFound("No master password found.")
         return model
 
-    async def verify_vault_key(
-        self, key_derivation: str | None, *, exclusive: bool = False
-    ) -> str:
+    async def verify_vault_key(self, key_derivation: str | None) -> str:
         """
-        Check that ``key_derivation`` is the current vault key and lock the vault
-        row for the rest of the request's transaction.
-
-        The shared lock keeps a master password change from committing while a
-        request that was checked against the old key is still writing; a change
-        takes the exclusive lock, so it waits for those requests and any request
-        that arrives during it re-checks against the new key afterwards. The key is
-        checked once before locking so requests with a wrong key never take a lock.
+        Check that ``key_derivation`` is the current vault key, inside the
+        request's transaction. Write requests run under SQLite's write lock from
+        their first statement (BEGIN IMMEDIATE), so a master password change can
+        never commit between this check and their writes; read requests see the
+        key check and the rows of one snapshot.
         """
         if not key_derivation:
             raise InvalidKey("Key derivation is missing.")
@@ -118,51 +115,16 @@ class MasterPasswordCRUD(BaseCRUD):
             raise Forbidden("No master password set.")
         if not verify_key_check(key_derivation, model.key_check, model.salt):
             raise InvalidKey(_INVALID_KEY)
-        model = await fetch_master_password(
-            self.session, lock="update" if exclusive else "share"
-        )
-        if model is None or not verify_key_check(
-            key_derivation, model.key_check, model.salt
-        ):
-            raise InvalidKey(_INVALID_KEY)
         return key_derivation
-
-    async def store_key_check(
-        self, observed: MasterPasswordModel, key_derivation: bytes | str
-    ) -> bool:
-        """
-        Write a key check for ``key_derivation`` only if the row still holds the
-        salt, hash and key check that were read, so an unlock that raced a master
-        password change can never overwrite the newer key check.
-        """
-        unchanged = (
-            MasterPasswordModel.key_check.is_(None)
-            if observed.key_check is None
-            else MasterPasswordModel.key_check == observed.key_check
-        )
-        stored = await self.session.execute(
-            update(MasterPasswordModel)
-            .where(
-                MasterPasswordModel.id == observed.id,
-                MasterPasswordModel.salt == observed.salt,
-                MasterPasswordModel.hash_key == observed.hash_key,
-                unchanged,
-            )
-            .values(key_check=create_key_check(key_derivation, observed.salt))
-            .returning(MasterPasswordModel.id)
-            .execution_options(synchronize_session=False)
-        )
-        return stored.scalar() is not None
 
     async def unlock(self, master_password: str) -> str | None:
         """
         Return the vault key for ``master_password``, or None if it is wrong.
 
-        A verified password (re)writes a missing or stale key check. The result is
-        confirmed under the shared vault row lock, so a password that a concurrent
-        master password change has just replaced is refused, not turned into a key
-        that every route would reject. The read-only transaction is ended before
-        the slow KDFs so a queue of unlocks holds no database connections.
+        The transaction is ended before the slow KDFs so a queue of unlocks holds
+        no connection and no lock. The key is then confirmed against the current
+        key check, so a password that a concurrent change has just replaced is
+        refused instead of opening a session every route would reject.
         """
         model = await self._get_model()
         await self.session.commit()
@@ -170,13 +132,9 @@ class MasterPasswordCRUD(BaseCRUD):
             return None
         key = (await derive_key(model.salt, master_password)).decode()
         if not verify_key_check(key, model.key_check, model.salt):
-            if model.key_check is not None:
-                logger.warning(
-                    "Stored vault key check did not match the verified master "
-                    "password; replacing it."
-                )
-            await self.store_key_check(model, key)
-        current = await fetch_master_password(self.session, lock="share")
+            logger.error("The vault key check does not match the verified password.")
+            raise InvalidRequest(_DAMAGED)
+        current = await fetch_master_password(self.session)
         if current is None or not verify_key_check(
             key, current.key_check, current.salt
         ):
@@ -191,9 +149,6 @@ class MasterPasswordCRUD(BaseCRUD):
         key_derivation = await derive_key(salt, master_password)
         hash_key = await hash_password(master_password)
 
-        await self.session.execute(
-            text("LOCK TABLE master_password IN SHARE ROW EXCLUSIVE MODE")
-        )
         if await self.is_initialized():
             raise Forbidden("Master password already exists.")
 
@@ -210,7 +165,15 @@ class MasterPasswordCRUD(BaseCRUD):
     async def update_master_password(
         self, master_password: str, new_master_password: str
     ) -> MasterPasswordUpdate:
-        model = await self._get_model(lock="update")
+        """
+        Re-encrypt every entry and attachment under a key derived from the new
+        password and a new salt. The KDFs run before the write lock is taken; the
+        re-encryption then runs in one write transaction that first confirms the
+        vault still holds the salt, hash and key check the KDFs were based on.
+        """
+        model = await self._get_model()
+        observed = (model.salt, model.hash_key, model.key_check)
+        await self.session.commit()
         if not await password_matches(master_password, model.hash_key):
             raise Forbidden("Current master password is incorrect.")
 
@@ -221,6 +184,10 @@ class MasterPasswordCRUD(BaseCRUD):
         new_salt = os.urandom(16)
         new_key_derivation = await derive_key(new_salt, new_master_password)
         new_hash_key = await hash_password(new_master_password)
+
+        model = await self._get_model()
+        if (model.salt, model.hash_key, model.key_check) != observed:
+            raise InvalidKey(_INVALID_KEY)
 
         passwords = (
             await self.session.execute(

@@ -7,12 +7,12 @@ dependencies = [
     "fastapi>=0.139.0",
     "bcrypt>=5.0.0",
     "cryptography>=50.0.0",
-    "asyncpg>=0.31.0",
+    "aiosqlite>=0.22.1",
     "sqlalchemy>=2.0.51",
     "uvicorn[standard]>=0.51.0",
     "python-dotenv>=1.2.0",
     "pydantic-settings>=2.14.0",
-    "alembic>=1.18.5",
+    "greenlet>=3.5.3",
     "slowapi>=0.1.10",
     "pyzipper>=0.4.0",
     "python-multipart>=0.0.32",
@@ -22,7 +22,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "greenlet>=3.5.3",
     "hypothesis>=6",
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
@@ -30,8 +29,12 @@ dev = [
     "ty>=0.0.57",
 ]
 
+[tool.uv]
+python-preference = "only-managed"
+
 [project.scripts]
 ciphermoth = "cli:app"
+ciphermoth-admin = "vault_admin:app"
 
 [build-system]
 requires = ["hatchling"]

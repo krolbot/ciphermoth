@@ -73,3 +73,6 @@ Thumbs.db
 
 # Frontend
 node_modules/
+
+# Local SQLite vaults (CIPHERMOTH_DATA_DIR defaults to ./data)
+backend/data/

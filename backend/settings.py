@@ -1,5 +1,6 @@
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,15 +47,10 @@ class APISettings(BaseSettings):
     model_config = {"validate_assignment": True}
 
 
-class DBSettings(BaseSettings):
-    postgres_host: str = "127.0.0.1"
-    postgres_port: int = 5432
-    postgres_db: str = "ciphermoth"
-    postgres_user: str = "ciphermoth"
-    postgres_password: str = "ciphermoth"
-    pool_recycle: int = 900
+class StorageSettings(BaseSettings):
+    data_dir: Path = Path("data")
 
-    model_config = SettingsConfigDict(env_file=".db.env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="CIPHERMOTH_", extra="ignore")
 
 
 @lru_cache
@@ -63,5 +59,5 @@ def get_api_settings() -> APISettings:
 
 
 @lru_cache
-def get_db_settings() -> DBSettings:
-    return DBSettings()
+def get_storage_settings() -> StorageSettings:
+    return StorageSettings()

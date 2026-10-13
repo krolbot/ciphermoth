@@ -21,3 +21,7 @@ class NotFound(VaultError):
 
 class SessionRequired(VaultError):
     pass
+
+
+class VaultBusy(VaultError):
+    pass

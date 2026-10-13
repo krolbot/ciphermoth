@@ -1,11 +1,14 @@
 import json
 import os
+import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
 
 from helpers import encrypt
+from storage import VAULT_FILE
 from tests.integrity import (
     VaultContents,
     VaultIntegrityError,
@@ -20,9 +23,11 @@ from tests.support import (
     NEW_MASTER_PASSWORD,
     auth,
     create_vault,
+    data_dir,
     db_execute,
     engine,
     entry,
+    reset_vault,
     stored_vault_key,
     unlock,
 )
@@ -170,7 +175,7 @@ async def test_the_wrong_key_reports_every_encrypted_value(
             "kind",
         ),
         (
-            "UPDATE passwords SET updated = created - interval '1 day' "
+            "UPDATE passwords SET updated = datetime(created, '-1 day') "
             "WHERE password_name = 'GitHub'",
             None,
             "updated",
@@ -215,12 +220,13 @@ async def test_orphaned_attachments_and_duplicate_rows_are_reported(
 ) -> None:
     key = await _rich_vault(client)
     await db_execute(
-        "INSERT INTO master_password (salt, hash_key) SELECT salt, hash_key "
+        "INSERT INTO master_password (salt, hash_key, key_check) "
+        "SELECT salt, hash_key, key_check "
         "FROM master_password"
     )
-    async with engine.begin() as conn:
-        await conn.exec_driver_sql("SET LOCAL session_replication_role = replica")
-        await conn.exec_driver_sql("UPDATE password_attachments SET password_id = 999")
+    with closing(sqlite3.connect(data_dir() / VAULT_FILE)) as unchecked:
+        unchecked.execute("UPDATE password_attachments SET password_id = 999")
+        unchecked.commit()
 
     vault = await _scan(key, strict=False)
 
@@ -291,10 +297,7 @@ async def test_a_backup_restore_is_lossy_exactly_where_documented(
         headers=auth(await unlock(client)),
     )
     archive = resp.content
-    await db_execute(
-        "TRUNCATE master_password, passwords, password_attachments, settings "
-        "RESTART IDENTITY CASCADE"
-    )
+    await reset_vault()
     token = await create_vault(client)
     new_key = await stored_vault_key()
     resp = await client.post(
@@ -350,11 +353,6 @@ async def test_strictness_options_report_what_the_app_tolerates(
     client: httpx.AsyncClient,
 ) -> None:
     key = await _rich_vault(client)
-    await db_execute("UPDATE master_password SET key_check = NULL")
-    assert (await _scan(key)).key_check == "absent"
-    with pytest.raises(VaultIntegrityError, match="key_check: absent"):
-        await _scan(key, require_key_check=True)
-
     await db_execute("UPDATE passwords SET kind = '' WHERE password_name = 'Old'")
     with pytest.raises(VaultIntegrityError, match="kind"):
         await _scan(key)

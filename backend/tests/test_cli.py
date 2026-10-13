@@ -28,7 +28,6 @@ from tests.support import (
     db_execute,
     db_snapshot,
     stored_vault_key,
-    update_control_dir,
 )
 
 runner = CliRunner()
@@ -170,32 +169,6 @@ async def test_cli_rejects_a_wrong_master_password(live_server: str) -> None:
     )
     assert result.exit_code == 1
     assert "Invalid master password" in result.output
-
-
-async def test_cli_explains_an_update_in_progress(api: str) -> None:
-    (update_control_dir() / "maintenance.json").write_text("{}")
-
-    result = cli(api, "password", "list")
-
-    assert result.exit_code == 1
-    assert "installing an update" in result.output
-
-
-async def test_cli_works_on_a_vault_upgraded_from_v145(api: str) -> None:
-    ok(
-        cli(
-            api,
-            "password",
-            "create",
-            "legacy",
-            answers=["legacy-Pass-1", "legacy-Pass-1", "", "", "", "", ""],
-        )
-    )
-    await db_execute("UPDATE master_password SET key_check = NULL")
-
-    assert "legacy" in ok(cli(api, "password", "list"))
-    rows = await db_execute("SELECT key_check FROM master_password")
-    assert rows[0][0] is not None
 
 
 async def test_live_server_logs_do_not_contain_secrets(

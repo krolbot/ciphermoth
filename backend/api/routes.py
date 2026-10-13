@@ -7,7 +7,6 @@ from api.endpoints import (
     meta,
     password,
     settings,
-    updates,
 )
 from api.exceptions import validation_handler, vault_error_handler
 from api.responses import inject_responses
@@ -24,7 +23,6 @@ def make_api_router() -> APIRouter:
     api_router.include_router(meta.router, prefix="/meta")
     api_router.include_router(password.router, prefix="/passwords")
     api_router.include_router(settings.router, prefix="/settings")
-    api_router.include_router(updates.router, prefix="/updates")
 
     return api_router
 

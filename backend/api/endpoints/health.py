@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, Response, status
 from api.endpoints.deps import get_database
 from crud.engine import Database
 from crud.health import schema_state
-from crud.updates import maintenance_active
 from schemas import HealthResponse
 from settings import get_api_settings
 
@@ -29,5 +28,4 @@ async def get_health(
         status="ok" if healthy else "error",
         version=get_api_settings().version,
         schema_state=schema,
-        maintenance=maintenance_active(),
     )

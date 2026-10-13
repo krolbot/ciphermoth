@@ -35,10 +35,19 @@ async def get_vault_sessions(request: Request) -> VaultSessions:
 VaultSessionsDep = Annotated[VaultSessions, Depends(get_vault_sessions)]
 
 
+_READ_ONLY_METHODS = frozenset({"GET", "HEAD"})
+
+
 async def get_session(
-    database: Annotated[Database, Depends(get_database)],
+    request: Request, database: Annotated[Database, Depends(get_database)]
 ) -> AsyncGenerator[AsyncSession]:
-    async with database.transaction() as session:
+    """
+    One transaction per request. GET requests never write and run as read
+    transactions on a snapshot; every other method takes SQLite's write lock
+    before its first statement.
+    """
+    write = request.method not in _READ_ONLY_METHODS
+    async with database.transaction(write=write) as session:
         yield session
 
 
@@ -77,14 +86,19 @@ VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
 SessionTokenHeader = Annotated[str | None, Depends(_session_header)]
 
 
-async def get_credential(token: SessionTokenHeader) -> SessionToken:
+async def get_credential(
+    token: SessionTokenHeader, vault_sessions: VaultSessionsDep
+) -> SessionToken:
     """
     The session token a request carries in the ``x-ciphermoth-session`` header.
     ``Authorization`` is left alone, so a reverse proxy can still put its own
-    authentication in front of the vault.
+    authentication in front of the vault. A token that names no live session is
+    refused here, before the request touches the database, so it can never wait
+    for or hold the vault's write lock.
     """
     if token is None:
         raise SessionRequired("The vault is locked. Unlock it first.")
+    vault_sessions.resolve(token, refresh=False)
     return SessionToken(token)
 
 
@@ -99,12 +113,6 @@ async def get_vault_key_quietly(
     access: VaultAccessDep, credential: CredentialDep
 ) -> str:
     return await access.authorize(credential, refresh=False)
-
-
-async def get_vault_key_for_rotation(
-    access: VaultAccessDep, credential: CredentialDep
-) -> str:
-    return await access.authorize(credential, exclusive=True)
 
 
 VaultKeyDep = Annotated[str, Depends(get_vault_key)]
@@ -135,6 +143,8 @@ async def get_entry_name(
 EntryName = Annotated[str, Depends(get_entry_name)]
 
 
-async def require_master_password(crud: MasterPasswordCRUDDep) -> None:
+async def require_master_password(
+    crud: MasterPasswordCRUDDep, credential: CredentialDep
+) -> None:
     if not await crud.is_initialized():
         raise Forbidden("No master password set.")

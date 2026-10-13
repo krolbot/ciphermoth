@@ -13,10 +13,13 @@ class SettingsCRUD(BaseCRUD):
         super().__init__(session)
         self.vault_sessions = vault_sessions
 
-    async def _get_or_create(self) -> SettingsModel:
-        model = await self.session.scalar(
+    async def _stored(self) -> SettingsModel | None:
+        return await self.session.scalar(
             select(SettingsModel).order_by(SettingsModel.id).limit(1)
         )
+
+    async def _get_or_create(self) -> SettingsModel:
+        model = await self._stored()
         if model is None:
             model = SettingsModel(**SETTINGS_DEFAULTS)
             self.session.add(model)
@@ -36,15 +39,15 @@ class SettingsCRUD(BaseCRUD):
 
     async def inactivity_ms(self) -> int:
         stored = await self.session.scalar(
-            select(SettingsModel.inactivity_ms)
-            .order_by(SettingsModel.id)
-            .limit(1)
-            .with_for_update(read=True)
+            select(SettingsModel.inactivity_ms).order_by(SettingsModel.id).limit(1)
         )
         return SETTINGS_DEFAULTS["inactivity_ms"] if stored is None else stored
 
     async def get_settings(self) -> SettingsResponse:
-        return self._to_response(await self._get_or_create())
+        model = await self._stored()
+        if model is None:
+            return SettingsResponse(**SETTINGS_DEFAULTS)
+        return self._to_response(model)
 
     async def update_settings(self, data: SettingsUpdate) -> SettingsResponse:
         model = await self._get_or_create()

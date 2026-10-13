@@ -7,6 +7,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from crud.master_password import MasterPasswordCRUD
 from helpers import encrypt
+from models import SETTINGS_DEFAULTS
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
@@ -102,7 +103,9 @@ async def test_duplicate_or_misspelled_key_headers_do_not_help(
             headers=headers,
         )
         assert resp.status_code in (401, 403), headers
-    assert await db_execute("SELECT id FROM settings") == []
+    assert await db_execute("SELECT inactivity_ms FROM settings") == [
+        (SETTINGS_DEFAULTS["inactivity_ms"],)
+    ]
 
 
 async def test_concurrent_rotations_with_the_same_key_apply_once(
