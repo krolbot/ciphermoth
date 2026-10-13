@@ -2,17 +2,19 @@
 
 ## [Unreleased]
 
-CipherMoth now keeps the vault in one SQLite file instead of a PostgreSQL server: two containers and one volume, no database credentials, nothing to set up. This is a fresh start: the new version does not read a PostgreSQL vault.
+CipherMoth 2.0 keeps the vault in one SQLite file instead of a PostgreSQL server: two containers and one volume, no database credentials, nothing to set up. It requires a fresh installation: 2.0 does not read, convert or delete a PostgreSQL vault.
 
 ### Upgrading
 
 - **This release starts a new, empty vault.** It does not convert the PostgreSQL database of v1.6.0 and earlier, and leaves that database untouched. To bring entries along, make an encrypted backup in the old version and import it into the new vault (active entries only: not the trash, password history, attachments or settings). The steps, and how to go back, are in [docs/UPDATING.md](docs/UPDATING.md#moving-from-a-postgresql-release-v160-and-older).
 - **Use the new `docker-compose.prod.yml`.** A backend started from an older compose file stops with a message (exit code 78) instead of creating an empty vault inside its container. `POSTGRES_*` settings in `.env` are no longer used.
-- **One-click updates are paused.** The updater was built around PostgreSQL snapshots and is retired; installed updaters refuse this release. Update by hand: take a snapshot, then pull and restart (the update dialog shows the commands).
+- **One-click updates are paused.** The updater was built around PostgreSQL snapshots and is retired. A v1.6.0 app still shows the update, but its updater refuses it ("needs updater protocol 3") before changing anything. From 2.0 on, update by hand: take a snapshot, then pull and restart (the update dialog shows the commands).
+- **Encrypted backups (ZIP) are exports, not copies of the vault.** They hold active entries only. A complete copy is a snapshot (`ciphermoth-admin snapshot`).
+- **Unchanged:** the encryption, the backup format and the session protocol. Entry names, usernames and descriptions are still stored in plaintext; encrypting them is the next planned format change.
 
 ### Added
 
-- `ciphermoth-admin snapshot | check | restore` in the backend image: consistent snapshots of the running vault through SQLite's backup API, integrity checks of the vault or a snapshot, and an offline restore that keeps the vault it replaces. `make prod-snapshot` runs a snapshot.
+- `ciphermoth-admin snapshot | check | restore` in the backend image: consistent snapshots of the running vault through SQLite's backup API, integrity checks of the vault or a snapshot, and an offline restore. A restore refuses while anything has the vault open, keeps the vault it replaces byte for byte (WAL included), and leaves a complete vault at every point if it is interrupted. `make prod-snapshot` runs a snapshot.
 - The backend checks the vault file before serving: SQLite's quick integrity check, and that the file is a CipherMoth vault of a schema this release understands. A damaged, foreign or newer vault is refused without being changed.
 - A request that cannot get the vault's write lock in time gets `503` with `"code": "busy"` and `Retry-After`, instead of an error.
 
@@ -24,6 +26,8 @@ CipherMoth now keeps the vault in one SQLite file instead of a PostgreSQL server
 - Requests without a live session are refused before they touch the database.
 - Unlocking and the session heartbeat never wait for a running write; backups and imports check the master password before they take the write lock.
 - `GET /api/health` no longer reports `maintenance`.
+- The security headers are added by a plain ASGI middleware instead of Starlette's `BaseHTTPMiddleware`, whose cancel scope made a cancelled request leak its database connection.
+- A data folder the backend cannot write is refused at startup with the owner it found and the `chown` that fixes it.
 
 ### Removed
 

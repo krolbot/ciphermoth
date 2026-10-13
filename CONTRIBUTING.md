@@ -126,6 +126,7 @@ CipherMoth is built to run on a machine you trust, your home server, a VPS behin
 - Set `CIPHERMOTH_FRONTEND_ORIGIN` / `CORS_ORIGINS` to your actual domain and enable `DISABLE_DOCS=true`
 - Put everything behind a reverse proxy (nginx, Caddy) with HTTPS, and have it pass request paths through **unchanged** (see below)
 - Keep the `vault_data` volume on a local disk: SQLite's write-ahead log needs shared memory on one host, so network file systems and synced folders are not supported
+- To keep the vault in a host folder instead of the volume, mount it and point `CIPHERMOTH_DATA_DIR` at it, and give the folder to the backend's user first (`sudo chown -R 1000:1000 <folder>`); otherwise the backend refuses to start and says so. Docker Desktop (macOS, Windows) does not enforce host-folder ownership, so this only bites on Linux
 
 `docker-compose.prod.yml` publishes the UI and API on `127.0.0.1` only. That is what you want when the reverse proxy runs on the same host: the proxy can reach CipherMoth, nothing else on the network can. If other machines need to reach the ports directly (a proxy on another box, a LAN, a VPN such as Tailscale), set `CIPHERMOTH_BIND_ADDRESS=0.0.0.0` in your `.env`, or a specific interface address, and make sure HTTPS sits in front. Installs from before v1.4.6 keep whatever their own copy of the compose file says until it is replaced.
 

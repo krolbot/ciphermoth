@@ -65,7 +65,7 @@ The encrypted backup ZIP from the web UI or `cip backup` is a different thing: a
 
 ## Restore a snapshot
 
-Restoring replaces the vault, so CipherMoth must be stopped; `restore` refuses while the backend runs.
+Restoring replaces the vault, so CipherMoth must be stopped: `restore` refuses while the backend runs, or while any other program has the vault open.
 
 ```shell
 docker compose -f docker-compose.prod.yml stop backend
@@ -79,25 +79,35 @@ What `restore` does:
 
 1. Checks the snapshot (integrity, foreign keys, and that it is a CipherMoth vault of a schema this release understands) and refuses anything else without changing the vault.
 2. Copies it next to the vault as `vault.db.restoring` and checks the copy.
-3. Keeps the current vault in `/data/snapshots/replaced-<time>.db` (or, if SQLite cannot read it, its raw files in `/data/snapshots/replaced-<time>/`).
-4. Folds the current vault's write-ahead log into it and removes it, so an old log can never be replayed into the restored file.
-5. Renames the copy over `vault.db` in one atomic step.
+3. Takes the current vault for itself (SQLite's exclusive locking mode). If anything else has it open, it stops here and changes nothing.
+4. Keeps the current vault byte for byte, `vault.db` and its write-ahead log `vault.db-wal`, in a new folder `/data/snapshots/replaced-<time>/`. That folder is a complete vault: `ciphermoth-admin restore /data/snapshots/replaced-<time>/vault.db` brings it back.
+5. Folds the current vault's write-ahead log into `vault.db` with SQLite's own checkpoint, so an old log can never be replayed into the restored file. A log SQLite cannot fold (a damaged vault) is moved into the kept folder as `vault.db-wal.unfolded`, never deleted.
+6. Renames the copy over `vault.db` in one atomic step.
 
-If the restore is interrupted, `vault.db` is either the old vault or the restored one; run it again. After a restore, unlock with the master password the snapshot was taken with.
+If the restore is interrupted at any point, `vault.db` is a complete vault, either the old one or the restored one, and the old vault is also in the kept folder once step 4 is done; run the restore again to finish it. After a restore, unlock with the master password the snapshot was taken with.
 
 ## When CipherMoth refuses to start
 
-The backend checks the vault before serving anything and stops with a message in `docker compose -f docker-compose.prod.yml logs backend` when:
+The backend checks the vault before serving anything, through a read-only connection that changes neither `vault.db` nor its write-ahead log, and stops with a message in `docker compose -f docker-compose.prod.yml logs backend` when one of the following is true. Docker keeps restarting the container until you fix the cause; nothing is written meanwhile.
 
 - **"failed SQLite's integrity check" / "SQLite cannot open the vault file"**: the file is damaged (a failing disk, or a copy taken while it was being written). Restore the most recent snapshot.
 - **"was written by a newer CipherMoth"**: you went back to an older release. Update again, or restore a snapshot taken by this release.
 - **"is not a CipherMoth vault"**: the volume holds some other file as `vault.db`.
 - **"Another CipherMoth process is using /data"**: two backends share one volume. Run one.
+- **"CipherMoth cannot write its vault in ..."**: the data folder belongs to another user. The backend runs as uid 1000; a host folder mounted instead of the volume must belong to it (`sudo chown -R 1000:1000 <folder>`). The message names the owner it found.
 - **"no longer uses PostgreSQL"** (exit code 78): the container was started from a compose file of a PostgreSQL release; see the next section.
 
 ## Moving from a PostgreSQL release (v1.6.0 and older)
 
-Releases up to v1.6.0 stored the vault in PostgreSQL. This release starts a **fresh, empty SQLite vault**; it does not read the old database, and the old updater refuses to install it (its images declare a newer updater protocol). The old database volume is never touched, so you can always go back.
+Releases up to v1.6.0 stored the vault in PostgreSQL. CipherMoth 2.0 keeps it in SQLite and **requires a fresh installation**: it starts a new, empty vault, does not read or convert the old database, and never deletes it. You can always go back.
+
+What protects an existing install:
+
+- **The new images refuse the old compose file.** A 2.0 backend started from a v1.6.0 `docker-compose.prod.yml` (for example with `CIPHERMOTH_VERSION=latest` and `pull`) exits with code 78 and the message "CipherMoth now keeps the vault in SQLite and no longer uses PostgreSQL". It creates no vault, and the PostgreSQL container and its volume keep running untouched. Pin `CIPHERMOTH_VERSION=1.6.0` in `.env` and run `up -d` again to return to your old vault.
+- **One-click updates refuse 2.0.** The v1.6.0 app shows the update, but its updater stops with "needs updater protocol 3" before it changes anything. No updater can install 2.0; follow the steps below.
+- **`install.sh` stops** when it finds an old `ciphermoth_postgres_data` volume, before downloading anything, unless you confirm.
+
+Moving to 2.0:
 
 1. If you want to bring entries along, make an encrypted backup in the old version first (Settings, "Back up", or `cip backup`). It carries your active entries, not the trash, password history, attachments or settings.
 2. In your CipherMoth folder, stop the old stack, including the updater if you used it:

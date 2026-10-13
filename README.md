@@ -51,6 +51,9 @@ Open **[http://localhost:3000](http://localhost:3000)**, create your master pass
 one SQLite file in a persistent Docker volume, so it survives restarts and updates, and a consistent snapshot of it is
 one command away (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md)).
 
+> Coming from CipherMoth 1.x (PostgreSQL)? 2.0 needs a fresh install with a new vault; it never reads or deletes
+> your old database. The steps, and how to bring your entries along, are in [docs/UPDATING.md](./docs/UPDATING.md#moving-from-a-postgresql-release-v160-and-older).
+
 Rather read the script before piping it to a shell, set it up by hand, run it on a real server, or tweak the config?
 That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
@@ -73,7 +76,7 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 - cryptographically secure password generator (not the `Math.random()` kind) with a strength indicator on every entry
 - import from Chrome, Bitwarden, KeePass, Proton Pass, and friends via CSV, or restore an encrypted CipherMoth backup
 - encrypted backup export, a CLI (`ciphermoth`) for the terminal, and auto-lock plus clipboard-clearing (for the small things that matter ^^)
-- notices new releases (from your browser, never the server) and shows the two commands to update, with a consistent, integrity-checked snapshot of the vault first; release images are signed (Sigstore / cosign)
+- notices new releases (from your browser, never the server) and shows the commands to update, with a consistent, integrity-checked snapshot of the vault first; release images are signed (Sigstore / cosign)
 
 ## Who it's for (and who it isn't)
 
@@ -115,7 +118,8 @@ How it works:
 - backups are AES-256 encrypted ZIPs locked with your master password, but the ZIP format derives that key with
   PBKDF2-SHA1 at 1,000 iterations, which is far cheaper to brute-force than the vault itself. Keep backup files
   somewhere safe, and use a strong master password. A backup holds your active entries only, not the trash, password
-  history, attachments or settings;
+  history, attachments or settings, so it is an export, not a copy of your vault; for a complete copy, take a
+  snapshot (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md#snapshots));
 - the UI and API listen on `127.0.0.1` by default; exposing them to other machines is an explicit setting;
 - the password generator uses `crypto.getRandomValues` with rejection sampling, no `Math.random()`, no shortcuts;
 
