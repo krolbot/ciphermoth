@@ -139,6 +139,17 @@ docker compose -f docker-compose.prod.yml cp backend:/tmp/ciphermoth_backup_2026
 
 The **Backup** button in the web UI downloads the same encrypted ZIP straight to your machine, which is usually easier.
 
+## Vault snapshots (`ciphermoth-admin`)
+
+`ciphermoth-admin` is a second command in the backend image. It works on the vault file itself rather than through the API, so it needs no master password and runs where the file is:
+
+```shell
+docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot   # complete, consistent copy into /data/snapshots
+docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin check      # integrity check of the vault (or of a snapshot path)
+```
+
+`restore` replaces the vault with a snapshot and runs only while CipherMoth is stopped. A snapshot is the whole vault (trash, history, attachments, settings) under the master password of the moment it was taken; a backup ZIP is a portable export of your active entries. See [UPDATING.md](UPDATING.md#snapshots).
+
 ## What the CLI does with your secrets
 
 It follows the same zero-trust rules as the web UI, and it's small enough to read in one sitting ([`backend/cli.py`](../backend/cli.py)).

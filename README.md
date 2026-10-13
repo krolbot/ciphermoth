@@ -10,7 +10,7 @@ A simple, self-hosted password manager with **no accounts, no cloud, and no witn
 [![Release](https://img.shields.io/github/v/release/mr-grj/ciphermoth?color=000000&label=release)](https://github.com/mr-grj/ciphermoth/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-000000.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13-000000.svg)](https://www.python.org/)
-[![PostgreSQL](https://img.shields.io/badge/postgres-16-000000.svg)](https://www.postgresql.org/)
+[![SQLite](https://img.shields.io/badge/sqlite-3.53-000000.svg)](https://www.sqlite.org/)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-7dd3c0.svg?labelColor=000000)](#get-started)
 
 </div>
@@ -27,7 +27,7 @@ I wanted something that lives on my own machine, has no telemetry, talks to no t
 to announce it's been acquired and migrating to some new platform. No Google. No OAuth. No analytics pinging home. Nothing.
 
 So there's **CipherMoth**. It lives on your hardware, speaks to nobody, and keeps the passwords encrypted with a key only
-you know. One master password unlocks everything. If someone gets the database, they get encrypted blobs, not your passwords.
+you know. One master password unlocks everything. If someone gets the vault file, they get encrypted blobs, not your passwords.
 
 ## Screenshots
 
@@ -40,15 +40,16 @@ you know. One master password unlocks everything. If someone gets the database, 
 
 ## Get started
 
-CipherMoth runs on your own machine with [Docker](https://docs.docker.com/get-docker/). One command sets a strong database password, pulls
-the **signed** images, and starts everything:
+CipherMoth runs on your own machine with [Docker](https://docs.docker.com/get-docker/): two containers and one volume, no
+database server, nothing to configure. One command pulls the **signed** images and starts everything:
 
 ```shell
 curl -fsSL https://raw.githubusercontent.com/mr-grj/ciphermoth/master/install.sh | sh
 ```
 
-Open **[http://localhost:3000](http://localhost:3000)**, create your master password, and you're in. The vault
-lives in a persistent Docker volume, so it survives restarts and updates.
+Open **[http://localhost:3000](http://localhost:3000)**, create your master password, and you're in. The whole vault is
+one SQLite file in a persistent Docker volume, so it survives restarts and updates, and a consistent snapshot of it is
+one command away (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md)).
 
 Rather read the script before piping it to a shell, set it up by hand, run it on a real server, or tweak the config?
 That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
@@ -72,7 +73,7 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 - cryptographically secure password generator (not the `Math.random()` kind) with a strength indicator on every entry
 - import from Chrome, Bitwarden, KeePass, Proton Pass, and friends via CSV, or restore an encrypted CipherMoth backup
 - encrypted backup export, a CLI (`ciphermoth`) for the terminal, and auto-lock plus clipboard-clearing (for the small things that matter ^^)
-- notices new releases and can update itself, opt-in and signature-verified (Sigstore / cosign), with a verified database snapshot and automatic rollback if anything goes wrong
+- notices new releases (from your browser, never the server) and shows the two commands to update, with a consistent, integrity-checked snapshot of the vault first; release images are signed (Sigstore / cosign)
 
 ## Who it's for (and who it isn't)
 
@@ -101,7 +102,7 @@ How it works:
   attachments and their file names) are encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) using a key derived from
   your master password via **Argon2id** (OWASP 2024 interactive profile), unique per vault thanks to a random salt;
 - **not encrypted yet:** each entry's **name, username and description**, plus its type, favorite flag, timestamps and
-  attachment sizes. Someone with the database can see which entries you have and the usernames on them, just not the
+  attachment sizes. Someone with the vault file can see which entries you have and the usernames on them, just not the
   passwords. Encrypting those too is planned;
 - when you unlock, the server derives the key and keeps it in memory for a **session**; your browser and the CLI only
   get a random session token (the browser keeps it in `sessionStorage` for that tab), never the key, and no route
@@ -118,7 +119,7 @@ How it works:
 - the UI and API listen on `127.0.0.1` by default; exposing them to other machines is an explicit setting;
 - the password generator uses `crypto.getRandomValues` with rejection sampling, no `Math.random()`, no shortcuts;
 
-**It protects against** someone who steals the database or disk (they get ciphertext, a bcrypt hash, and the entry
+**It protects against** someone who steals the vault file, a snapshot or the disk (they get ciphertext, a bcrypt hash, and the entry
 names, usernames and descriptions listed above), accidental server-side exposure (the server never persists the master
 password, the derived key or session tokens), and casual inspection of stored data. A session token that leaks works
 only until that session ends; it never reveals the key.
@@ -133,8 +134,8 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 
 | Layer | Tech |
 |---|---|
-| Backend | Python 3.13, FastAPI, SQLAlchemy 2.0, asyncpg |
-| Database | PostgreSQL 16 |
+| Backend | Python 3.13, FastAPI, SQLAlchemy 2.0, aiosqlite |
+| Database | SQLite 3.53 (one file, WAL, full sync) |
 | Frontend | React 19, Vite, MUI v9, easy-peasy |
 | Package manager | uv (backend), npm (frontend) |
 | Infrastructure | Docker, Docker Compose v2 |
@@ -142,10 +143,9 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 ## Docs
 
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** - hacking on CipherMoth, self-hosting on a server, configuration, and updates
-- **[docs/UPDATING.md](./docs/UPDATING.md)** - updating by hand or with one click, what the updater guarantees, and manual recovery
+- **[docs/UPDATING.md](./docs/UPDATING.md)** - updating, snapshots, restoring a snapshot, and moving from a PostgreSQL install
 - **[docs/CLI.md](./docs/CLI.md)** - the `ciphermoth` command-line reference. A plain Docker install already has it: `install.sh` leaves a `cip` script in your CipherMoth folder, so `./cip password list` just works (no Python, no clone)
 - **[SECURITY.md](./SECURITY.md)** - reporting a vulnerability
-- **[testdata/golden](./testdata/golden/README.md)** - which older versions' vaults and backups open in this release, proven by tests against vaults those versions created
 - Logo, wordmark, and favicon live in [`docs/brand/`](./docs/brand)
 
 ## License

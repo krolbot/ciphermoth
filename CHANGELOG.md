@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+CipherMoth now keeps the vault in one SQLite file instead of a PostgreSQL server: two containers and one volume, no database credentials, nothing to set up. This is a fresh start: the new version does not read a PostgreSQL vault.
+
+### Upgrading
+
+- **This release starts a new, empty vault.** It does not convert the PostgreSQL database of v1.6.0 and earlier, and leaves that database untouched. To bring entries along, make an encrypted backup in the old version and import it into the new vault (active entries only: not the trash, password history, attachments or settings). The steps, and how to go back, are in [docs/UPDATING.md](docs/UPDATING.md#moving-from-a-postgresql-release-v160-and-older).
+- **Use the new `docker-compose.prod.yml`.** A backend started from an older compose file stops with a message (exit code 78) instead of creating an empty vault inside its container. `POSTGRES_*` settings in `.env` are no longer used.
+- **One-click updates are paused.** The updater was built around PostgreSQL snapshots and is retired; installed updaters refuse this release. Update by hand: take a snapshot, then pull and restart (the update dialog shows the commands).
+
+### Added
+
+- `ciphermoth-admin snapshot | check | restore` in the backend image: consistent snapshots of the running vault through SQLite's backup API, integrity checks of the vault or a snapshot, and an offline restore that keeps the vault it replaces. `make prod-snapshot` runs a snapshot.
+- The backend checks the vault file before serving: SQLite's quick integrity check, and that the file is a CipherMoth vault of a schema this release understands. A damaged, foreign or newer vault is refused without being changed.
+- A request that cannot get the vault's write lock in time gets `503` with `"code": "busy"` and `Retry-After`, instead of an error.
+
+### Changed
+
+- Storage: SQLite (3.51.3 or newer, which fixes the WAL-reset corruption bug; the images ship 3.53) in WAL mode with full sync, foreign keys and `secure_delete`. The vault file is created `0600` in a `0700` folder. Only one backend can serve a vault folder at a time.
+- The backend images run uv's managed CPython instead of the Debian Python image, so they carry a current SQLite.
+- Write requests are serialized by SQLite's write lock, taken before their first statement; reads see a consistent snapshot and keep working while a write runs. A master password change derives its keys before it takes the lock, so other requests wait only for the re-encryption.
+- Requests without a live session are refused before they touch the database.
+- `GET /api/health` no longer reports `maintenance`.
+
+### Removed
+
+- PostgreSQL, `asyncpg`, Alembic and their configuration, the one-click updater (`ciphermoth-updater` image, `autoupdate` profile, `POST /api/updates/apply`, `GET /api/updates/apply/status`, maintenance mode, the migration gate), `make setup` and `backend/.db.env`.
+- The repair of vaults without a key check (created before v1.4.6): every vault now has one from the start, and a key check that does not match a verified master password fails closed.
+
 ## [1.6.0] - 2026-10-13
 
 Unlocking with a session is now the only way in: the vault key never leaves the server, for any client. This retires the compatibility path for v1.4.x apps and CLIs that v1.5.0 announced. Your vault, its database and your backups stay exactly as they are.

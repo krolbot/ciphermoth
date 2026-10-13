@@ -4,10 +4,9 @@ This doc is for people who want to **hack on CipherMoth** or **self-host it thei
 
 ## Development
 
-Clone the repo, then start the dev stack. It builds from your working tree and hot-reloads, and it's a throwaway sandbox with its own database, completely separate from any real vault.
+Clone the repo, then start the dev stack. It builds from your working tree and hot-reloads, and it's a throwaway sandbox with its own vault, completely separate from any real vault.
 
 ```shell
-make setup   # creates backend/.db.env with a generated database password
 make dev     # build + start with hot-reload
 ```
 
@@ -20,7 +19,7 @@ make dev     # build + start with hot-reload
 | Start it with | `make dev` | `docker compose -f docker-compose.prod.yml up -d` (or `make prod-up`) |
 | Source | built from your working tree, hot-reload | prebuilt GHCR images |
 | Compose project | `ciphermoth-dev` | `ciphermoth` |
-| Database volume | `ciphermoth-dev_postgres_data` (disposable) | `ciphermoth_postgres_data` (persistent) |
+| Vault volume (one SQLite file) | `ciphermoth-dev_vault_data` (disposable) | `ciphermoth_vault_data` (persistent) |
 | UI / API | `:3000` / `:8000` | `:3000` / `:8000` (configurable) |
 | Badge in app bar | amber **DEV** | calm **LIVE** |
 
@@ -32,23 +31,22 @@ All `make` commands run locally, not inside Docker.
 
 | Command | What it does |
 |---|---|
-| `make setup` | Create `backend/.db.env` with a generated database password |
 | `make dev` | Build and start the dev stack with hot-reload (UI `:3000`, API `:8000`) |
-| `make down` | Stop the dev stack, keeping its database volume |
+| `make down` | Stop the dev stack, keeping its vault volume |
 | `make clean` | Remove the dev stack + its volume, delete `__pycache__` |
 | `make all` | `clean` then `dev`, a fresh dev sandbox |
-| `make prod-up` | Pull and start the real vault from GHCR images (needs a sibling `.env`) |
-| `make prod-down` | Stop the real vault, keeping its database volume |
-| `make clean-prod` | Destroy the real vault's database volume (guarded, asks to confirm) |
+| `make prod-up` | Pull and start the real vault from GHCR images (an optional sibling `.env` holds its settings) |
+| `make prod-snapshot` | Write a consistent snapshot of the real vault into its volume |
+| `make prod-down` | Stop the real vault, keeping its vault volume |
+| `make clean-prod` | Destroy the real vault's volume (guarded, asks to confirm) |
 | `make lint` | `ruff check` (backend) + ESLint (frontend) |
 | `make typecheck` | `ty check` (backend) |
 | `make format` | Auto-format backend (ruff) and frontend (Prettier) |
 | `make check` | Lint + type check + format check, no writes, what CI runs |
-| `make test` | Backend tests against a throwaway Postgres (needs Docker), then the frontend tests |
+| `make test` | Backend tests on a throwaway SQLite vault (no Docker needed), then the frontend tests |
 | `make test-stress` | Every backend test, including fuzzing with many more examples, random process kills and scale tests |
-| `make test-updater-e2e` | Builds release-candidate images and drives real one-click updates, crashes and rollbacks in throwaway Compose projects (needs Docker and network access) |
 
-`make lint/typecheck/format/check` need [uv](https://docs.astral.sh/uv/) with dev deps (`uv sync --group dev` inside `backend/`) and Node.js with npm deps (`npm install` inside `frontend/`).
+`make lint/typecheck/format/check` need [uv](https://docs.astral.sh/uv/) with dev deps (`uv sync --group dev` inside `backend/`) and Node.js with npm deps (`npm install` inside `frontend/`). The backend only runs on SQLite 3.51.3 or newer (older releases have the WAL-reset corruption bug), so `backend/pyproject.toml` tells uv to use its own managed Python builds, which bundle a current SQLite; a system Python with an older SQLite is refused at startup. If an old `backend/.venv` was made with another Python, recreate it: `rm -rf backend/.venv && uv sync --group dev`.
 
 ### Before you push
 
@@ -56,11 +54,11 @@ Run `make check` and `make test`. Together they mirror CI: `ruff check` + `ruff 
 
 ### Tests
 
-`make test` starts a disposable PostgreSQL in a tmpfs container (`127.0.0.1:55432`), runs the backend suite and removes the container. The suite refuses to run against any database that is not local and named `*_test`, because it truncates tables. To iterate faster, start your own container and run pytest directly:
+`make test` runs the backend suite on a throwaway SQLite vault in a fresh temporary folder (the suite never opens a vault you did not create for it), then the frontend tests. To iterate faster, run pytest directly:
 
 ```shell
 cd backend
-CIPHERMOTH_TEST_DB_URL=postgresql://ciphermoth_test:ciphermoth_test@127.0.0.1:55432/ciphermoth_test uv run pytest -x
+uv run pytest -x
 ```
 
 What the suite protects, and where:
@@ -72,53 +70,25 @@ What the suite protects, and where:
 | The CLI refuses servers older than v1.5.0, and the released v1.4.7 CLI is told to update without changing anything | `test_cli.py`, with that CLI frozen in `testdata/clients` |
 | The frontend image validates its API URL and renders its CSP | `docker/frontend/runtime-config.test.mjs` (part of `make test`) |
 | The CSP lets the UI reach its API and blocks every other destination | `docker/frontend/browser/csp.browser.test.mjs`, run with `make test-browser` (builds the image, drives Chromium) |
-| Old vaults still open, upgrade and restore | `test_golden.py` with the fixtures in [`testdata/golden`](testdata/golden/README.md) |
+| The vault file: initialization, file modes, identity and version checks, SQLite version, the one-process lock, snapshots, restores, corruption, busy handling, reads next to a writer | `test_storage.py` |
 | Cryptography is byte-compatible | `test_vectors.py` with [`testdata/vectors`](testdata/vectors/README.md), shared with `frontend/src/lib/totp.test.js` |
 | Imports cannot damage a vault | `test_imports.py` (including Hypothesis property tests), `test_hostile_files.py` |
-| Failed or interrupted writes change nothing | `test_failures.py`, `test_process_kill.py` |
+| Failed or interrupted writes change nothing, also when the server is killed right before a commit with megabytes of uncommitted pages in the WAL | `test_failures.py`, `test_process_kill.py` (with `tests/paused_server.py`) |
 | The CLI and `scripts/cip` keep their contracts | `test_cli.py` |
-| The updater refuses, verifies, snapshots, rolls back and recovers from crashes | `test_updates.py`, `test_updater_recovery.py`, and real updates in Compose with `make test-updater-e2e` |
-| Maintenance mode, `/api/health` and the migration gate | `test_maintenance.py`, `test_migration_gate.py` |
 
 Tests authenticate the way clients do: `auth(token)` sends a session token from `create_vault()` or `unlock()`. `stored_vault_key()` derives the key from the database when a test needs the key itself (to check ciphertext, or to prove the API never returns or accepts it), and `retired_key_header(key)` builds the v1.4.x header that must always be refused.
 
-`backend/tests/integrity.py` reads any vault (any schema from v1.0.0 on) and decrypts every field strictly, reporting what the application's lenient read path would hide. Use it whenever a change touches storage, encryption or migrations: `read_vault` before and after, then `assert_same_vault`.
+`backend/tests/integrity.py` reads a vault and decrypts every field strictly, reporting what the application's lenient read path would hide. Use it whenever a change touches storage or encryption: `read_vault` before and after, then `assert_same_vault`. To hold SQLite's write lock from a test (a second process mid-write), use `write_lock_held()`; `wait_for_queued_requests(n)` waits until n requests are queued behind it.
 
 Property tests run 25 derandomized examples by default so the suite is fast and reproducible; `make test-stress` (or `HYPOTHESIS_PROFILE=stress`) runs hundreds of random ones. Tests marked `@pytest.mark.stress` only run under `make test-stress`.
 
-### Database migrations
+### The vault file and schema changes
 
-Schema is managed with Alembic. The backend runs `alembic upgrade head` automatically on every startup, so you never need to run migrations by hand.
+The vault is one SQLite file (`vault.db` in `CIPHERMOTH_DATA_DIR`, `/data` in the image). `storage.py` owns everything about the file: the connection settings (WAL, `synchronous=FULL`, foreign keys, `secure_delete`, a 15 s busy timeout), creating the schema in an empty file in one transaction, the identity check (`application_id` and `user_version`), snapshots, restores and the folder lock. `crud/engine.py` turns it into SQLAlchemy sessions.
 
-To create a migration after changing a model (needs a running database):
+How writes stay correct without row locks: a `GET` request runs in a read transaction and sees one consistent snapshot; every other request starts with `BEGIN IMMEDIATE`, so it holds SQLite's single write lock from its first statement (including the session key check) until it commits. Writers are therefore serialized, and a master password change can never interleave with another write. Keep two rules: **a `GET` route must never write**, and anything slow (key derivation) runs before the write lock is taken, as `/unlock`, `/create` and the master password change do. Session tokens are checked in memory before any database access, so a request without a live session never waits for or holds the write lock. A request that cannot get the lock within the busy timeout gets `503` with `"code": "busy"`.
 
-```shell
-cd backend
-uv run alembic revision --autogenerate -m "describe the change"
-```
-
-Migration files land in `migrations/ciphermoth/versions/`.
-
-#### Schema changes and the updater
-
-`test_release_keeps_the_v145_alembic_head` pins the head at `9c0d1e2f3a4b`. The updater now meets the safety contract below (since v1.5.1), but **do not add a revision until updater v2 is widely deployed**: installs update with the updater they already run, and every release before v1.5.1 shipped one that cannot restore a database. Move the pin deliberately, in a release whose notes tell older installs to update the updater first ([docs/UPDATING.md](docs/UPDATING.md)), and fold the startup-added `key_check` column into an idempotent revision (`ADD COLUMN IF NOT EXISTS`) at the same time.
-
-The contract, each item a test in `backend/tests/test_updates.py` (they were strict-xfail until v1.5.1):
-
-1. **No update without a restorable snapshot.** The backend is stopped behind a maintenance flag, the dump is restored into a temporary database and compared table by table; if anything fails the update stops and nothing changes.
-2. **Rollback restores the snapshot** before the previous images start, into a fresh database swapped in atomically. Downgrading with Alembic is not enough: `test_downgrade_cannot_roll_back_a_vault_that_uses_the_trash` shows a v1.4.x vault whose trash shares a name with an active entry cannot be downgraded past `5e6f7a8b9c0d`.
-3. **An interrupted update is reconciled on restart** from the updater's journal: abandoned before it changed anything, rolled back after, completed once committed. `.env` always ends up naming the version that runs.
-4. **The updater updates itself, or tells the user to recreate it.** It never recreates its own container; the result and the UI give the one command, and the backend refuses one-click updates through an updater older than `REQUIRED_UPDATER_PROTOCOL` (`backend/update_protocol.py`).
-
-What keeps the first schema change safe even on old installs:
-
-- `backend/entrypoint.sh` runs `migration_gate.py` before `alembic upgrade head`. With a migration pending, it refuses to start while an updater older than protocol 2 is applying the release (or while a protocol 2 update has no verified snapshot), so an old updater's image-only rollback finds an untouched database. Manual updates are not affected.
-- Release images carry `io.ciphermoth.min-updater-protocol`; the updater refuses a release that needs a newer protocol than it speaks. Raise `REQUIRED_UPDATER_PROTOCOL`, the label and `PROTOCOL` in `docker/updater/updater.py` together (`test_migration_gate.py` checks they agree).
-- While the updater holds the maintenance flag, the API answers 503 to everything but status checks (`api/maintenance.py`), so a restore after a failed update loses nothing.
-- Manual updates (`docker compose pull && up -d`) still migrate with no snapshot and no rollback; the gate deliberately lets them through. Updater v2 support alone is therefore not enough for the first schema-changing release: that release must also define what a manual update does before migrating (for example a pre-migration snapshot in the backend entrypoint) and how a manual user recovers, and its notes must tell manual users to back up first.
-- Schema changes go through Alembic only. `crud/runtime_schema.py` (the startup-added `key_check` column) is not gated and must not grow.
-
-Updater tests come in three tiers: `test_updates.py` and `test_updater_recovery.py` drive the real updater against a scripted Docker/PostgreSQL world (`tests/fake_updater_world.py`) and kill it at every step boundary (`CIPHERMOTH_UPDATER_FAULT=kill:<step>`); `make test-updater-e2e` builds the candidate and synthetic future releases (including a migration that fails halfway) and runs real updates, crashes and rollbacks in isolated Compose projects named `cm-e2e-*`, starting from the published previous release and its own updater. Locally built images are unsigned, so the e2e updater images replace `cosign` with a stub that says so; `test_real_cosign_*` use the real one against the published signatures.
+There is no migration framework yet, because there is only one schema. The file records its schema in `PRAGMA user_version` (`storage.SCHEMA_VERSION`, currently 1), and CipherMoth refuses a file with a newer or unknown schema without changing it. The first schema change must add, in the same release: an ordered upgrade step for each version, run in one write transaction after an automatic snapshot (`storage.snapshot`), a raised `SCHEMA_VERSION`, and a test that upgrades a vault written by the previous release.
 
 ## Configuration
 
@@ -131,6 +101,7 @@ Everything is optional, the defaults work fine for local use.
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed frontend origins |
 | `DISABLE_DOCS` | `false` | Set `true` to hide `/docs` and `/redoc` |
 | `DEBUG` | `false` | FastAPI debug mode |
+| `CIPHERMOTH_DATA_DIR` | `data` (`/data` in the image) | Folder that holds `vault.db` and `snapshots/`, created `0700` |
 | `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
 
 **Frontend:**
@@ -154,13 +125,13 @@ CipherMoth is built to run on a machine you trust, your home server, a VPS behin
 
 - Set `CIPHERMOTH_FRONTEND_ORIGIN` / `CORS_ORIGINS` to your actual domain and enable `DISABLE_DOCS=true`
 - Put everything behind a reverse proxy (nginx, Caddy) with HTTPS, and have it pass request paths through **unchanged** (see below)
-- Don't expose Postgres (port `5432`) to the outside world
+- Keep the `vault_data` volume on a local disk: SQLite's write-ahead log needs shared memory on one host, so network file systems and synced folders are not supported
 
 `docker-compose.prod.yml` publishes the UI and API on `127.0.0.1` only. That is what you want when the reverse proxy runs on the same host: the proxy can reach CipherMoth, nothing else on the network can. If other machines need to reach the ports directly (a proxy on another box, a LAN, a VPN such as Tailscale), set `CIPHERMOTH_BIND_ADDRESS=0.0.0.0` in your `.env`, or a specific interface address, and make sure HTTPS sits in front. Installs from before v1.4.6 keep whatever their own copy of the compose file says until it is replaced.
 
 **Pass request paths through unchanged.** Entry names can contain `/`, which clients send as `%2F`. A proxy that decodes `%2F` before forwarding turns a request for the entry `x/purge` into a request to purge the entry `x`. Caddy's `reverse_proxy` (also inside `handle_path`) and nginx's `proxy_pass http://127.0.0.1:8000;` (no path after the address) pass the path unchanged. nginx's `proxy_pass http://127.0.0.1:8000/;` or `.../api/;` (with a path, including any path-prefix setup) decodes it. Since v1.4.7 the web UI and CLI also name the entry in a header, so the API refuses such a rewritten request instead of acting on another entry, but older clients get no such protection and the entries stay unreachable until the proxy is fixed.
 
-Vault sessions live in the backend's memory. Run exactly one backend process (the image's `uvicorn --workers 1`); with several workers a session opened by one would be unknown to the others. The session token travels in the `x-ciphermoth-session` header, which proxies forward by default; don't log it, because it opens the vault until the session ends. `Authorization` is left to the proxy, so Basic auth or a forward-auth login in front of CipherMoth keeps working.
+Vault sessions live in the backend's memory. Run exactly one backend process (the image's `uvicorn --workers 1`); with several workers a session opened by one would be unknown to the others. A second backend on the same volume refuses to start (it cannot take the vault folder's lock). The session token travels in the `x-ciphermoth-session` header, which proxies forward by default; don't log it, because it opens the vault until the session ends. `Authorization` is left to the proxy, so Basic auth or a forward-auth login in front of CipherMoth keeps working.
 
 One thing to know about rate limiting behind a proxy: the limits are keyed on the client IP, which the app reads from the network connection. Behind a reverse proxy every request looks like it comes from the proxy, so the limits become global instead of per client. If you want per-client rate limiting, configure your proxy to preserve the real client address (and only trust `X-Forwarded-For` from the proxy itself).
 
@@ -168,25 +139,14 @@ One thing to know about rate limiting behind a proxy: the limits are keyed on th
 
 CipherMoth notices when a newer release is out and shows an **Update** chip in the app bar. The check runs **in your browser** against GitHub's public API, the server never phones home, and you can turn it off under Settings, "Check for updates", if you'd rather your instance talk to nobody at all.
 
-**Updating by hand** (always available): edit `CIPHERMOTH_VERSION` in your `.env` (or leave it `latest`) and re-run:
+**Updating:** take a snapshot, then pull and restart:
 
 ```shell
+docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
 docker compose -f docker-compose.prod.yml pull && \
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-**One-click updates** (opt-in): if you'd like the **Update** button to do this for you, start the stack with the self-updater enabled (the installer offers to do this for you):
+`CIPHERMOTH_VERSION` in your `.env` (or `latest`) decides which release runs. One-click updates are paused in this release: the previous updater was built around PostgreSQL and was retired with it.
 
-```shell
-docker compose -f docker-compose.prod.yml --profile autoupdate up -d
-# from a repo clone you can also use: make prod-up-autoupdate
-```
-
-This adds a small `updater` container that holds the Docker socket. Because it can restart your stack, it's **off by default** and deliberately careful:
-
-- It **verifies every image is signed** (cosign / Sigstore) by CipherMoth's official release workflow before running it, a compromised registry alone can't slip you a malicious build. That includes the version it would roll back to.
-- It takes a **verified database snapshot** (restored and compared before it continues), and if the new version or its database migration fails, it **restores the snapshot and the previous version automatically**. While it works, the API pauses writes, so nothing you save is lost.
-- It survives being interrupted: after a crash or a reboot it finishes or rolls back from its journal.
-- It has **no network listener**, it only reacts to a file the backend writes after an unlocked-vault, rate-limited request. Your master password is never involved.
-
-If the updater isn't enabled, the button simply shows you the manual command above. Updaters from v1.5.0 and older need a one-time upgrade after you reach v1.5.1; the app shows the command. Details, snapshots and manual recovery: [docs/UPDATING.md](docs/UPDATING.md).
+Details, snapshots, restores and moving from a PostgreSQL release: [docs/UPDATING.md](docs/UPDATING.md).
