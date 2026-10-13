@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -289,3 +289,31 @@ def api_server(
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
+
+
+def crash_after_committing(folder: Path, sql: str) -> None:
+    """Commit ``sql`` from another process and kill it before it can checkpoint,
+    so the committed change exists only in the WAL."""
+    script = (
+        "import os, sqlite3, sys\n"
+        "connection = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+        "connection.execute('PRAGMA wal_autocheckpoint=0')\n"
+        "connection.execute(sys.argv[2])\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script, str(folder / VAULT_FILE), sql], check=True
+    )
+    assert (folder / f"{VAULT_FILE}-wal").stat().st_size > 0
+
+
+def corrupt_name_index(vault: Path) -> None:
+    with closing(sqlite3.connect(f"{vault.resolve().as_uri()}?mode=ro", uri=True)) as c:
+        page_size = c.execute("PRAGMA page_size").fetchone()[0]
+        root = c.execute(
+            "SELECT rootpage FROM sqlite_schema WHERE name = 'uq_passwords_name_active'"
+        ).fetchone()[0]
+    data = bytearray(vault.read_bytes())
+    offset = (root - 1) * page_size
+    data[offset : offset + 8] = b"\xff" * 8
+    vault.write_bytes(bytes(data))

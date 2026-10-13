@@ -1,5 +1,6 @@
 import contextlib
 import os
+import shutil
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ MIN_SQLITE_VERSION = (3, 51, 3)
 APPLICATION_ID = 0x434D5448
 SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 15_000
+RESTORE_BUSY_TIMEOUT_MS = 2_000
 JOURNAL_SIZE_LIMIT = 16 * 1024 * 1024
 
 VAULT_FILE = "vault.db"
@@ -61,12 +63,33 @@ def snapshot_dir(data_dir: Path) -> Path:
 def prepare_data_dir(data_dir: Path) -> Path:
     """Create the data folder (0700) and an empty vault file (0600) if they are
     missing, so SQLite never creates the vault or its WAL with looser modes."""
-    data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        raise StorageError(_unwritable(data_dir, error)) from error
     path = vault_file(data_dir)
     refuse_unusable_file(path)
-    with contextlib.suppress(FileExistsError):
-        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        if not os.access(data_dir, os.W_OK | os.X_OK) or not os.access(path, os.W_OK):
+            raise PermissionError(13, "Permission denied")
+    except OSError as error:
+        raise StorageError(_unwritable(data_dir, error)) from error
     return path
+
+
+def _unwritable(data_dir: Path, error: OSError) -> str:
+    message = f"CipherMoth cannot write its vault in {data_dir}: {error.strerror}."
+    if sys.platform != "win32" and data_dir.exists():
+        owner = data_dir.stat().st_uid
+        user = os.getuid()
+        if owner != user:
+            message += (
+                f" The folder belongs to uid {owner} but CipherMoth runs as uid "
+                f"{user}; give it to that user (chown -R {user}:{os.getgid()})."
+            )
+    return message
 
 
 def configure_connection(dbapi_connection: Any) -> None:
@@ -252,7 +275,10 @@ def snapshot(data_dir: Path, destination: Path | None = None) -> Path:
     snapshot folder). Safe while CipherMoth is running."""
     require_supported_sqlite()
     folder = snapshot_dir(data_dir)
-    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        raise StorageError(f"Could not create {folder}: {error}") from error
     target = destination or folder / timestamped("vault")
     if target.exists():
         raise StorageError(f"{target} already exists.")
@@ -260,6 +286,8 @@ def snapshot(data_dir: Path, destination: Path | None = None) -> Path:
         _copy(vault_file(data_dir), target)
     except sqlite3.DatabaseError as error:
         raise StorageError(f"Could not copy the vault: {error}") from error
+    except OSError as error:
+        raise StorageError(f"Could not write the snapshot: {error}") from error
     return target
 
 
@@ -304,60 +332,104 @@ class VaultLock:
         self.release()
 
 
-def _set_aside(live: Path, folder: Path) -> Path:
-    """Keep the vault a restore replaces. A readable vault is copied through
-    SQLite (read-only); a damaged one is kept as its raw files, WAL included,
-    which nothing has opened for writing."""
-    try:
-        return snapshot(live.parent, folder / timestamped("replaced"))
-    except StorageError:
-        kept = folder / timestamped("replaced").removesuffix(".db")
-        kept.mkdir(mode=0o700)
-        for suffix in ("", *_SIDECARS):
-            source = live.with_name(live.name + suffix)
-            if source.exists():
-                (kept / source.name).write_bytes(source.read_bytes())
-                _fsync(kept / source.name)
-        _fsync_dir(kept)
-        return kept
+def _is_busy(error: sqlite3.Error) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    return isinstance(code, int) and code & 0xFF in (5, 6)
 
 
-def _close_wal(live: Path) -> None:
-    """Fold the live vault's WAL into the file and remove it, so the WAL can
-    never be replayed into the restored file. A vault SQLite cannot open is
-    already kept by ``_set_aside``; its WAL and shared memory are removed."""
+def _take_exclusively(live: Path) -> sqlite3.Connection | None:
+    """Open the live vault and keep every other connection out until this one
+    closes (exclusive locking mode). None if SQLite cannot read the file at all,
+    in which case nothing else can use it either."""
+    connection = _connect_existing(live, writable=True)
+    connection.execute(f"PRAGMA busy_timeout={RESTORE_BUSY_TIMEOUT_MS}")
     try:
-        with contextlib.closing(_connect_existing(live, writable=True)) as connection:
-            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            connection.execute("PRAGMA journal_mode=DELETE")
-    except sqlite3.DatabaseError:
-        pass
+        connection.execute("PRAGMA locking_mode=EXCLUSIVE")
+        connection.execute("BEGIN EXCLUSIVE")
+        connection.execute("SELECT count(*) FROM sqlite_schema").fetchone()
+        connection.execute("COMMIT")
+    except sqlite3.DatabaseError as error:
+        connection.close()
+        if _is_busy(error):
+            raise StorageError(
+                f"{live} is open in another program. Stop CipherMoth and anything "
+                "else using the vault, then restore again. Nothing was changed."
+            ) from error
+        return None
+    return connection
+
+
+def _keep_raw(live: Path, folder: Path) -> Path:
+    """Copy the vault's files byte for byte, WAL included, into a new folder in
+    the snapshot folder. Called while nothing else can write them."""
+    kept = folder / timestamped("replaced").removesuffix(".db")
+    kept.mkdir(mode=0o700)
+    for suffix in ("", "-wal"):
+        source = live.with_name(live.name + suffix)
+        if source.exists():
+            target = kept / source.name
+            shutil.copyfile(source, target)
+            os.chmod(target, 0o600)
+            _fsync(target)
+    _fsync_dir(kept)
+    _fsync_dir(folder)
+    return kept
+
+
+def _retire(live: Path, folder: Path) -> Path:
+    """Keep the vault a restore replaces, then make sure its WAL can never be
+    replayed into the restored file. The WAL is folded into the file by SQLite;
+    one SQLite cannot fold is moved into the kept folder, never deleted."""
+    connection = _take_exclusively(live)
+    try:
+        kept = _keep_raw(live, folder)
+        if connection is not None:
+            with contextlib.suppress(sqlite3.DatabaseError):
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                connection.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        if connection is not None:
+            connection.close()
     for suffix in _SIDECARS:
-        live.with_name(live.name + suffix).unlink(missing_ok=True)
+        sidecar = live.with_name(live.name + suffix)
+        if sidecar.exists():
+            os.replace(sidecar, kept / f"{sidecar.name}.unfolded")
+    _fsync_dir(kept)
+    _fsync_dir(live.parent)
+    return kept
 
 
 def restore(data_dir: Path, source: Path) -> Path | None:
     """Replace the vault with the snapshot ``source``. CipherMoth must not be
-    running. The replaced vault is kept in the snapshot folder and its path is
-    returned. At every point of a crash the vault file is either the old vault
-    or the restored one."""
+    running. The replaced vault is kept, byte for byte, in a folder in the
+    snapshot folder, and that folder is returned. If a restore is interrupted,
+    the vault file is the old vault (complete, its WAL folded by SQLite or kept)
+    or the restored one, and running the restore again completes it."""
     require_supported_sqlite()
     live = vault_file(data_dir)
     folder = snapshot_dir(data_dir)
-    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     problems = check_file(source)
     if problems:
         raise StorageError(f"{source} cannot be restored: " + "; ".join(problems[:5]))
-    with VaultLock(data_dir):
-        staged = live.with_name(live.name + RESTORING_SUFFIX)
-        try:
-            _copy(source, staged)
-        except sqlite3.DatabaseError as error:
-            raise StorageError(f"Could not copy {source}: {error}") from error
-        kept = None
-        if live.exists() and live.stat().st_size:
-            kept = _set_aside(live, folder)
-        _close_wal(live)
-        os.replace(staged, live)
-        _fsync_dir(data_dir)
+    staged = live.with_name(live.name + RESTORING_SUFFIX)
+    try:
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with VaultLock(data_dir):
+            try:
+                _copy(source, staged)
+            except sqlite3.DatabaseError as error:
+                raise StorageError(f"Could not copy {source}: {error}") from error
+            kept = None
+            if live.exists() and live.stat().st_size:
+                kept = _retire(live, folder)
+            os.replace(staged, live)
+            _fsync_dir(data_dir)
+    except StorageError:
+        staged.unlink(missing_ok=True)
+        raise
+    except OSError as error:
+        staged.unlink(missing_ok=True)
+        raise StorageError(
+            f"The restore failed: {error}. Nothing was replaced."
+        ) from error
     return kept

@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from slowapi.errors import RateLimitExceeded
-from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
@@ -16,6 +15,7 @@ from api.path_guard import EntryNamePaths
 from api.rate_limit import limiter
 from api.retired_clients import RETIRED_KEY_HEADER, RetiredClients
 from api.routes import make_api_exceptions, make_api_router
+from api.security_headers import SecurityHeaders
 from crud.engine import Database
 from models import SETTINGS_DEFAULTS
 from settings import get_api_settings
@@ -105,13 +105,7 @@ def get_application(
         ],
     )
 
-    @server.middleware("http")
-    async def add_security_headers(
-        request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
-        response = await call_next(request)
-        response.headers.update(_SECURITY_HEADERS)
-        return response
+    server.add_middleware(SecurityHeaders, headers=_SECURITY_HEADERS)
 
     if not settings.disable_docs:
 

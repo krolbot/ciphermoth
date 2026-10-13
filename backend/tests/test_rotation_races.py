@@ -7,18 +7,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import crud.master_password
 import crud.password
+import crud.settings
+from crud.engine import Database, create_engine
+from crud.password import PasswordCRUD
 from helpers import create_encrypted_zip
-from main import app
+from main import app, get_application
+from storage import VAULT_FILE, check_file
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     auth,
     create_vault,
+    data_dir,
     db_execute,
     db_snapshot,
+    engine,
     entry,
     stored_vault_key,
     unlock,
+    wait_for_queued_requests,
+    write_lock_held,
 )
 
 ROTATE = {
@@ -279,3 +287,163 @@ async def test_an_import_overtaken_by_a_rotation_writes_nothing(
     assert resp.json()["code"] == "invalid_key"
     assert _decrypts(await stored_vault_key(NEW_MASTER_PASSWORD), await _tokens())
     assert await _names(client, NEW_MASTER_PASSWORD) == ["kept"]
+
+
+async def test_a_session_opened_after_the_rotation_ended_all_sessions_is_refused(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = await create_vault(client)
+    await client.post("/passwords/create", json=entry("kept"), headers=auth(token))
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = crud.settings.SettingsCRUD.inactivity_ms
+    calls = 0
+
+    async def inactivity_ms(self) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await asyncio.wait_for(release.wait(), GATE_SECONDS)
+        return await original(self)
+
+    monkeypatch.setattr(crud.settings.SettingsCRUD, "inactivity_ms", inactivity_ms)
+    overlapping = asyncio.create_task(
+        client.post(
+            "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
+        )
+    )
+    await entered.wait()
+    rotated = await client.patch(
+        "/master_password/update", json=ROTATE, headers=auth(token)
+    )
+    release.set()
+    resp = await overlapping
+
+    assert rotated.status_code == 200, rotated.text
+    assert resp.json()["valid"] is True
+    stale = auth(resp.json()["session_token"])
+    attempts = [
+        client.get("/passwords", headers=stale),
+        client.get("/passwords/kept", headers=stale),
+        client.post("/passwords/create", json=entry("stale"), headers=stale),
+        client.patch("/settings", json={}, headers=stale),
+        client.post("/master_password/session", headers=stale),
+        client.patch("/master_password/update", json=ROTATE, headers=stale),
+    ]
+    for attempt in attempts:
+        assert (await attempt).status_code == 401
+    assert len(app.state.vault_sessions) == 0
+    assert _decrypts(await stored_vault_key(NEW_MASTER_PASSWORD), await _tokens())
+    assert await _names(client, NEW_MASTER_PASSWORD) == ["kept"]
+
+
+async def test_of_two_racing_vault_creations_only_one_initializes_the_vault(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    waits = FirstDerivationWaits(monkeypatch)
+    first = asyncio.create_task(
+        client.post(
+            "/master_password/create", json={"master_password": MASTER_PASSWORD}
+        )
+    )
+    await waits.entered.wait()
+    second = await client.post(
+        "/master_password/create", json={"master_password": NEW_MASTER_PASSWORD}
+    )
+    waits.release.set()
+    resp = await first
+
+    assert second.status_code == 200, second.text
+    assert resp.status_code == 403, resp.text
+    assert "session_token" not in resp.text
+    assert await db_execute("SELECT count(*) FROM master_password") == [(1,)]
+    assert len(app.state.vault_sessions) == 1
+    assert await _names(client, NEW_MASTER_PASSWORD) == []
+    resp = await client.post(
+        "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
+    )
+    assert resp.json()["valid"] is False
+
+
+async def test_a_request_that_cannot_get_a_connection_is_a_clean_503(
+    client: httpx.AsyncClient,
+) -> None:
+    token = await create_vault(client)
+    engine = create_engine(
+        data_dir() / VAULT_FILE, pool_size=1, max_overflow=0, pool_timeout=0.5
+    )
+    narrow = get_application(database=Database(data_dir(), engine=engine))
+    narrow.state.vault_sessions = app.state.vault_sessions
+    before = await db_snapshot()
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=narrow), base_url="http://testserver/api"
+        ) as other:
+            with write_lock_held():
+                waiting = asyncio.create_task(
+                    other.post(
+                        "/passwords/create", json=entry("a"), headers=auth(token)
+                    )
+                )
+                await asyncio.sleep(0.3)
+                starved = await other.post(
+                    "/passwords/create", json=entry("b"), headers=auth(token)
+                )
+            await waiting
+    finally:
+        await engine.dispose()
+
+    assert starved.status_code == 503, starved.text
+    assert starved.json()["code"] == "busy"
+    assert await db_snapshot() != before
+    assert [
+        row[0] for row in await db_execute("SELECT password_name FROM passwords")
+    ] == ["a"]
+
+
+async def test_cancelled_writes_leave_the_vault_consistent_and_unlocked(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = await create_vault(client)
+    before = await db_snapshot()
+    for attempt in range(20):
+        with write_lock_held():
+            queued = asyncio.create_task(
+                client.post(
+                    "/passwords/create",
+                    json=entry(f"queued-{attempt}"),
+                    headers=auth(token),
+                )
+            )
+            await wait_for_queued_requests(1)
+            queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+    assert engine.sync_engine.pool.checkedout() == 0
+
+    written, release = asyncio.Event(), asyncio.Event()
+    original = PasswordCRUD.create_password
+
+    async def create_then_wait(self, password, key_derivation):
+        result = await original(self, password, key_derivation)
+        written.set()
+        await asyncio.wait_for(release.wait(), GATE_SECONDS)
+        return result
+
+    monkeypatch.setattr(PasswordCRUD, "create_password", create_then_wait)
+    halfway = asyncio.create_task(
+        client.post("/passwords/create", json=entry("halfway"), headers=auth(token))
+    )
+    await written.wait()
+    halfway.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await halfway
+    monkeypatch.undo()
+
+    assert await db_snapshot() == before
+    resp = await asyncio.wait_for(
+        client.post("/passwords/create", json=entry("after"), headers=auth(token)),
+        timeout=5,
+    )
+    assert resp.status_code == 200, resp.text
+    assert check_file(data_dir() / VAULT_FILE) == []

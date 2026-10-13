@@ -260,16 +260,19 @@ async def test_concurrent_uploads_cannot_exceed_the_size_cap(
         )
         assert resp.status_code == 200
 
-    responses = await asyncio.gather(
-        *(
-            client.post(
-                "/passwords/alpha/attachments",
-                headers=headers,
-                **_upload(f"race{i}", b"\x01" * (3 * 1024 * 1024)),
+    with write_lock_held():
+        uploads = asyncio.gather(
+            *(
+                client.post(
+                    "/passwords/alpha/attachments",
+                    headers=headers,
+                    **_upload(f"race{i}", b"\x01" * (3 * 1024 * 1024)),
+                )
+                for i in range(3)
             )
-            for i in range(3)
         )
-    )
+        await wait_for_queued_requests(3)
+    responses = await uploads
 
     assert sorted(r.status_code for r in responses) == [200, 400, 400]
     [(total,)] = await db_execute("SELECT sum(size_bytes) FROM password_attachments")
@@ -281,19 +284,22 @@ async def test_concurrent_edits_of_one_entry_lose_no_password(
 ) -> None:
     headers = await _populated_vault(client)
 
-    responses = await asyncio.gather(
-        *(
-            client.patch(
-                "/passwords/update",
-                json={
-                    "password": ALPHA,
-                    "new_password": {**ALPHA, "password_value": v},
-                },
-                headers=headers,
+    with write_lock_held():
+        edits = asyncio.gather(
+            *(
+                client.patch(
+                    "/passwords/update",
+                    json={
+                        "password": ALPHA,
+                        "new_password": {**ALPHA, "password_value": v},
+                    },
+                    headers=headers,
+                )
+                for v in ("edit-B", "edit-C", "edit-D")
             )
-            for v in ("edit-B", "edit-C", "edit-D")
         )
-    )
+        await wait_for_queued_requests(3)
+    responses = await edits
 
     assert [r.status_code for r in responses] == [200, 200, 200]
     got = (await client.get("/passwords/alpha", headers=headers)).json()
@@ -307,10 +313,13 @@ async def test_restore_racing_a_create_of_the_same_name_never_fails_with_500(
 ) -> None:
     headers = await _populated_vault(client)
 
-    restore, create = await asyncio.gather(
-        client.post("/passwords/trashed/restore", headers=headers),
-        client.post("/passwords/create", json=entry("trashed"), headers=headers),
-    )
+    with write_lock_held():
+        racing = asyncio.gather(
+            client.post("/passwords/trashed/restore", headers=headers),
+            client.post("/passwords/create", json=entry("trashed"), headers=headers),
+        )
+        await wait_for_queued_requests(2)
+    restore, create = await racing
 
     assert sorted([restore.status_code, create.status_code]) == [200, 400]
     rows = await db_execute(
@@ -326,17 +335,27 @@ async def test_import_racing_a_create_of_the_same_name_never_fails_with_500(
     headers = await _populated_vault(client)
     csv = "name,password\n" + "\n".join(f"n{i},p{i}" for i in range(200)) + "\nlate,x\n"
 
-    created, imported = await asyncio.gather(
-        client.post("/passwords/create", json=entry("late"), headers=headers),
-        client.post(
-            "/passwords/import/csv",
-            files={"file": ("x.csv", csv.encode(), "text/csv")},
-            headers=headers,
-        ),
-    )
+    with write_lock_held():
+        racing = asyncio.gather(
+            client.post("/passwords/create", json=entry("late"), headers=headers),
+            client.post(
+                "/passwords/import/csv",
+                files={"file": ("x.csv", csv.encode(), "text/csv")},
+                headers=headers,
+            ),
+        )
+        await wait_for_queued_requests(2)
+    created, imported = await racing
 
-    assert created.status_code == 200
-    assert imported.status_code in (200, 400), imported.text
+    assert imported.status_code == 200, imported.text
+    assert created.status_code in (200, 400), created.text
+    if created.status_code == 400:
+        assert "already exists" in created.json()["detail"]
+    rows = await db_execute(
+        "SELECT count(*) FROM passwords WHERE password_name = 'late' "
+        "AND deleted IS NULL"
+    )
+    assert rows == [(1,)]
 
 
 async def test_backup_of_a_vault_with_an_undecryptable_entry_fails_without_side_effects(
