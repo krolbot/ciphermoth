@@ -3,40 +3,19 @@
 name: ciphermoth-dev
 
 services:
-  db:
-    image: postgres:16-alpine
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
-    env_file:
-      - ./backend/.db.env
-    restart: unless-stopped
-    networks:
-      - ciphermoth
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   backend:
     build:
       context: .
       dockerfile: docker/backend/Dockerfile.dev
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn main:app --host 0.0.0.0 --port 80 --reload"
+    command: uvicorn main:app --host 0.0.0.0 --port 80 --reload --reload-dir /app/src
     ports:
       - "127.0.0.1:8000:80"
-    env_file:
-      - ./backend/.db.env
     environment:
       CORS_ORIGINS: '["http://localhost:3000"]'
     volumes:
       - ./backend:/app/src
+      - vault_data:/data
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     networks:
       - ciphermoth
 
@@ -61,7 +40,7 @@ services:
       - ciphermoth
 
 volumes:
-  postgres_data:
+  vault_data:
 
 networks:
   ciphermoth:

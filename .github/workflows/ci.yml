@@ -23,36 +23,22 @@ jobs:
 
       - name: Lint
         working-directory: backend
-        run: uv run ruff check . ../docker/updater
+        run: uv run ruff check .
 
       - name: Format check
         working-directory: backend
-        run: uv run ruff format --check . ../docker/updater
+        run: uv run ruff format --check .
 
       - name: Type check
         working-directory: backend
-        run: uv run ty check . ../docker/updater/updater.py
+        run: uv run ty check .
 
   backend-tests:
     name: Backend tests (pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ciphermoth_test
-          POSTGRES_PASSWORD: ciphermoth_test
-          POSTGRES_DB: ciphermoth_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ciphermoth_test -d ciphermoth_test"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 20
     env:
-      CIPHERMOTH_TEST_DB_URL: postgresql://ciphermoth_test:ciphermoth_test@127.0.0.1:5432/ciphermoth_test
+      UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +50,10 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: uv sync --group dev
+
+      - name: Check the SQLite runtime
+        working-directory: backend
+        run: uv run python -c "import storage, sqlite3; storage.require_supported_sqlite(); print('SQLite', sqlite3.sqlite_version)"
 
       - name: Test
         working-directory: backend

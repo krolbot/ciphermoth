@@ -1,31 +1,13 @@
 # Run CipherMoth from prebuilt images: the real, daily-use vault.
+# Everything lives in one SQLite file in the vault_data volume. A .env next to
+# this file is optional (see .env.prod.example).
 name: ciphermoth
 
 services:
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ciphermoth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your .env}
-      POSTGRES_DB: ${POSTGRES_DB:-ciphermoth}
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   backend:
     image: ghcr.io/mr-grj/ciphermoth-backend:${CIPHERMOTH_VERSION:-latest}
     restart: unless-stopped
     environment:
-      POSTGRES_HOST: db
-      POSTGRES_USER: ${POSTGRES_USER:-ciphermoth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your .env}
-      POSTGRES_DB: ${POSTGRES_DB:-ciphermoth}
       # The browser origin that serves the UI; CORS must allow it.
       CORS_ORIGINS: '["${CIPHERMOTH_FRONTEND_ORIGIN:-http://localhost:3000}"]'
       # Overrides the per-route rate limits (e.g. 200/hour) when set.
@@ -34,10 +16,7 @@ services:
     ports:
       - "${CIPHERMOTH_BIND_ADDRESS:-127.0.0.1}:${CIPHERMOTH_BACKEND_PORT:-8000}:80"
     volumes:
-      - update_control:/update-control
-    depends_on:
-      db:
-        condition: service_healthy
+      - vault_data:/data
 
   frontend:
     image: ghcr.io/mr-grj/ciphermoth-frontend:${CIPHERMOTH_VERSION:-latest}
@@ -50,29 +29,5 @@ services:
     depends_on:
       - backend
 
-  updater:
-    image: ghcr.io/mr-grj/ciphermoth-updater:${CIPHERMOTH_VERSION:-latest}
-    restart: unless-stopped
-    profiles: ["autoupdate"]
-    environment:
-      IMAGE_REPO: ghcr.io/mr-grj/ciphermoth
-      COMPOSE_FILE: /work/docker-compose.prod.yml
-      ENV_FILE: /work/.env
-      POSTGRES_HOST: db
-      POSTGRES_USER: ${POSTGRES_USER:-ciphermoth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your .env}
-      POSTGRES_DB: ${POSTGRES_DB:-ciphermoth}
-      # Forks: override the identity the updater trusts.
-      # COSIGN_IDENTITY_REGEXP: '^https://github.com/<you>/ciphermoth/\.github/workflows/release\.yml@refs/tags/v.*'
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - .:/work
-      - update_control:/update-control
-      - update_backups:/backups
-    depends_on:
-      - backend
-
 volumes:
-  postgres_data:
-  update_control:
-  update_backups:
+  vault_data:

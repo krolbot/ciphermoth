@@ -40,22 +40,8 @@ jobs:
     name: Stress tests (fuzzing, process kills)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ciphermoth_test
-          POSTGRES_PASSWORD: ciphermoth_test
-          POSTGRES_DB: ciphermoth_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ciphermoth_test -d ciphermoth_test"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 20
     env:
-      CIPHERMOTH_TEST_DB_URL: postgresql://ciphermoth_test:ciphermoth_test@127.0.0.1:5432/ciphermoth_test
+      UV_PYTHON_PREFERENCE: only-managed
       HYPOTHESIS_PROFILE: stress
     steps:
       - uses: actions/checkout@v4
