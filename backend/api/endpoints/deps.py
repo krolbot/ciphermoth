@@ -36,17 +36,22 @@ VaultSessionsDep = Annotated[VaultSessions, Depends(get_vault_sessions)]
 
 
 _READ_ONLY_METHODS = frozenset({"GET", "HEAD"})
+_READ_ONLY_ROUTES = frozenset(
+    {"master-password:unlock", "master-password:session-activity"}
+)
 
 
 async def get_session(
     request: Request, database: Annotated[Database, Depends(get_database)]
 ) -> AsyncGenerator[AsyncSession]:
     """
-    One transaction per request. GET requests never write and run as read
-    transactions on a snapshot; every other method takes SQLite's write lock
-    before its first statement.
+    One transaction per request. GET requests and the POST routes that only
+    read (unlock, the session heartbeat) run as read transactions on a
+    snapshot; every other request takes SQLite's write lock before its first
+    statement.
     """
-    write = request.method not in _READ_ONLY_METHODS
+    route = getattr(request.scope.get("route"), "name", None)
+    write = request.method not in _READ_ONLY_METHODS and route not in _READ_ONLY_ROUTES
     async with database.transaction(write=write) as session:
         yield session
 

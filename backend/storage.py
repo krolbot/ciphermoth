@@ -14,6 +14,7 @@ MIN_SQLITE_VERSION = (3, 51, 3)
 APPLICATION_ID = 0x434D5448
 SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 15_000
+JOURNAL_SIZE_LIMIT = 16 * 1024 * 1024
 
 VAULT_FILE = "vault.db"
 LOCK_FILE = "vault.lock"
@@ -23,6 +24,7 @@ _SIDECARS = ("-wal", "-shm")
 
 _PRAGMAS = (
     "PRAGMA foreign_keys=ON",
+    f"PRAGMA journal_size_limit={JOURNAL_SIZE_LIMIT}",
     f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}",
     "PRAGMA synchronous=FULL",
     "PRAGMA secure_delete=ON",
@@ -61,7 +63,7 @@ def prepare_data_dir(data_dir: Path) -> Path:
     missing, so SQLite never creates the vault or its WAL with looser modes."""
     data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = vault_file(data_dir)
-    refuse_foreign_file(path)
+    refuse_unusable_file(path)
     with contextlib.suppress(FileExistsError):
         os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     return path
@@ -119,30 +121,41 @@ def ensure_schema(connection: Connection) -> None:
         raise StorageError(f"The vault file {problem}.")
 
 
-def refuse_foreign_file(path: Path) -> None:
-    """Read the identity of an existing, non-empty file without changing it, so a
-    file that is not a vault of this release is refused before the engine
-    switches it to WAL."""
+def refuse_unusable_file(path: Path) -> None:
+    """Check an existing, non-empty file through a read-only connection before
+    anything opens it for writing: a file that is not a vault of this release,
+    or that fails SQLite's quick check, is refused exactly as it is, WAL
+    included."""
     if not path.is_file() or path.stat().st_size == 0:
         return
     try:
-        with contextlib.closing(
-            sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-        ) as connection:
+        with contextlib.closing(_connect_existing(path)) as connection:
             application_id = connection.execute("PRAGMA application_id").fetchone()[0]
             user_version = connection.execute("PRAGMA user_version").fetchone()[0]
             objects = connection.execute(
                 "SELECT count(*) FROM sqlite_schema"
             ).fetchone()
+            if application_id == 0 and user_version == 0 and objects == (0,):
+                return
+            problem = identity_problem(application_id, user_version)
+            if problem:
+                raise StorageError(f"The vault file {problem}.")
+            damage = [
+                str(row[0])
+                for row in connection.execute("PRAGMA quick_check")
+                if str(row[0]) != "ok"
+            ]
     except sqlite3.DatabaseError as error:
         raise StorageError(
-            f"SQLite cannot open the vault file {path}: {error}."
+            f"SQLite cannot open the vault file {path}: {error}. Restore a "
+            "snapshot (docs/UPDATING.md)."
         ) from error
-    if application_id == 0 and user_version == 0 and objects == (0,):
-        return
-    problem = identity_problem(application_id, user_version)
-    if problem:
-        raise StorageError(f"The vault file {problem}.")
+    if damage:
+        raise StorageError(
+            "The vault file failed SQLite's integrity check: "
+            + "; ".join(damage[:5])
+            + ". Restore a snapshot (docs/UPDATING.md)."
+        )
 
 
 def check_connection(connection: sqlite3.Connection) -> list[str]:
@@ -165,10 +178,14 @@ def check_connection(connection: sqlite3.Connection) -> list[str]:
     return problems
 
 
-def _connect_existing(path: Path) -> sqlite3.Connection:
+def _connect_existing(path: Path, *, writable: bool = False) -> sqlite3.Connection:
+    """A connection to an existing file. Read-only unless asked otherwise: a
+    read-only connection never checkpoints or deletes the WAL, so reading a vault
+    (to check, copy or keep it) changes none of its files."""
     if not path.is_file():
         raise StorageError(f"{path} does not exist.")
-    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)
+    mode = "rw" if writable else "ro"
+    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode={mode}", uri=True)
     connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     connection.execute("PRAGMA trusted_schema=OFF")
     return connection
@@ -289,7 +306,8 @@ class VaultLock:
 
 def _set_aside(live: Path, folder: Path) -> Path:
     """Keep the vault a restore replaces. A readable vault is copied through
-    SQLite; a damaged one is kept as its raw files, WAL included."""
+    SQLite (read-only); a damaged one is kept as its raw files, WAL included,
+    which nothing has opened for writing."""
     try:
         return snapshot(live.parent, folder / timestamped("replaced"))
     except StorageError:
@@ -309,7 +327,7 @@ def _close_wal(live: Path) -> None:
     never be replayed into the restored file. A vault SQLite cannot open is
     already kept by ``_set_aside``; its WAL and shared memory are removed."""
     try:
-        with contextlib.closing(_connect_existing(live)) as connection:
+        with contextlib.closing(_connect_existing(live, writable=True)) as connection:
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             connection.execute("PRAGMA journal_mode=DELETE")
     except sqlite3.DatabaseError:

@@ -2,6 +2,8 @@ import asyncio
 import os
 import sqlite3
 import stat
+import subprocess
+import sys
 import time
 from contextlib import closing
 from pathlib import Path
@@ -9,10 +11,11 @@ from pathlib import Path
 import httpx
 import pytest
 from sqlalchemy import event, text
+from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 import storage
-from crud.engine import Database, create_engine
+from crud.engine import Database, create_engine, is_busy
 from main import get_application
 from models import SETTINGS_DEFAULTS
 from storage import (
@@ -444,10 +447,15 @@ async def test_reads_keep_working_while_a_writer_holds_the_vault(
     with write_lock_held():
         started = time.monotonic()
         responses = await asyncio.gather(
-            *(client.get(path, headers=headers) for path in reads)
+            *(client.get(path, headers=headers) for path in reads),
+            client.post("/master_password/session", headers=headers),
+            client.post(
+                "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
+            ),
         )
         elapsed = time.monotonic() - started
-    assert [r.status_code for r in responses] == [200] * len(reads)
+    assert [r.status_code for r in responses] == [200] * (len(reads) + 2)
+    assert responses[-1].json()["valid"] is True
     assert elapsed < 2
 
 
@@ -527,3 +535,115 @@ async def test_ids_are_never_reused(client: httpx.AsyncClient) -> None:
         headers=auth(token),
     )
     assert resp.json()["id"] == 2
+
+
+def _crash_after_committing(folder: Path, sql: str) -> None:
+    """Commit ``sql`` from another process and kill it before it can checkpoint,
+    so the committed change exists only in the WAL."""
+    script = (
+        "import os, sqlite3, sys\n"
+        "connection = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+        "connection.execute('PRAGMA wal_autocheckpoint=0')\n"
+        "connection.execute(sys.argv[2])\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script, str(folder / VAULT_FILE), sql], check=True
+    )
+    assert (folder / f"{VAULT_FILE}-wal").stat().st_size > 0
+
+
+def _corrupt_name_index(vault: Path) -> None:
+    with closing(sqlite3.connect(f"{vault.resolve().as_uri()}?mode=ro", uri=True)) as c:
+        page_size = c.execute("PRAGMA page_size").fetchone()[0]
+        root = c.execute(
+            "SELECT rootpage FROM sqlite_schema WHERE name = 'uq_passwords_name_active'"
+        ).fetchone()[0]
+    data = bytearray(vault.read_bytes())
+    offset = (root - 1) * page_size + 100
+    data[offset : offset + 64] = os.urandom(64)
+    vault.write_bytes(bytes(data))
+
+
+def _files(folder: Path) -> dict[str, bytes]:
+    return {
+        path.name: path.read_bytes()
+        for path in sorted(folder.glob(f"{VAULT_FILE}*"))
+        if path.name != f"{VAULT_FILE}-shm"
+    }
+
+
+async def _vault_with_committed_wal(folder: Path) -> None:
+    async with client_for_data_dir(folder) as client:
+        await _populate(client, [f"entry-{i}" for i in range(50)])
+    _crash_after_committing(folder, "UPDATE settings SET hidden_ms = 4242")
+
+
+async def test_a_damaged_vault_is_refused_without_touching_its_files(
+    tmp_path: Path,
+) -> None:
+    await _vault_with_committed_wal(tmp_path)
+    _corrupt_name_index(tmp_path / VAULT_FILE)
+    before = _files(tmp_path)
+    assert f"{VAULT_FILE}-wal" in before
+
+    database = Database(tmp_path)
+    with pytest.raises(StorageError, match="integrity check"):
+        await database.prepare()
+    await database.dispose()
+
+    assert _files(tmp_path) == before
+
+
+async def test_a_restore_keeps_the_wal_of_a_damaged_vault(tmp_path: Path) -> None:
+    folder = tmp_path / "data"
+    async with client_for_data_dir(folder) as client:
+        await _populate(client, [f"entry-{i}" for i in range(50)])
+    saved = storage.snapshot(folder, tmp_path / "saved.db")
+    _crash_after_committing(folder, "UPDATE settings SET hidden_ms = 4242")
+    _corrupt_name_index(folder / VAULT_FILE)
+    wal = (folder / f"{VAULT_FILE}-wal").read_bytes()
+
+    kept = storage.restore(folder, saved)
+
+    assert kept is not None and kept.is_dir()
+    assert (kept / f"{VAULT_FILE}-wal").read_bytes() == wal
+    assert check_file(folder / VAULT_FILE) == []
+
+
+async def test_a_restore_never_replays_the_old_wal_into_the_restored_vault(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "data"
+    async with client_for_data_dir(folder) as client:
+        await _populate(client, ["alpha"])
+    saved = storage.snapshot(folder, tmp_path / "saved.db")
+    _crash_after_committing(folder, "UPDATE settings SET hidden_ms = 4242")
+
+    kept = storage.restore(folder, saved)
+
+    assert not (folder / f"{VAULT_FILE}-wal").exists()
+    assert check_file(folder / VAULT_FILE) == []
+    assert _pragma(folder / VAULT_FILE, "user_version") == SCHEMA_VERSION
+    with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
+        assert connection.execute("SELECT hidden_ms FROM settings").fetchone() == (
+            SETTINGS_DEFAULTS["hidden_ms"],
+        )
+        assert connection.execute("SELECT count(*) FROM passwords").fetchone() == (1,)
+    assert kept is not None
+    with closing(sqlite3.connect(kept)) as connection:
+        assert connection.execute("SELECT hidden_ms FROM settings").fetchone() == (
+            4242,
+        )
+
+
+def test_busy_errors_are_recognised_by_their_primary_code() -> None:
+    def error(code: int) -> OperationalError:
+        orig = sqlite3.OperationalError("database is locked")
+        orig.sqlite_errorcode = code
+        return OperationalError("statement", {}, orig)
+
+    assert is_busy(error(5))
+    assert is_busy(error(517))
+    assert is_busy(error(6))
+    assert not is_busy(error(1))

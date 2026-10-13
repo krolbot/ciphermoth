@@ -60,7 +60,7 @@ The update *check* runs in your browser against GitHub's public release API (it 
 
 ## The vault file and its snapshots
 
-The vault is one SQLite file, `vault.db`, in the data folder (`/data` in the backend container), created with mode `0600` in a `0700` folder. It holds what this page describes as encrypted, plus the plaintext metadata listed above and a bcrypt hash. SQLite runs with `secure_delete` on, so deleted rows are overwritten in the file, but copies can survive in the write-ahead log until it is checkpointed, in filesystem snapshots, on SSDs (wear levelling) and in any backup of the volume.
+The vault is one SQLite file, `vault.db`, in the data folder (`/data` in the backend container), created with mode `0600` in a `0700` folder. It holds what this page describes as encrypted, plus the plaintext metadata listed above and a bcrypt hash. SQLite runs with `secure_delete` on, so deleted rows are overwritten in the file, but copies can survive in the write-ahead log (`vault.db-wal`, kept at 16 MB or less) until its frames are reused, in filesystem snapshots, on SSDs (wear levelling) and in any backup of the volume. After a master password change, old ciphertext can likewise remain there and in every earlier snapshot.
 
 Snapshots (`ciphermoth-admin snapshot`) are complete copies of the vault, with the same protection and the same metadata exposure. They open only with the master password that was current when they were taken, so an old snapshot also keeps working with an old master password: delete snapshots you no longer need after changing a master password you believe was exposed.
 

@@ -22,6 +22,7 @@ CipherMoth now keeps the vault in one SQLite file instead of a PostgreSQL server
 - The backend images run uv's managed CPython instead of the Debian Python image, so they carry a current SQLite.
 - Write requests are serialized by SQLite's write lock, taken before their first statement; reads see a consistent snapshot and keep working while a write runs. A master password change derives its keys before it takes the lock, so other requests wait only for the re-encryption.
 - Requests without a live session are refused before they touch the database.
+- Unlocking and the session heartbeat never wait for a running write; backups and imports check the master password before they take the write lock.
 - `GET /api/health` no longer reports `maintenance`.
 
 ### Removed

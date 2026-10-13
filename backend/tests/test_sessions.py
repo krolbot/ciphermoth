@@ -763,7 +763,9 @@ async def test_a_request_queued_behind_rotation_is_refused(
 
     assert rotate_resp.status_code == 200, rotate_resp.text
     assert late_resp.status_code == 401, late_resp.text
-    assert unlock_resp.json()["valid"] is False
+    if unlock_resp.json()["valid"]:
+        stale = unlock_resp.json()["session_token"]
+        assert (await client.get("/passwords", headers=auth(stale))).status_code == 401
     assert len(sessions()) == 0
     assert await db_execute("SELECT id FROM passwords") == []
 

@@ -66,6 +66,14 @@ main() {
   say "${BOLD}CipherMoth${NC} -> your secrets stay in the dark."
   ensure_docker
 
+  if docker volume inspect ciphermoth_postgres_data >/dev/null 2>&1; then
+    warn "Found a vault from an older CipherMoth that used PostgreSQL."
+    warn "This release keeps the vault in SQLite and starts a fresh, empty one;"
+    warn "the old database volume is left untouched (docs/UPDATING.md)."
+    ask_yes_no "Replace the old containers with a fresh vault? [y/N]" \
+      "${CIPHERMOTH_FRESH:-N}" || die "Stopped. Nothing was changed."
+  fi
+
   mkdir -p "$DIR"
   cd "$DIR"
   say "Installing into $(pwd)"
@@ -79,14 +87,6 @@ main() {
   else
     rm -f cip.tmp
     warn "Could not download the 'cip' CLI shortcut; the vault itself is unaffected."
-  fi
-
-  if docker volume inspect ciphermoth_postgres_data >/dev/null 2>&1; then
-    warn "Found a vault from an older CipherMoth that used PostgreSQL."
-    warn "This release keeps the vault in SQLite and starts a fresh, empty one;"
-    warn "the old database volume is left untouched (docs/UPDATING.md)."
-    ask_yes_no "Replace the old containers with a fresh vault? [y/N]" \
-      "${CIPHERMOTH_FRESH:-N}" || die "Stopped. Nothing was changed."
   fi
 
   if [ -f .env ]; then

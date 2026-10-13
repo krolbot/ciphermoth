@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import URL, Connection, event, text
+from sqlalchemy import URL, Connection, event
 from sqlalchemy.exc import DatabaseError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -27,7 +28,7 @@ from storage import (
 _AFTER_COMMIT = "ciphermoth_after_commit"
 _AFTER_ROLLBACK = "ciphermoth_after_rollback"
 _BEGIN = "ciphermoth_begin"
-_BUSY = frozenset({"SQLITE_BUSY", "SQLITE_LOCKED"})
+_BUSY_CODES = frozenset({5, 6})
 _BUSY_DETAIL = "The vault is busy with another change. Try again in a moment."
 
 
@@ -51,7 +52,8 @@ def create_engine(path: Path, **pool: Any) -> AsyncEngine:
 
 
 def is_busy(error: OperationalError) -> bool:
-    return getattr(error.orig, "sqlite_errorname", None) in _BUSY
+    code = getattr(error.orig, "sqlite_errorcode", None)
+    return isinstance(code, int) and code & 0xFF in _BUSY_CODES
 
 
 def after_commit(session: AsyncSession, callback: Callable[[], object]) -> None:
@@ -133,32 +135,25 @@ class Database:
                     await session.rollback()
                 finally:
                     _run(session, _AFTER_ROLLBACK)
-                if isinstance(error, OperationalError) and is_busy(error):
+                if (
+                    isinstance(error, OperationalError) and is_busy(error)
+                ) or isinstance(error, PoolTimeout):
                     raise VaultBusy(_BUSY_DETAIL) from error
                 raise
             _run(session, _AFTER_COMMIT)
 
     async def prepare(self) -> None:
-        """Create or open the vault file: folder and file modes, schema, and a
-        quick integrity check before anything is served."""
+        """Create or open the vault file: folder and file modes, a read-only
+        identity and integrity check of an existing file, then the schema."""
         await asyncio.to_thread(prepare_data_dir, self.data_dir)
         try:
             async with self.writer().begin() as connection:
                 await connection.run_sync(ensure_schema)
-            async with self.engine.connect() as connection:
-                rows = await connection.execute(text("PRAGMA quick_check"))
-                problems = [str(row[0]) for row in rows if str(row[0]) != "ok"]
         except DatabaseError as error:
             raise StorageError(
                 f"SQLite cannot open the vault file {self.path}: {error.orig}. "
                 "Restore a snapshot (docs/UPDATING.md)."
             ) from error
-        if problems:
-            raise StorageError(
-                "The vault file failed SQLite's integrity check: "
-                + "; ".join(problems[:5])
-                + ". Restore a snapshot (docs/UPDATING.md)."
-            )
 
     async def dispose(self) -> None:
         if self._engine is not None:

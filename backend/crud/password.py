@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from crud.base import BaseCRUD
-from crud.master_password import fetch_master_password
+from crud.master_password import MasterPasswordCRUD, fetch_master_password
 from errors import Forbidden, InvalidRequest, NotFound
 from helpers import (
     create_encrypted_zip,
@@ -209,13 +209,23 @@ class PasswordCRUD(BaseCRUD):
         ).all()
         return {password_id: count for password_id, count in rows}
 
-    async def _verify_master_password(self, master_password: str) -> None:
+    async def _verify_master_password(
+        self, master_password: str, key_derivation: str
+    ) -> None:
+        """
+        Check the master password a backup or an import asks for. bcrypt runs
+        between transactions so it never holds the write lock; the vault key is
+        then checked again in the new transaction, so a master password change
+        that committed meanwhile stops the request before it reads or writes.
+        """
         mp_model = await fetch_master_password(self.session)
         if not mp_model:
             raise NotFound("No master password found.")
+        await self.session.commit()
 
         if not await password_matches(master_password, mp_model.hash_key):
             raise Forbidden("Incorrect master password.")
+        await MasterPasswordCRUD(self.session).verify_vault_key(key_derivation)
 
     async def get_passwords(self, key_derivation: str) -> list[PasswordResponse]:
         models = list(
@@ -350,7 +360,7 @@ class PasswordCRUD(BaseCRUD):
         return PasswordDelete(deleted=True, detail="Password permanently deleted.")
 
     async def create_backup(self, master_password: str, key_derivation: str) -> bytes:
-        await self._verify_master_password(master_password)
+        await self._verify_master_password(master_password, key_derivation)
 
         passwords = (
             (
@@ -553,7 +563,7 @@ class PasswordCRUD(BaseCRUD):
         key_derivation: str,
         on_conflict: OnConflict,
     ) -> PasswordImportResult:
-        await self._verify_master_password(master_password)
+        await self._verify_master_password(master_password, key_derivation)
 
         try:
             with pyzipper.AESZipFile(io.BytesIO(file_bytes), "r") as zf:
