@@ -117,8 +117,8 @@ Moving to 2.0:
    ```
 
    (`down` without `-v` keeps the old `ciphermoth_postgres_data` volume.)
-3. Replace `docker-compose.prod.yml` with the new one (or run `install.sh` again in that folder). `POSTGRES_*` lines in `.env` are no longer used and can be deleted.
+3. Keep a copy of `docker-compose.prod.yml` and `.env`, then replace `docker-compose.prod.yml` with the new one, and set `CIPHERMOTH_VERSION=latest` (or a 2.x version) in `.env`: a 1.x version there (one-click updates wrote it) would start a 1.x backend without its database. Running `install.sh` again in that folder does all of this and keeps the old files as `docker-compose.prod.yml.previous` and `.env.previous`. `POSTGRES_*` lines in `.env` are no longer used and can be deleted.
 4. Start it: `docker compose -f docker-compose.prod.yml up -d --remove-orphans`. Open the web UI, create a new master password, and import the backup from step 1 if you made one.
 5. Once you are happy with the new vault, the old volumes can go: `docker volume rm ciphermoth_postgres_data ciphermoth_update_control ciphermoth_update_backups`.
 
-To go back instead, stop the new stack, restore the old compose file and `.env`, and start it again; the PostgreSQL volume is as you left it.
+To go back instead, stop the new stack, put the old compose file and `.env` back (`docker-compose.prod.yml.previous`, `.env.previous`), and start it again; the PostgreSQL volume is as you left it.

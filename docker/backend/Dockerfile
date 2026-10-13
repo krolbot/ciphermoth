@@ -27,7 +27,7 @@ ENV PYTHONUNBUFFERED=1 \
     CIPHERMOTH_DATA_DIR=/data \
     CIPHERMOTH_API_URL=http://localhost/api
 
-RUN useradd -ms /bin/bash ciphermoth
+RUN useradd -m -u 1000 -s /bin/bash ciphermoth
 
 WORKDIR /app/src
 

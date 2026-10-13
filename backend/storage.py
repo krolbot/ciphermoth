@@ -22,7 +22,8 @@ VAULT_FILE = "vault.db"
 LOCK_FILE = "vault.lock"
 SNAPSHOT_DIR = "snapshots"
 RESTORING_SUFFIX = ".restoring"
-_SIDECARS = ("-wal", "-shm")
+_SIDECARS = ("-wal", "-shm", "-journal")
+_UNREADABLE = (11, 26)
 
 _PRAGMAS = (
     "PRAGMA foreign_keys=ON",
@@ -224,7 +225,7 @@ def check_file(path: Path) -> list[str]:
 
 
 def _fsync(path: Path) -> None:
-    fd = os.open(path, os.O_RDONLY)
+    fd = os.open(path, os.O_RDWR if sys.platform == "win32" else os.O_RDONLY)
     try:
         os.fsync(fd)
     finally:
@@ -237,13 +238,20 @@ def _fsync_dir(path: Path) -> None:
     _fsync(path)
 
 
-def _copy(source: Path, destination: Path) -> None:
+def _discard(path: Path) -> None:
+    """Remove a file this module wrote (a partial copy or a staged restore) and
+    any journal SQLite left next to it."""
+    for suffix in ("", *_SIDECARS):
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+
+def _copy(source: Path, destination: Path, *, journal_mode: str = "DELETE") -> None:
     """A consistent, self-contained copy of the vault through SQLite's online
     backup API, so committed transactions still in the WAL are included and
     concurrent writers are no problem. The copy is checked before it gets its
     final name."""
     partial = destination.with_name(destination.name + ".partial")
-    partial.unlink(missing_ok=True)
+    _discard(partial)
     os.close(os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     try:
         with (
@@ -251,7 +259,7 @@ def _copy(source: Path, destination: Path) -> None:
             contextlib.closing(sqlite3.connect(partial)) as dst,
         ):
             src.backup(dst)
-            dst.execute("PRAGMA journal_mode=DELETE")
+            dst.execute(f"PRAGMA journal_mode={journal_mode}")
             problems = check_connection(dst)
         if problems:
             raise StorageError(
@@ -262,7 +270,7 @@ def _copy(source: Path, destination: Path) -> None:
         os.replace(partial, destination)
         _fsync_dir(destination.parent)
     except BaseException:
-        partial.unlink(missing_ok=True)
+        _discard(partial)
         raise
 
 
@@ -280,6 +288,12 @@ def snapshot(data_dir: Path, destination: Path | None = None) -> Path:
     except OSError as error:
         raise StorageError(f"Could not create {folder}: {error}") from error
     target = destination or folder / timestamped("vault")
+    if target.resolve().parent == data_dir.resolve() and target.name.startswith(
+        VAULT_FILE
+    ):
+        raise StorageError(
+            f"{target.name} is a name the vault itself uses; choose another name."
+        )
     if target.exists():
         raise StorageError(f"{target} already exists.")
     try:
@@ -337,17 +351,29 @@ class VaultLock:
 
 
 def _is_busy(error: sqlite3.Error) -> bool:
+    return _primary_code(error) in (5, 6)
+
+
+def _primary_code(error: sqlite3.Error) -> int | None:
     code = getattr(error, "sqlite_errorcode", None)
-    return isinstance(code, int) and code & 0xFF in (5, 6)
+    return code & 0xFF if isinstance(code, int) else None
 
 
 def _take_exclusively(live: Path) -> sqlite3.Connection | None:
     """Open the live vault and keep every other connection out until this one
-    closes (exclusive locking mode). None if SQLite cannot read the file at all,
-    in which case nothing else can use it either."""
-    connection = _connect_existing(live, writable=True)
-    connection.execute(f"PRAGMA busy_timeout={RESTORE_BUSY_TIMEOUT_MS}")
+    closes (exclusive locking mode). The connection never checkpoints on close,
+    so closing it after a failure changes nothing. None if the file is not a
+    database SQLite can read at all, in which case nothing else can use it
+    either; any other problem stops the restore."""
     try:
+        connection = _connect_existing(live, writable=True)
+    except sqlite3.DatabaseError as error:
+        raise StorageError(
+            f"Could not open {live} for the restore: {error}. Nothing was changed."
+        ) from error
+    try:
+        connection.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
+        connection.execute(f"PRAGMA busy_timeout={RESTORE_BUSY_TIMEOUT_MS}")
         connection.execute("PRAGMA locking_mode=EXCLUSIVE")
         connection.execute("BEGIN EXCLUSIVE")
         connection.execute("SELECT count(*) FROM sqlite_schema").fetchone()
@@ -359,15 +385,23 @@ def _take_exclusively(live: Path) -> sqlite3.Connection | None:
                 f"{live} is open in another program. Stop CipherMoth and anything "
                 "else using the vault, then restore again. Nothing was changed."
             ) from error
-        return None
+        if _primary_code(error) in _UNREADABLE:
+            return None
+        raise StorageError(
+            f"Could not take {live} for the restore: {error}. Nothing was changed."
+        ) from error
     return connection
 
 
-def _keep_raw(live: Path, folder: Path) -> Path:
-    """Copy the vault's files byte for byte, WAL included, into a new folder in
-    the snapshot folder. Called while nothing else can write them."""
+def _kept_folder(folder: Path) -> Path:
     kept = folder / timestamped("replaced").removesuffix(".db")
     kept.mkdir(mode=0o700)
+    return kept
+
+
+def _keep_raw(live: Path, kept: Path) -> None:
+    """Copy the vault's files byte for byte, WAL included, into ``kept``. Called
+    while nothing else can write them."""
     for suffix in ("", "-wal"):
         source = live.with_name(live.name + suffix)
         if source.exists():
@@ -376,17 +410,38 @@ def _keep_raw(live: Path, folder: Path) -> Path:
             os.chmod(target, 0o600)
             _fsync(target)
     _fsync_dir(kept)
-    _fsync_dir(folder)
-    return kept
+    _fsync_dir(kept.parent)
 
 
-def _retire(live: Path, folder: Path) -> Path:
-    """Keep the vault a restore replaces, then make sure its WAL can never be
-    replayed into the restored file. The WAL is folded into the file by SQLite;
-    one SQLite cannot fold is moved into the kept folder, never deleted."""
-    connection = _take_exclusively(live)
+def _move_sidecars(live: Path, kept: Path) -> None:
+    """Move whatever journal files remain next to the vault into ``kept``, so
+    they can never be replayed into the restored file. Never deleted."""
+    for suffix in _SIDECARS:
+        sidecar = live.with_name(live.name + suffix)
+        if sidecar.exists():
+            os.replace(sidecar, kept / f"{sidecar.name}.unfolded")
+    _fsync_dir(kept)
+    _fsync_dir(live.parent)
+
+
+def _retire(live: Path, folder: Path) -> Path | None:
+    """Keep the vault a restore replaces and make sure no journal of it can be
+    replayed into the restored file. A vault is kept byte for byte with its WAL,
+    then its WAL is folded in by SQLite; journal files SQLite cannot fold, or
+    left next to a missing or empty vault, are moved into the kept folder."""
+    sidecars = [live.with_name(live.name + suffix) for suffix in _SIDECARS]
+    has_vault = live.exists() and live.stat().st_size > 0
+    if not has_vault and not any(path.exists() for path in sidecars):
+        return None
+    connection = _take_exclusively(live) if has_vault else None
     try:
-        kept = _keep_raw(live, folder)
+        kept = _kept_folder(folder)
+        try:
+            if has_vault:
+                _keep_raw(live, kept)
+        except BaseException:
+            shutil.rmtree(kept, ignore_errors=True)
+            raise
         if connection is not None:
             with contextlib.suppress(sqlite3.DatabaseError):
                 connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -394,12 +449,7 @@ def _retire(live: Path, folder: Path) -> Path:
     finally:
         if connection is not None:
             connection.close()
-    for suffix in _SIDECARS:
-        sidecar = live.with_name(live.name + suffix)
-        if sidecar.exists():
-            os.replace(sidecar, kept / f"{sidecar.name}.unfolded")
-    _fsync_dir(kept)
-    _fsync_dir(live.parent)
+    _move_sidecars(live, kept)
     return kept
 
 
@@ -417,22 +467,20 @@ def restore(data_dir: Path, source: Path) -> Path | None:
         raise StorageError(f"{source} cannot be restored: " + "; ".join(problems[:5]))
     staged = live.with_name(live.name + RESTORING_SUFFIX)
     try:
-        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
         with VaultLock(data_dir):
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
-                _copy(source, staged)
+                _copy(source, staged, journal_mode="WAL")
             except sqlite3.DatabaseError as error:
                 raise StorageError(f"Could not copy {source}: {error}") from error
-            kept = None
-            if live.exists() and live.stat().st_size:
-                kept = _retire(live, folder)
+            kept = _retire(live, folder)
             os.replace(staged, live)
             _fsync_dir(data_dir)
     except StorageError:
-        staged.unlink(missing_ok=True)
+        _discard(staged)
         raise
     except OSError as error:
-        staged.unlink(missing_ok=True)
+        _discard(staged)
         raise StorageError(
             f"The restore failed: {error}. Nothing was replaced."
         ) from error

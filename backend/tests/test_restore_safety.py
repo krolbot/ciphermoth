@@ -255,7 +255,8 @@ async def test_a_restore_killed_at_every_step_leaves_a_recoverable_vault(
         assert check_file(live) == [], step
         assert _content(live) == restored, step
         assert old in [_content(kept) for kept in _kept(work)], step
-        assert not (work / f"{VAULT_FILE}-wal").exists(), step
+        wal = work / f"{VAULT_FILE}-wal"
+        assert not wal.exists() or wal.stat().st_size == 0, step
         assert not (work / f"{VAULT_FILE}{RESTORING_SUFFIX}").exists(), step
 
 
@@ -447,3 +448,120 @@ async def test_a_restored_vault_restarts_and_unlocks_with_everything_intact(
         assert resp.content == ATTACHMENT
         settings = (await client.get("/settings", headers=headers)).json()
         assert settings == SETTINGS
+
+
+def _stale_wal(folder: Path, how: str) -> bytes:
+    vault = folder / VAULT_FILE
+    wal = (folder / f"{VAULT_FILE}-wal").read_bytes()
+    if how == "deleted":
+        vault.unlink()
+    elif how == "emptied":
+        vault.write_bytes(b"")
+    else:
+        vault.rename(folder / "vault-moved-aside.db")
+    return wal
+
+
+@pytest.mark.parametrize("how", ["deleted", "emptied", "moved-aside"])
+async def test_a_stale_wal_next_to_a_missing_vault_is_never_replayed(
+    tmp_path: Path, how: str
+) -> None:
+    folder, snap = await _scenario(tmp_path)
+    wal = _stale_wal(folder, how)
+    assert wal
+
+    kept = storage.restore(folder, snap)
+
+    assert check_file(folder / VAULT_FILE) == []
+    assert _content(folder / VAULT_FILE) == _content(snap)
+    assert kept is not None
+    assert (kept / f"{VAULT_FILE}-wal.unfolded").read_bytes() == wal
+
+
+async def test_a_restored_vault_is_already_in_wal_mode(tmp_path: Path) -> None:
+    folder, snap = await _scenario(tmp_path)
+    storage.restore(folder, snap)
+    with closing(
+        sqlite3.connect(f"{(folder / VAULT_FILE).as_uri()}?mode=ro", uri=True)
+    ) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+    assert not (folder / f"{VAULT_FILE}-journal").exists()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [f"{VAULT_FILE}-wal", f"{VAULT_FILE}-shm", f"{VAULT_FILE}{RESTORING_SUFFIX}"],
+)
+async def test_a_snapshot_cannot_take_a_name_the_vault_uses(
+    tmp_path: Path, name: str
+) -> None:
+    folder, _ = await _scenario(tmp_path)
+    with pytest.raises(StorageError, match="the vault itself uses"):
+        storage.snapshot(folder, folder / name)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0, reason="needs a non-root POSIX user"
+)
+async def test_a_wal_the_restore_cannot_read_stops_it_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    folder, snap = await _scenario(tmp_path)
+    before = _raw(folder)
+    wal = folder / f"{VAULT_FILE}-wal"
+    wal.chmod(0o000)
+    try:
+        with pytest.raises(StorageError, match="Nothing was changed"):
+            storage.restore(folder, snap)
+    finally:
+        wal.chmod(0o600)
+    assert _raw(folder) == before
+    assert _kept(folder) == []
+    assert not (folder / f"{VAULT_FILE}{RESTORING_SUFFIX}").exists()
+
+
+async def test_a_failure_while_keeping_the_old_vault_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder, snap = await _scenario(tmp_path)
+    before = _raw(folder)
+    assert f"{VAULT_FILE}-wal" in before
+
+    def full_disk(*args: object, **kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(storage.shutil, "copyfile", full_disk)
+    with pytest.raises(StorageError, match="Nothing was replaced"):
+        storage.restore(folder, snap)
+    monkeypatch.undo()
+
+    assert _raw(folder) == before
+    assert list((folder / "snapshots").glob("replaced-*")) == []
+    assert not (folder / f"{VAULT_FILE}{RESTORING_SUFFIX}").exists()
+
+
+async def test_a_copy_that_fails_its_own_check_is_never_kept_or_restored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder, snap = await _scenario(tmp_path)
+    before = _raw(folder)
+    original = storage.check_connection
+
+    def copy_damaged_on_the_way(connection: sqlite3.Connection) -> list[str]:
+        name = connection.execute("PRAGMA database_list").fetchone()[2]
+        if name.endswith(".partial"):
+            return ["simulated damage in the copy"]
+        return original(connection)
+
+    monkeypatch.setattr(storage, "check_connection", copy_damaged_on_the_way)
+    with pytest.raises(StorageError, match="failed its integrity check"):
+        storage.snapshot(folder, tmp_path / "copy.db")
+    with pytest.raises(StorageError, match="failed its integrity check"):
+        storage.restore(folder, snap)
+    monkeypatch.undo()
+
+    assert not (tmp_path / "copy.db").exists()
+    assert not list(tmp_path.glob("*.partial*"))
+    assert _raw(folder) == before
+    assert _kept(folder) == []
+    assert not list(folder.glob(f"{VAULT_FILE}{RESTORING_SUFFIX}*"))
