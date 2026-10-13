@@ -67,9 +67,9 @@ What the suite protects, and where:
 
 | Area | Tests |
 |---|---|
-| Every route rejects missing, forged, expired and locked sessions and forged or stale legacy keys | `test_authz.py`, `test_vault_key.py`, `test_adversarial.py` |
+| Every route rejects missing, forged, expired and locked sessions, and refuses the retired vault key header, alone or next to a valid session | `test_authz.py`, `test_vault_key.py`, `test_adversarial.py` |
 | Vault sessions expire, lock, end on rotation and survive races | `test_sessions.py` |
-| Old and new CLIs work with old and new servers | `test_cli.py`, with the released v1.4.7 CLI frozen in `testdata/clients` |
+| The CLI refuses servers older than v1.5.0, and the released v1.4.7 CLI is told to update without changing anything | `test_cli.py`, with that CLI frozen in `testdata/clients` |
 | The frontend image validates its API URL and renders its CSP | `docker/frontend/runtime-config.test.mjs` (part of `make test`) |
 | The CSP lets the UI reach its API and blocks every other destination | `docker/frontend/browser/csp.browser.test.mjs`, run with `make test-browser` (builds the image, drives Chromium) |
 | Old vaults still open, upgrade and restore | `test_golden.py` with the fixtures in [`testdata/golden`](testdata/golden/README.md) |
@@ -80,7 +80,7 @@ What the suite protects, and where:
 | The updater refuses, verifies, snapshots, rolls back and recovers from crashes | `test_updates.py`, `test_updater_recovery.py`, and real updates in Compose with `make test-updater-e2e` |
 | Maintenance mode, `/api/health` and the migration gate | `test_maintenance.py`, `test_migration_gate.py` |
 
-Tests authenticate the way current clients do: `auth(token)` sends a session token from `create_vault()` or `unlock()`. `key_auth(key)` with `create_legacy_vault()` or `legacy_unlock()` sends the deprecated vault key header, and `stored_vault_key()` derives the key from the database when a test needs the key itself. The legacy helpers go away with the legacy API in v1.6.0; `test_the_legacy_key_is_removed_on_schedule` fails once the version reaches it.
+Tests authenticate the way clients do: `auth(token)` sends a session token from `create_vault()` or `unlock()`. `stored_vault_key()` derives the key from the database when a test needs the key itself (to check ciphertext, or to prove the API never returns or accepts it), and `retired_key_header(key)` builds the v1.4.x header that must always be refused.
 
 `backend/tests/integrity.py` reads any vault (any schema from v1.0.0 on) and decrypts every field strictly, reporting what the application's lenient read path would hide. Use it whenever a change touches storage, encryption or migrations: `read_vault` before and after, then `assert_same_vault`.
 
@@ -132,7 +132,6 @@ Everything is optional, the defaults work fine for local use.
 | `DISABLE_DOCS` | `false` | Set `true` to hide `/docs` and `/redoc` |
 | `DEBUG` | `false` | FastAPI debug mode |
 | `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
-| `CIPHERMOTH_LEGACY_KEY_AUTH` | `true` | Set `false` to refuse clients from v1.4.x and earlier, which receive the vault key and send it back with every request. This compatibility is removed in v1.6.0. Compose files from before v1.5.0 don't pass it on; add it to the backend's `environment` and confirm `/api/meta` no longer lists `legacy-key-auth` |
 
 **Frontend:**
 

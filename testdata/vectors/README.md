@@ -23,7 +23,7 @@ Every JSON file has `format` (`ciphermoth-test-vectors/1`), `name` and `descript
 
 **Master password input.** The API strips leading and trailing Unicode `White_Space` (pydantic's `str_strip_whitespace`), then encodes UTF-8. No Unicode normalization: NFC and NFD forms of the same password are different passwords. Characters that are not `White_Space`, such as U+200B or U+001C, are kept even though Python's `str.strip()` would remove U+001C.
 
-**Vault key.** `base64url(Argon2id(password, salt, m=65536 KiB, t=3, p=4, length=32))`, version 0x13, no secret or associated data, 16-byte random salt stored in `master_password.salt`. The 44-character string, with `=` padding, is the Fernet key and the value of the `x-ciphermoth-key-derivation` header.
+**Vault key.** `base64url(Argon2id(password, salt, m=65536 KiB, t=3, p=4, length=32))`, version 0x13, no secret or associated data, 16-byte random salt stored in `master_password.salt`. The 44-character string, with `=` padding, is the Fernet key. Clients of v1.4.x received it and sent it back in the `x-ciphermoth-key-derivation` header; since v1.6.0 it never leaves the server.
 
 **Encrypted columns.** Fernet, spec version `0x80`: `base64url(0x80 || timestamp (u64 big-endian) || IV (16) || AES-128-CBC(key[16:32], PKCS7(plaintext)) || HMAC-SHA256(key[0:16], everything before))`. Columns hold the ASCII bytes of the token. Text is UTF-8, JSON columns (`tags`, `custom_fields`, `password_history`) are UTF-8 JSON, attachment content is raw bytes. No TTL is enforced.
 

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+The vault key never leaves the server any more, for any client. Nothing changes in your vault or its database.
+
+### Upgrading
+
+- **Update as usual**, by hand or with one click. There is no database change, and everyone is asked to unlock once, as after any update.
+- **Use a CLI from v1.5.0 or newer.** The CLI bundled in the backend image (`./cip`) is always current. A CLI from v1.4.x stops with a message asking you to update, and changes nothing.
+- **Browser tabs left open since v1.4.6 or v1.4.7** reload into the current web UI on their next request; unlock again. Tabs from older releases show the refusal instead: reload them by hand.
+- **Scripts** that called `POST /api/master_password/check` or sent `x-ciphermoth-key-derivation` must unlock with `POST /api/master_password/unlock` and send the returned token in `x-ciphermoth-session` (deprecated since v1.5.0).
+- `CIPHERMOTH_LEGACY_KEY_AUTH` no longer exists. If your `.env` or compose file still sets it, it is ignored; you can delete the line.
+
+### Security
+
+- **Removed the vault key protocol of v1.4.x clients**, as announced in v1.5.0. No route returns the vault key or accepts it as a credential: unlocking with the master password opens a server-side session, and the session token is the only way in. Requests that still send the key in `x-ciphermoth-key-derivation` are refused (403, `"code": "invalid_key"`) on every route, even together with a valid session token, before any route runs and without touching the session. `POST /api/master_password/check` answers 410 (`"code": "upgrade_required"`) without checking the password, so it can no longer be used to obtain the key. Both answers say which client to update.
+
+### Removed
+
+- `POST /api/master_password/check`, the `x-ciphermoth-key-derivation` header, the `legacy-key-auth` feature in `/api/meta`, the `CIPHERMOTH_LEGACY_KEY_AUTH` setting, and the CLI's fallback to the vault key for servers older than v1.5.0. Against such a server, the CLI now stops and asks you to update the server (or use CLI 1.5.x).
+
 ## [1.5.1] - 2026-10-13
 
 A reliability release for one-click updates. Nothing changes in your vault or its database.
