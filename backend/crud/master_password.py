@@ -18,7 +18,7 @@ from helpers import (
     verify_key_check,
 )
 from models import MasterPasswordModel, PasswordAttachmentModel, PasswordModel
-from schemas import MasterPasswordCheck, MasterPasswordUpdate
+from schemas import MasterPasswordUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -182,10 +182,6 @@ class MasterPasswordCRUD(BaseCRUD):
         ):
             return None
         return key
-
-    async def check_master_password(self, master_password: str) -> MasterPasswordCheck:
-        key = await self.unlock(master_password)
-        return MasterPasswordCheck(valid=key is not None, key_derivation=key)
 
     async def create_master_password(self, master_password: str) -> str:
         if await self.is_initialized():

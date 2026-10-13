@@ -62,8 +62,8 @@ def auth(token: str | bytes | None) -> Headers:
     return [(b"x-ciphermoth-session", value)]
 
 
-def key_auth(key: str | bytes | None) -> Headers:
-    """Headers for the deprecated vault key credential of v1.4.x clients."""
+def retired_key_header(key: str | bytes | None) -> Headers:
+    """The vault key header v1.4.x clients sent, which v1.6.0 refuses."""
     if key is None:
         return []
     value = key if isinstance(key, bytes) else key.encode("latin-1")
@@ -95,29 +95,10 @@ async def unlock(
     return body["session_token"]
 
 
-async def legacy_unlock(
-    client: httpx.AsyncClient, master_password: str = MASTER_PASSWORD
-) -> str:
-    resp = await client.post(
-        "/master_password/check", json={"master_password": master_password}
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["valid"] is True
-    return body["key_derivation"]
-
-
 async def stored_vault_key(master_password: str = MASTER_PASSWORD) -> str:
     """The vault key, derived from the stored salt without asking the API."""
     [(salt,)] = await db_execute("SELECT salt FROM master_password ORDER BY id LIMIT 1")
     return generate_key_derivation(bytes(salt), master_password).decode()
-
-
-async def create_legacy_vault(
-    client: httpx.AsyncClient, master_password: str = MASTER_PASSWORD
-) -> str:
-    await create_vault(client, master_password)
-    return await legacy_unlock(client, master_password)
 
 
 def entry(name: str, value: str = "s3cret-Value!", **fields: object) -> dict:
@@ -163,7 +144,7 @@ async def forged_tokens(
         "non-ascii": auth("сессия-токен".encode()),
         "in Authorization": [(b"authorization", b"Bearer " + real_token.encode())],
         "vault key as token": auth(vault_key),
-        "token as vault key": key_auth(real_token),
+        "token as vault key": retired_key_header(real_token),
         "locked": auth(locked),
     }
 

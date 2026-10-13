@@ -31,8 +31,8 @@ from tests.support import (
     database_engine,
     db_snapshot,
     ensure_database,
-    key_auth,
     reset_schema,
+    retired_key_header,
     run_alembic,
 )
 
@@ -159,26 +159,24 @@ async def test_historical_vault_upgrades_unlocks_and_rotates(release: str) -> No
     assert_same_vault(before, after)
 
     async with client_for_database(GOLDEN_DB) as api:
-        stale = await api.get("/passwords", headers=key_auth(data["key"]))
-        if "key_check" in data["features"]:
-            assert stale.status_code == 200
-        else:
-            assert stale.status_code == 403
-            assert stale.json()["code"] == "invalid_key"
-
+        stale = await api.get("/passwords", headers=retired_key_header(data["key"]))
+        assert stale.status_code == 403
+        assert stale.json()["code"] == "invalid_key"
         resp = await api.post(
             "/master_password/check",
-            json={"master_password": f"  {data['master_password']}  "},
+            json={"master_password": data["master_password"]},
         )
-        assert resp.json() == {"valid": True, "key_derivation": data["key"]}
-        resp = await api.get("/passwords", headers=key_auth(data["key"]))
-        assert resp.status_code == 200
+        assert resp.status_code == 410
+        assert data["key"] not in resp.text
+
         resp = await api.post(
             "/master_password/unlock",
             json={"master_password": f"  {data['master_password']}  "},
         )
         assert data["key"] not in resp.text
         headers = auth(resp.json()["session_token"])
+        _, unlocked = await scan(data["key"], data["master_password"])
+        assert unlocked.key_check == "valid"
 
         listing = (await api.get("/passwords", headers=headers)).json()
         assert [i["password_name"] for i in listing] == [
@@ -214,8 +212,6 @@ async def test_historical_vault_upgrades_unlocks_and_rotates(release: str) -> No
         )
         assert resp.status_code == 200, resp.text
         assert (await api.get("/passwords", headers=headers)).status_code == 401
-        stale = await api.get("/passwords", headers=key_auth(data["key"]))
-        assert stale.status_code == 403
         async with database_engine(GOLDEN_DB) as golden, golden.connect() as conn:
             salt = await conn.scalar(text("SELECT salt FROM master_password"))
         new_key = generate_key_derivation(salt, NEW_MASTER_PASSWORD).decode()

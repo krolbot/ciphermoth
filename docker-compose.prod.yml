@@ -30,7 +30,6 @@ services:
       CORS_ORIGINS: '["${CIPHERMOTH_FRONTEND_ORIGIN:-http://localhost:3000}"]'
       # Overrides the per-route rate limits (e.g. 200/hour) when set.
       CIPHERMOTH_RATE_LIMIT: ${CIPHERMOTH_RATE_LIMIT:-}
-      CIPHERMOTH_LEGACY_KEY_AUTH: ${CIPHERMOTH_LEGACY_KEY_AUTH:-}
     # Published on localhost only unless CIPHERMOTH_BIND_ADDRESS says otherwise.
     ports:
       - "${CIPHERMOTH_BIND_ADDRESS:-127.0.0.1}:${CIPHERMOTH_BACKEND_PORT:-8000}:80"

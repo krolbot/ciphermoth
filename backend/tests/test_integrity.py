@@ -18,12 +18,13 @@ from tests.integrity import (
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
-    create_legacy_vault,
+    auth,
+    create_vault,
     db_execute,
     engine,
     entry,
-    key_auth,
-    legacy_unlock,
+    stored_vault_key,
+    unlock,
 )
 
 BLOB = os.urandom(4096) + b"\x00\xff"
@@ -35,8 +36,7 @@ async def _scan(key: str, **options: object) -> VaultContents:
 
 
 async def _rich_vault(client: httpx.AsyncClient) -> str:
-    key = await create_legacy_vault(client)
-    headers = key_auth(key)
+    headers = auth(await create_vault(client))
     login = entry(
         "GitHub",
         "first-Value-1",
@@ -74,7 +74,7 @@ async def _rich_vault(client: httpx.AsyncClient) -> str:
     )
     assert resp.status_code == 200
     assert (await client.delete("/passwords/Old", headers=headers)).is_success
-    return key
+    return await stored_vault_key()
 
 
 async def test_a_healthy_vault_scans_clean_and_matches_the_api(
@@ -98,7 +98,8 @@ async def test_a_healthy_vault_scans_clean_and_matches_the_api(
     assert vault.active["Notes ✉"].value == "  body\n\n"
     assert [e.name for e in vault.trash] == ["Old"]
 
-    listing = (await client.get("/passwords", headers=key_auth(key))).json()
+    headers = auth(await unlock(client))
+    listing = (await client.get("/passwords", headers=headers)).json()
     for item in listing:
         scanned = vault.active[item["password_name"]]
         assert scanned.value == item["password_value"]
@@ -242,10 +243,10 @@ async def test_rotation_keeps_every_plaintext_and_replaces_every_token(
             "master_password": MASTER_PASSWORD,
             "new_master_password": NEW_MASTER_PASSWORD,
         },
-        headers=key_auth(key),
+        headers=auth(await unlock(client)),
     )
     assert resp.status_code == 200, resp.text
-    new_key = await legacy_unlock(client, NEW_MASTER_PASSWORD)
+    new_key = await stored_vault_key(NEW_MASTER_PASSWORD)
 
     after = await _scan(new_key, master_password=NEW_MASTER_PASSWORD)
     assert_same_vault(before, after)
@@ -287,19 +288,20 @@ async def test_a_backup_restore_is_lossy_exactly_where_documented(
     resp = await client.post(
         "/passwords/backup",
         json={"master_password": MASTER_PASSWORD},
-        headers=key_auth(key),
+        headers=auth(await unlock(client)),
     )
     archive = resp.content
     await db_execute(
         "TRUNCATE master_password, passwords, password_attachments, settings "
         "RESTART IDENTITY CASCADE"
     )
-    new_key = await create_legacy_vault(client)
+    token = await create_vault(client)
+    new_key = await stored_vault_key()
     resp = await client.post(
         "/passwords/import",
         data={"master_password": MASTER_PASSWORD},
         files={"file": ("b.zip", archive, "application/zip")},
-        headers=key_auth(new_key),
+        headers=auth(token),
     )
     assert resp.status_code == 200, resp.text
     restored = await _scan(new_key)

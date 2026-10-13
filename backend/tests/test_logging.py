@@ -5,11 +5,11 @@ import pytest
 
 from crud.password import PasswordCRUD
 from tests.support import (
+    MASTER_PASSWORD,
     auth,
-    create_legacy_vault,
     create_vault,
     entry,
-    key_auth,
+    retired_key_header,
     stored_vault_key,
 )
 
@@ -98,16 +98,28 @@ async def test_database_errors_do_not_leak_statement_parameters(
 async def test_rejected_keys_are_not_logged(
     client: httpx.AsyncClient, capture_all: pytest.LogCaptureFixture
 ) -> None:
-    key = await create_legacy_vault(client)
+    token = await create_vault(client)
+    key = await stored_vault_key()
     forged = key[:-6] + "AAAAA="
     capture_all.clear()
 
-    resp = await client.get("/passwords", headers=key_auth(forged))
+    for value in (key, forged):
+        for headers in (
+            retired_key_header(value),
+            auth(token) + retired_key_header(value),
+        ):
+            resp = await client.get("/passwords", headers=headers)
+            assert resp.status_code == 403
+    resp = await client.post(
+        "/master_password/check", json={"master_password": MASTER_PASSWORD}
+    )
+    assert resp.status_code == 410
 
-    assert resp.status_code == 403
     logged = server_logs(capture_all)
     assert forged not in logged
     assert key not in logged
+    assert token not in logged
+    assert MASTER_PASSWORD not in logged
 
 
 async def test_session_tokens_and_keys_are_never_logged(

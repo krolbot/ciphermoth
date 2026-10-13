@@ -23,21 +23,13 @@ class SessionToken:
     token: str = field(repr=False)
 
 
-@dataclass(frozen=True, slots=True)
-class LegacyKey:
-    key: str = field(repr=False)
-
-
-Credential = SessionToken | LegacyKey
-
-
 class VaultAccess(BaseCRUD):
     """
     Turns a master password into a vault session and a session back into the
     vault key, for one request. Every use of a session still checks its key
-    against the vault's key check under the shared row lock, exactly like the
-    legacy key header, so a session can never outlive the key it was opened
-    with, whichever process or release changed it.
+    against the vault's key check under the shared row lock, so a session can
+    never outlive the key it was opened with, whichever process or release
+    changed it.
     """
 
     def __init__(self, session: AsyncSession, vault_sessions: VaultSessions) -> None:
@@ -78,12 +70,8 @@ class VaultAccess(BaseCRUD):
         )
 
     async def authorize(
-        self, credential: Credential, *, exclusive: bool = False, refresh: bool = True
+        self, credential: SessionToken, *, exclusive: bool = False, refresh: bool = True
     ) -> str:
-        if isinstance(credential, LegacyKey):
-            return await self.master_password.verify_vault_key(
-                credential.key, exclusive=exclusive
-            )
         key = self.vault_sessions.resolve(credential.token, refresh=refresh)
         try:
             return await self.master_password.verify_vault_key(key, exclusive=exclusive)
@@ -91,12 +79,7 @@ class VaultAccess(BaseCRUD):
             self.vault_sessions.revoke(credential.token)
             raise SessionRequired(_SESSION_ENDED) from None
 
-    def status(self, credential: Credential) -> VaultSessionStatus:
-        if isinstance(credential, LegacyKey):
-            return VaultSessionStatus(
-                idle_timeout_ms=self.vault_sessions.idle_timeout_ms,
-                expires_in_ms=None,
-            )
+    def status(self, credential: SessionToken) -> VaultSessionStatus:
         info = self.vault_sessions.info(credential.token)
         return VaultSessionStatus(
             idle_timeout_ms=info.idle_timeout_ms, expires_in_ms=info.expires_in_ms

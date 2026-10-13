@@ -17,12 +17,12 @@ from tests.support import (
     NEW_MASTER_PASSWORD,
     admin_connection,
     apply_runtime_schema,
+    auth,
     client_for_database,
     ensure_database,
-    key_auth,
-    legacy_unlock,
     reset_schema,
     run_alembic,
+    unlock,
 )
 
 V145_HEAD = "9c0d1e2f3a4b"
@@ -130,13 +130,15 @@ async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
     finally:
         await conn.close()
 
-    resp = await legacy_client.get("/passwords", headers=key_auth(key))
-    assert resp.status_code == 403
-    assert resp.json()["code"] == "invalid_key"
+    headers = auth(await unlock(legacy_client))
+    conn = await admin_connection(MIGRATION_DB)
+    try:
+        salt, token = await conn.fetchrow("SELECT salt, key_check FROM master_password")
+    finally:
+        await conn.close()
+    assert verify_key_check(key, token, salt)
 
-    assert await legacy_unlock(legacy_client) == key
-
-    resp = await legacy_client.get("/passwords", headers=key_auth(key))
+    resp = await legacy_client.get("/passwords", headers=headers)
     assert resp.status_code == 200, resp.text
     [login] = resp.json()
     assert login["password_name"] == "legacy login"
@@ -146,10 +148,10 @@ async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
     assert login["folder"] == "Archive"
     assert login["password_history"][0]["value"] == "older"
     assert login["attachment_count"] == 1
-    trash = await legacy_client.get("/passwords/trash", headers=key_auth(key))
+    trash = await legacy_client.get("/passwords/trash", headers=headers)
     assert trash.json()[0]["password_value"] == "note body\n"
     download = await legacy_client.get(
-        "/passwords/legacy login/attachments/1", headers=key_auth(key)
+        "/passwords/legacy login/attachments/1", headers=headers
     )
     assert download.content == blob
 
@@ -159,12 +161,12 @@ async def test_upgrade_from_v145_keeps_ciphertext_and_unlocks(
             "master_password": MASTER_PASSWORD,
             "new_master_password": NEW_MASTER_PASSWORD,
         },
-        headers=key_auth(key),
+        headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    new_key = await legacy_unlock(legacy_client, NEW_MASTER_PASSWORD)
+    fresh = auth(await unlock(legacy_client, NEW_MASTER_PASSWORD))
     download = await legacy_client.get(
-        "/passwords/legacy login/attachments/1", headers=key_auth(new_key)
+        "/passwords/legacy login/attachments/1", headers=fresh
     )
     assert download.content == blob
 
@@ -179,7 +181,7 @@ async def test_v146_database_stays_bootable_by_v145(
         await conn.close()
     await _start_v146()
     await _start_v146()
-    assert await legacy_unlock(legacy_client) == key
+    await unlock(legacy_client)
 
     output = await _alembic("upgrade", "head")
     assert "Running upgrade" not in output

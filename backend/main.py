@@ -15,6 +15,7 @@ from api.exceptions import UnhandledErrorMiddleware
 from api.maintenance import MaintenanceMode
 from api.path_guard import EntryNamePaths
 from api.rate_limit import limiter
+from api.retired_clients import RETIRED_KEY_HEADER, RetiredClients
 from api.routes import make_api_exceptions, make_api_router
 from crud.engine import Database
 from crud.runtime_schema import ensure_runtime_schema
@@ -90,6 +91,7 @@ def get_application(
     server.add_middleware(BodySizeLimitMiddleware)
     server.add_middleware(EntryNamePaths)
     server.add_middleware(MaintenanceMode)
+    server.add_middleware(RetiredClients)
     server.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=settings.cors_origins,
@@ -98,7 +100,7 @@ def get_application(
         allow_headers=[
             "Content-Type",
             "x-ciphermoth-session",
-            "x-ciphermoth-key-derivation",
+            RETIRED_KEY_HEADER,
             "x-ciphermoth-entry",
         ],
     )

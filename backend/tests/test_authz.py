@@ -13,15 +13,14 @@ from tests.support import (
     auth,
     bump_patch,
     control_files,
-    create_legacy_vault,
     create_vault,
     db_execute,
     db_snapshot,
     entry,
     forged_keys,
     forged_tokens,
-    key_auth,
-    legacy_unlock,
+    retired_key_header,
+    stored_vault_key,
     unlock,
     updater_alive,
 )
@@ -30,7 +29,6 @@ Spec = Callable[[httpx.AsyncClient, Headers, dict], Awaitable[httpx.Response]]
 
 PUBLIC_ROUTES = {
     ("GET", "/api/master_password/status"),
-    ("POST", "/api/master_password/check"),
     ("POST", "/api/master_password/unlock"),
     ("POST", "/api/master_password/lock"),
     ("POST", "/api/master_password/create"),
@@ -173,7 +171,7 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
 
 def _expected_rejection(headers: Headers) -> tuple[int, str]:
     names = {name.lower() for name, _ in headers}
-    if b"x-ciphermoth-key-derivation" in names and b"x-ciphermoth-session" not in names:
+    if b"x-ciphermoth-key-derivation" in names:
         return 403, "invalid_key"
     return 401, "invalid_session"
 
@@ -203,7 +201,9 @@ async def _assert_rejected_without_side_effects(
 
 
 def _as_key_headers(keys: dict[str, str | bytes | None]) -> dict[str, Headers]:
-    return {label: key_auth(key) for label, key in keys.items()}
+    return {
+        label: retired_key_header(key) for label, key in keys.items() if key is not None
+    }
 
 
 def test_every_api_route_is_classified() -> None:
@@ -223,7 +223,7 @@ async def test_forged_session_tokens_are_rejected(
     token = await create_vault(client)
     ctx = await seed(client, auth(token))
     spec = PROTECTED_ROUTES[route]
-    key = await legacy_unlock(client)
+    key = await stored_vault_key()
 
     await _assert_rejected_without_side_effects(
         client, spec, ctx, await forged_tokens(client, token, key)
@@ -234,18 +234,27 @@ async def test_forged_session_tokens_are_rejected(
 
 
 @pytest.mark.parametrize("route", list(PROTECTED_ROUTES), ids=ROUTE_IDS)
-async def test_forged_keys_are_rejected(
+async def test_the_vault_key_is_never_accepted_as_a_credential(
     client: httpx.AsyncClient, route: tuple[str, str]
 ) -> None:
-    key = await create_legacy_vault(client)
-    ctx = await seed(client, key_auth(key))
+    token = await create_vault(client)
+    ctx = await seed(client, auth(token))
     spec = PROTECTED_ROUTES[route]
+    key = await stored_vault_key()
+    keys = {"real key": key, **forged_keys(key)}
+    credentials = {
+        **_as_key_headers(keys),
+        **{
+            f"open session and {label}": auth(token) + headers
+            for label, headers in _as_key_headers(keys).items()
+        },
+        "open session and key header first": retired_key_header(key) + auth(token),
+        "key header in capitals": [(b"X-CipherMoth-Key-Derivation", key.encode())],
+    }
 
-    await _assert_rejected_without_side_effects(
-        client, spec, ctx, _as_key_headers(forged_keys(key))
-    )
+    await _assert_rejected_without_side_effects(client, spec, ctx, credentials)
 
-    resp = await spec(client, key_auth(key), ctx)
+    resp = await spec(client, auth(token), ctx)
     assert resp.status_code == 200, resp.text
 
 
@@ -256,7 +265,7 @@ async def test_sessions_and_keys_from_before_a_rotation_are_rejected(
     token = await create_vault(client)
     ctx = await seed(client, auth(token))
     other = await unlock(client)
-    old_key = await legacy_unlock(client)
+    old_key = await stored_vault_key()
     resp = await client.patch(
         "/master_password/update",
         json={
@@ -275,7 +284,7 @@ async def test_sessions_and_keys_from_before_a_rotation_are_rejected(
         {
             "rotating session": auth(token),
             "other session": auth(other),
-            "stale key": key_auth(old_key),
+            "stale key": retired_key_header(old_key),
         },
     )
 
@@ -284,9 +293,9 @@ async def test_sessions_and_keys_from_before_a_rotation_are_rejected(
 async def test_legacy_vault_fails_closed_until_unlocked(
     client: httpx.AsyncClient, route: tuple[str, str]
 ) -> None:
-    key = await create_legacy_vault(client)
-    token = await unlock(client)
+    token = await create_vault(client)
     ctx = await seed(client, auth(token))
+    key = await stored_vault_key()
     await db_execute("UPDATE master_password SET key_check = NULL")
     spec = PROTECTED_ROUTES[route]
 
@@ -294,11 +303,14 @@ async def test_legacy_vault_fails_closed_until_unlocked(
         client,
         spec,
         ctx,
-        {"correct-but-unverified": key_auth(key), "open session": auth(token)},
+        {
+            "correct-but-unverified key": retired_key_header(key),
+            "open session": auth(token),
+        },
     )
 
-    assert await legacy_unlock(client) == key
-    resp = await client.get("/passwords", headers=key_auth(key))
+    fresh = await unlock(client)
+    resp = await client.get("/passwords", headers=auth(fresh))
     assert resp.status_code == 200, resp.text
     resp = await spec(client, auth(token), ctx)
     assert resp.status_code == 401, resp.text

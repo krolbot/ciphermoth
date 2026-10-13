@@ -14,7 +14,9 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from api import legacy
+import crud.master_password
+import helpers
+from api.retired_clients import UPGRADE_REQUIRED
 from crud.engine import Database
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
@@ -32,8 +34,7 @@ from tests.support import (
     engine_url,
     entry,
     fresh_vault_sessions,
-    key_auth,
-    legacy_unlock,
+    retired_key_header,
     stored_vault_key,
     unlock,
 )
@@ -527,7 +528,7 @@ async def test_lock_ends_only_that_session_and_is_idempotent(
         resp = await client.post("/master_password/lock", headers=auth(token))
         assert resp.status_code == 200
         assert resp.json() == {"locked": True}
-    for headers in ([], auth("garbage"), auth("A" * 43), key_auth("x")):
+    for headers in ([], auth("garbage"), auth("A" * 43)):
         assert (await client.post("/master_password/lock", headers=headers)).is_success
 
     for path in ("/passwords", "/settings", "/master_password/session"):
@@ -572,18 +573,6 @@ async def test_rotation_ends_every_session(client: httpx.AsyncClient) -> None:
     assert resp.json()["valid"] is False
     fresh = await unlock(client, NEW_MASTER_PASSWORD)
     assert (await client.get("/passwords", headers=auth(fresh))).status_code == 200
-
-
-async def test_rotation_from_a_legacy_client_ends_every_session(
-    client: httpx.AsyncClient,
-) -> None:
-    token = await create_vault(client)
-    key = await legacy_unlock(client)
-    resp = await client.patch(
-        "/master_password/update", json=ROTATE, headers=key_auth(key)
-    )
-    assert resp.status_code == 200
-    assert (await client.get("/passwords", headers=auth(token))).status_code == 401
 
 
 @pytest.mark.parametrize("failure", ["wrong password", "commit"])
@@ -694,17 +683,23 @@ async def test_a_reverse_proxy_may_keep_its_own_authorization_header(
 
 
 async def test_a_session_token_and_a_vault_key_together_are_refused(
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient, app_clock: FakeClock
 ) -> None:
     token = await create_vault(client)
-    key = await legacy_unlock(client)
-    resp = await client.post(
-        "/passwords/create",
-        json=entry("both"),
-        headers=auth(token) + key_auth(key),
-    )
-    assert resp.status_code == 400
+    key = await stored_vault_key()
+    app_clock.advance(IDLE_MS - 10_000)
+    for headers in (
+        auth(token) + retired_key_header(key),
+        retired_key_header(key) + auth(token),
+    ):
+        resp = await client.post(
+            "/passwords/create", json=entry("both"), headers=headers
+        )
+        assert resp.status_code == 403
+        assert resp.json() == {"detail": UPGRADE_REQUIRED, "code": "invalid_key"}
     assert await db_execute("SELECT id FROM passwords") == []
+    assert sessions().info(token).expires_in_ms == 10_000
+    assert (await client.get("/passwords", headers=auth(token))).status_code == 200
 
 
 async def test_a_write_in_flight_during_rotation_is_reencrypted(
@@ -855,8 +850,6 @@ async def test_unlocks_waiting_for_the_kdf_hold_no_database_connection(
 async def test_argon2id_derivations_never_overlap(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import helpers
-
     await create_vault(client)
     running = 0
     peak = 0
@@ -987,95 +980,105 @@ async def test_browsers_may_send_the_session_header(client: httpx.AsyncClient) -
     assert resp.headers.get("access-control-allow-credentials") is None
 
 
-@pytest.fixture
-def legacy_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(get_api_settings(), "legacy_key_auth", False)
+async def test_the_retired_key_route_answers_without_deriving_a_key(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await create_vault(client)
+    key = await stored_vault_key()
+    before = len(sessions())
+
+    async def never(*args: Any) -> Any:
+        raise AssertionError("the retired route must not check the password")
+
+    monkeypatch.setattr(MasterPasswordCRUD, "unlock", never)
+    monkeypatch.setattr(crud.master_password, "derive_key", never)
+    for body in (
+        {"master_password": MASTER_PASSWORD},
+        {"master_password": WRONG_MASTER_PASSWORD},
+        {},
+    ):
+        resp = await client.post("/master_password/check", json=body)
+        assert resp.status_code == 410
+        assert resp.json() == {"detail": UPGRADE_REQUIRED, "code": "upgrade_required"}
+        assert key not in resp.text
+        assert resp.headers["cache-control"] == "no-store"
+    assert len(sessions()) == before
 
 
-async def test_legacy_clients_keep_working_during_the_transition(
+async def test_the_retired_key_header_is_refused_on_public_routes_too(
     client: httpx.AsyncClient,
 ) -> None:
-    token = await create_vault(client)
+    key_header = retired_key_header("K" * 43 + "=")
     resp = await client.post(
-        "/master_password/check", json={"master_password": MASTER_PASSWORD}
+        "/master_password/create",
+        json={"master_password": MASTER_PASSWORD},
+        headers=key_header,
     )
-    assert resp.headers["deprecation"] == legacy.DEPRECATED_SINCE
-    key = resp.json()["key_derivation"]
-    assert key == await stored_vault_key()
-    resp = await client.post(
-        "/passwords/create", json=entry("old"), headers=key_auth(key)
-    )
-    assert resp.status_code == 200
-    listing = await client.get("/passwords", headers=auth(token))
-    assert [p["password_name"] for p in listing.json()] == ["old"]
-    assert "legacy-key-auth" in (await client.get("/meta")).json()["features"]
+    assert resp.status_code == 403
+    assert await db_execute("SELECT id FROM master_password") == []
+
+    await create_vault(client)
+    before = len(sessions())
+    for method, path, body in (
+        ("POST", "/master_password/unlock", {"master_password": MASTER_PASSWORD}),
+        ("POST", "/master_password/lock", None),
+        ("GET", "/master_password/status", None),
+        ("GET", "/meta", None),
+        ("GET", "/health", None),
+    ):
+        resp = await client.request(method, path, json=body, headers=key_header)
+        assert resp.status_code == 403, path
+        assert resp.json() == {"detail": UPGRADE_REQUIRED, "code": "invalid_key"}
+    assert len(sessions()) == before
 
 
-async def test_the_legacy_key_can_be_switched_off(
-    client: httpx.AsyncClient, legacy_disabled: None
+async def test_the_server_no_longer_advertises_the_vault_key_protocol(
+    client: httpx.AsyncClient,
 ) -> None:
-    token = await create_vault(client)
-    key = await stored_vault_key()
-
-    resp = await client.post(
-        "/master_password/check", json={"master_password": MASTER_PASSWORD}
-    )
-    assert resp.status_code == 403
-    assert key not in resp.text
-    resp = await client.get("/passwords", headers=key_auth(key))
-    assert resp.status_code == 403
-    assert resp.json() == {"detail": legacy.DISABLED, "code": "invalid_key"}
-
     features = (await client.get("/meta")).json()["features"]
-    assert "vault-sessions" in features
-    assert "legacy-key-auth" not in features
-    assert (await client.get("/passwords", headers=auth(token))).status_code == 200
+    assert features == ["entry-names-with-slash", "vault-sessions"]
+    paths = app.openapi()["paths"]
+    assert "/api/master_password/check" not in paths
+    assert "key-derivation" not in str(app.openapi()).lower()
 
 
-@pytest.mark.parametrize("legacy_on", [True, False], ids=["legacy on", "legacy off"])
-async def test_a_v147_web_ui_creating_a_vault_gets_a_working_vault(
-    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, legacy_on: bool
+async def test_a_leftover_legacy_setting_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(get_api_settings(), "legacy_key_auth", legacy_on)
-    resp = await client.post(
-        "/master_password/create", json={"master_password": MASTER_PASSWORD}
+    for value in ("true", "false", ""):
+        monkeypatch.setenv("CIPHERMOTH_LEGACY_KEY_AUTH", value)
+        settings = get_api_settings().__class__()
+        assert not hasattr(settings, "legacy_key_auth")
+        server = get_application(vault_sessions=fresh_vault_sessions())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=server), base_url="http://testserver/api"
+        ) as other:
+            resp = await other.post(
+                "/master_password/check", json={"master_password": MASTER_PASSWORD}
+            )
+            assert resp.status_code == 410
+            resp = await other.get("/passwords", headers=retired_key_header("K"))
+            assert resp.status_code == 403
+
+
+async def test_old_browser_tabs_can_read_the_refusal(client: httpx.AsyncClient) -> None:
+    origin = [(b"origin", b"http://localhost:3000")]
+    resp = await client.options(
+        "/passwords",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "x-ciphermoth-key-derivation",
+        },
     )
     assert resp.status_code == 200
-    created = resp.json()
-    assert created["created"] is True
-    assert created.get("key_derivation") is None
-    status = await client.get("/master_password/status")
-    assert status.json() == {"initialized": True}
-
-    resp = await client.post(
-        "/master_password/check", json={"master_password": MASTER_PASSWORD}
-    )
-    if legacy_on:
-        key = resp.json()["key_derivation"]
-        assert key == await stored_vault_key()
-        resp = await client.post(
-            "/passwords/create", json=entry("from-old-ui"), headers=key_auth(key)
-        )
-        assert resp.status_code == 200
-    else:
-        assert resp.status_code == 403
-        assert resp.json()["detail"] == legacy.DISABLED
-
-    token = await unlock(client)
-    assert (await client.get("/passwords", headers=auth(token))).status_code == 200
-    resp = await client.post(
-        "/master_password/create", json={"master_password": MASTER_PASSWORD}
+    resp = await client.get(
+        "/passwords", headers=origin + retired_key_header("K" * 43 + "=")
     )
     assert resp.status_code == 403
-
-
-def test_the_legacy_key_is_removed_on_schedule() -> None:
-    version = tuple(int(part) for part in get_api_settings().version.split("."))
-    assert version < legacy.REMOVED_IN, (
-        "Remove api/legacy.py, POST /master_password/check and the "
-        "x-ciphermoth-key-derivation header before releasing "
-        f"{'.'.join(map(str, legacy.REMOVED_IN))}, as CHANGELOG.md announced."
-    )
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert resp.json()["code"] == "invalid_key"
+    assert resp.headers["x-frame-options"] == "DENY"
 
 
 async def test_a_restarted_server_has_no_sessions(tmp_path: Path) -> None:

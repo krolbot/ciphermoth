@@ -79,7 +79,7 @@ async def test_paired_surrogate_escapes_are_ordinary_text(
 @pytest.mark.parametrize(
     ("path", "body"),
     [
-        ("/master_password/check", b'{"master_password": "Moth-\\ud800-Vault-2026"}'),
+        ("/master_password/unlock", b'{"master_password": "Moth-\\ud800-Vault-2026"}'),
         ("/master_password/create", b'{"master_password": "Moth-\\ud800-Vault-2026"}'),
     ],
 )

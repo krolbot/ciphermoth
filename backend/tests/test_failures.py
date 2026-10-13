@@ -151,11 +151,11 @@ async def test_first_unlock_of_a_legacy_vault_fails_cleanly_if_its_commit_fails(
     failing_commit()
 
     resp = await client.post(
-        "/master_password/check", json={"master_password": MASTER_PASSWORD}
+        "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
     )
 
     assert resp.status_code == 500
-    assert "key_derivation" not in resp.text
+    assert "session_token" not in resp.text
     assert await db_snapshot() == before
 
 

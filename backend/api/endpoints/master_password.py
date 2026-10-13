@@ -2,7 +2,6 @@ from fastapi import (
     APIRouter,
     Depends,
     Request,
-    Response,
     status,
 )
 
@@ -17,13 +16,10 @@ from api.endpoints.deps import (
     get_vault_key_quietly,
     require_master_password,
 )
-from api.legacy import DEPRECATED_SINCE, DISABLED, legacy_key_auth_enabled
 from api.rate_limit import limiter, rate
 from api.responses import inject_responses
-from errors import Forbidden
 from schemas import (
     MasterPassword,
-    MasterPasswordCheck,
     MasterPasswordCreate,
     MasterPasswordCreatePayload,
     MasterPasswordStatus,
@@ -36,8 +32,6 @@ from schemas import (
 )
 
 router = APIRouter(tags=["master-password"])
-
-_UNLOCK_LIMIT = rate("30/hour")
 
 
 @router.get(
@@ -62,7 +56,7 @@ async def get_status(
         }
     ),
 )
-@limiter.shared_limit(_UNLOCK_LIMIT, scope="master-password:unlock")
+@limiter.limit(rate("30/hour"))
 async def unlock(
     request: Request,
     body: MasterPassword,
@@ -107,32 +101,6 @@ async def record_session_activity(
     access: VaultAccessDep, credential: CredentialDep
 ) -> VaultSessionStatus:
     return access.status(credential)
-
-
-@router.post(
-    "/check",
-    name="master-password:check",
-    response_model=MasterPasswordCheck,
-    deprecated=True,
-    responses=inject_responses(
-        {
-            status.HTTP_404_NOT_FOUND: SimpleDetailSchema,
-            status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
-            status.HTTP_429_TOO_MANY_REQUESTS: SimpleDetailSchema,
-        }
-    ),
-)
-@limiter.shared_limit(_UNLOCK_LIMIT, scope="master-password:unlock")
-async def check_master_password(
-    request: Request,
-    response: Response,
-    body: MasterPassword,
-    crud: MasterPasswordCRUDDep,
-) -> MasterPasswordCheck:
-    if not legacy_key_auth_enabled():
-        raise Forbidden(DISABLED)
-    response.headers["Deprecation"] = DEPRECATED_SINCE
-    return await crud.check_master_password(master_password=body.master_password)
 
 
 @router.post(

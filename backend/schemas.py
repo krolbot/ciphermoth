@@ -56,11 +56,6 @@ class MasterPasswordCreatePayload(MasterPassword):
         return validate_master_password_strength(value)
 
 
-class MasterPasswordCheck(BaseModel):
-    valid: bool
-    key_derivation: str | None = None
-
-
 class VaultUnlock(BaseModel):
     valid: bool
     session_token: str | None = None
@@ -76,7 +71,7 @@ class MasterPasswordCreate(BaseModel):
 
 class VaultSessionStatus(BaseModel):
     idle_timeout_ms: int
-    expires_in_ms: int | None
+    expires_in_ms: int
 
 
 class VaultLock(BaseModel):

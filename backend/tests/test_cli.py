@@ -25,8 +25,8 @@ from helpers import encrypt
 from tests.support import (
     MASTER_PASSWORD,
     WRONG_MASTER_PASSWORD,
-    api_server,
     db_execute,
+    db_snapshot,
     stored_vault_key,
     update_control_dir,
 )
@@ -866,41 +866,34 @@ def old_cli(api: str, *args: str, answers: list[str] | None = None) -> Result:
     )
 
 
-async def test_the_v147_cli_still_works_against_this_server(
-    api: str, tmp_path: Path
+async def test_the_v147_cli_is_told_to_update_and_changes_nothing(
+    api: str, tmp_path: Path, live_server_log: Path
 ) -> None:
-    ok(
-        old_cli(
-            api,
-            "password",
-            "create",
-            "from-old-cli",
-            answers=["old-cli-Pass-1", "old-cli-Pass-1", "moth", "", "", "", ""],
-        )
-    )
-    assert "from-old-cli" in ok(old_cli(api, "password", "list"))
-    assert "old-cli-Pass-1" in ok(old_cli(api, "password", "get", "from-old-cli"))
-    assert "old-cli-Pass-1" in ok(cli(api, "password", "get", "from-old-cli"))
-    ok(old_cli(api, "backup", "--out", str(tmp_path)))
-    ok(old_cli(api, "password", "delete", "from-old-cli", "--yes"))
-    assert "from-old-cli" in ok(cli(api, "password", "trash"))
-
-
-async def test_the_v147_cli_is_told_to_update_once_legacy_keys_are_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("CIPHERMOTH_LEGACY_KEY_AUTH", "false")
-    with api_server(tmp_path / "server.log") as server:
-        resp = httpx.post(
-            f"{server.base_url}/master_password/create",
-            json={"master_password": MASTER_PASSWORD},
-        )
-        assert resp.status_code == 200
-        result = old_cli(server.base_url, "password", "list")
-        assert result.exit_code == 1
-        assert "no longer accepts the vault key" in result.output
+    ok(cli(api, "password", "create", "kept", answers=["kept-Pass-1"] * 2 + [""] * 5))
+    before = await db_snapshot()
+    log_start = live_server_log.stat().st_size
+    for args, answers in (
+        (["password", "list"], []),
+        (["password", "get", "kept"], []),
+        (
+            ["password", "create", "from-old-cli"],
+            ["old-cli-Pass-1", "old-cli-Pass-1", "moth", "", "", "", ""],
+        ),
+        (["password", "delete", "kept", "--yes"], []),
+        (["backup", "--out", str(tmp_path)], []),
+    ):
+        result = old_cli(api, *args, answers=answers)
+        assert result.exit_code == 1, args
+        assert "no longer hands out or accepts the vault key" in result.output
+        assert "CLI to 1.5.0 or newer" in result.output
         assert "Traceback" not in result.output
-        assert "The vault is empty" in ok(cli(server.base_url, "password", "list"))
+        assert "kept-Pass-1" not in result.output
+    assert await db_snapshot() == before
+    assert list(tmp_path.iterdir()) == []
+    log = live_server_log.read_bytes()[log_start:].decode(errors="replace")
+    assert log.count("POST /api/master_password/check") == 5
+    assert "/api/passwords" not in log
+    assert "kept-Pass-1" in ok(cli(api, "password", "get", "kept"))
 
 
 @pytest.mark.parametrize(

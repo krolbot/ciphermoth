@@ -2,7 +2,6 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,15 +28,6 @@ class APISettings(BaseSettings):
     version: str = _package_version()
     disable_docs: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
-    legacy_key_auth: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("ciphermoth_legacy_key_auth", "legacy_key_auth"),
-    )
-
-    @field_validator("legacy_key_auth", mode="before")
-    @classmethod
-    def _unset_means_default(cls, value: object) -> object:
-        return True if isinstance(value, str) and not value.strip() else value
 
     @property
     def fastapi_kwargs(self) -> dict[str, Any]:

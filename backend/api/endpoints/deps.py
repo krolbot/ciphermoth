@@ -6,15 +6,14 @@ from fastapi import Depends, Header, Path, Request
 from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.legacy import DISABLED, LEGACY_KEY_HEADER, legacy_key_auth_enabled
 from api.path_guard import entry_name
 from crud.attachment import AttachmentCRUD
 from crud.engine import Database
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
 from crud.settings import SettingsCRUD
-from crud.vault_access import Credential, LegacyKey, SessionToken, VaultAccess
-from errors import Forbidden, InvalidKey, InvalidRequest, SessionRequired
+from crud.vault_access import SessionToken, VaultAccess
+from errors import Forbidden, InvalidRequest, SessionRequired
 from vault_sessions import VaultSessions
 
 SESSION_HEADER = "x-ciphermoth-session"
@@ -76,32 +75,20 @@ SettingsCRUDDep = Annotated[SettingsCRUD, Depends(get_settings_crud)]
 AttachmentCRUDDep = Annotated[AttachmentCRUD, Depends(get_attachment_crud)]
 VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
 SessionTokenHeader = Annotated[str | None, Depends(_session_header)]
-LegacyKeyHeader = Annotated[
-    str | None, Header(alias=LEGACY_KEY_HEADER, include_in_schema=False)
-]
 
 
-async def get_credential(
-    token: SessionTokenHeader, legacy_key: LegacyKeyHeader = None
-) -> Credential:
+async def get_credential(token: SessionTokenHeader) -> SessionToken:
     """
-    The credential a request carries: a session token in the
-    ``x-ciphermoth-session`` header, or (deprecated, see ``api.legacy``) the vault
-    key itself. ``Authorization`` is left alone, so a reverse proxy can still put
-    its own authentication in front of the vault.
+    The session token a request carries in the ``x-ciphermoth-session`` header.
+    ``Authorization`` is left alone, so a reverse proxy can still put its own
+    authentication in front of the vault.
     """
-    if token is not None and legacy_key is not None:
-        raise InvalidRequest("Send either a session token or a vault key, not both.")
-    if token is not None:
-        return SessionToken(token)
-    if legacy_key is not None:
-        if not legacy_key_auth_enabled():
-            raise InvalidKey(DISABLED)
-        return LegacyKey(legacy_key)
-    raise SessionRequired("The vault is locked. Unlock it first.")
+    if token is None:
+        raise SessionRequired("The vault is locked. Unlock it first.")
+    return SessionToken(token)
 
 
-CredentialDep = Annotated[Credential, Depends(get_credential)]
+CredentialDep = Annotated[SessionToken, Depends(get_credential)]
 
 
 async def get_vault_key(access: VaultAccessDep, credential: CredentialDep) -> str:
