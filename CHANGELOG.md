@@ -2,11 +2,14 @@
 
 ## [Unreleased]
 
-The vault key never leaves the server any more, for any client. Nothing changes in your vault or its database.
+## [1.6.0] - 2026-10-13
+
+Unlocking with a session is now the only way in: the vault key never leaves the server, for any client. This retires the compatibility path for v1.4.x apps and CLIs that v1.5.0 announced. Your vault, its database and your backups stay exactly as they are.
 
 ### Upgrading
 
-- **Update as usual**, by hand or with one click. There is no database change, and everyone is asked to unlock once, as after any update.
+- **Update as usual**, by hand or with one click. One-click updates work as in v1.5.1, with the same updater: there is nothing new to install. No database migration runs, and everyone is asked to unlock once, as after any update.
+- **Nothing is converted.** The database, the encryption and the backup format are unchanged, and backups made by earlier releases restore as before.
 - **Use a CLI from v1.5.0 or newer.** The CLI bundled in the backend image (`./cip`) is always current. A CLI from v1.4.x stops with a message asking you to update, and changes nothing.
 - **Browser tabs left open since v1.4.6 or v1.4.7** reload into the current web UI on their next request; unlock again. Tabs from older releases show the refusal instead: reload them by hand.
 - **Scripts** that called `POST /api/master_password/check` or sent `x-ciphermoth-key-derivation` must unlock with `POST /api/master_password/unlock` and send the returned token in `x-ciphermoth-session` (deprecated since v1.5.0).
