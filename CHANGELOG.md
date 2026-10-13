@@ -2,15 +2,33 @@
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-13
+
+A reliability release for one-click updates. Nothing changes in your vault or its database.
+
+### Upgrading
+
+- **Update as usual.** One click, or `docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d`. Nothing changes in the database, and everyone is asked to unlock once, as after any update.
+- **If you use one-click updates, update the updater once.** It doesn't replace itself. After the update, the update dialog shows this command; run it once in your CipherMoth folder:
+
+  ```shell
+  docker compose -f docker-compose.prod.yml --profile autoupdate pull updater
+  docker compose -f docker-compose.prod.yml --profile autoupdate up -d --no-deps updater
+  ```
+
+  Until you do, CipherMoth refuses one-click updates instead of risking your vault, and shows you the command again. Future releases that change the database will only install through the new updater.
+- If a newer release than 1.5.1 is already out when you read this, the old updater will offer that one instead. Set `CIPHERMOTH_VERSION=1.5.1` in `.env`, run `docker compose -f docker-compose.prod.yml --profile autoupdate pull` and `... --profile autoupdate up -d`, then update with one click. See [docs/UPDATING.md](docs/UPDATING.md).
+
 ### Changed
 
-- **The one-click updater was rewritten (updater v2) to be safe for database migrations.** It used to keep going when its database dump failed and could only roll back the images, which would leave a migrated vault behind. Now it pauses writes (the API answers 503 during an update), stops the backend, takes a snapshot and proves it restores identically before it continues; if the new version, its migration or its web UI fails, it restores that snapshot into a fresh database, swaps it in, and starts the exact previous images again. Updates are recorded in a journal, so a crash, `docker stop` or reboot in the middle is finished or rolled back when the updater starts again. If it cannot recover on its own it keeps the API paused and says so; `updater.sh retry` and `updater.sh resolve` then work against the running updater. It also verifies the signature of the version it would roll back to, checks that the web UI really serves the new version (not just the backend), keeps the three newest snapshots, and refuses expired, replayed or malformed requests. See [docs/UPDATING.md](docs/UPDATING.md).
-- **Updaters from v1.5.0 and older need a one-time upgrade.** They can install this release, which does not change the database, but from now on the backend only accepts one-click updates through updater v2. The update dialog shows the command (`docker compose -f docker-compose.prod.yml --profile autoupdate pull updater` then `... up -d --no-deps updater`). The updater never replaces its own container; when it is older than the app, the result of an update says so and gives the same command.
+- **One-click updates can now undo a failed database change.** Before applying an update, the updater pauses writes (the API answers 503 for a moment), takes a database snapshot and checks that it restores exactly. If the new version, its database migration or its web UI doesn't come up healthy, it puts that snapshot back and restarts the previous version. Before, it kept going when its backup failed and could only switch the images back.
+- **Interrupted updates finish safely.** A crash, `docker stop`, reboot or power cut in the middle of an update is completed or rolled back when the updater starts again. If it ever cannot recover on its own, it keeps the API paused, says so in the app, and [docs/UPDATING.md](docs/UPDATING.md) explains what to do (`updater.sh retry` or a manual restore).
+- **Stricter checks.** The updater also verifies the signature of the version it would roll back to, insists that the web UI (not just the backend) runs the new version, keeps its three newest snapshots, and ignores expired, repeated or malformed requests.
 
 ### Added
 
-- `GET /api/health` reports the version, whether the database is at the release's schema, and maintenance mode. The web UI serves `/version.json`.
-- A backend refuses to migrate the database while an older updater is installing it, so a future release with a schema change cannot be applied by an updater that could not restore the database. Updating by hand is unaffected.
+- `GET /api/health` reports the version, whether the database matches the release, and whether an update is in progress. The web UI serves `/version.json`.
+- A release that changes the database refuses to migrate while an older updater is installing it, so the first such release cannot be installed by an updater that could not restore your vault. Updating by hand is not blocked, but it has no automatic rollback, so back up first.
 - Release images carry an `io.ciphermoth.min-updater-protocol` label, and the updater refuses releases that need a newer updater.
 
 ## [1.5.0] - 2026-10-12
