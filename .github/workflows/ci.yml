@@ -23,20 +23,28 @@ jobs:
 
       - name: Lint
         working-directory: backend
-        run: uv run ruff check .
+        run: uv run ruff check . ../docker/smoke
 
       - name: Format check
         working-directory: backend
-        run: uv run ruff format --check .
+        run: uv run ruff format --check . ../docker/smoke
 
       - name: Type check
         working-directory: backend
-        run: uv run ty check .
+        run: uv run ty check . ../docker/smoke
 
   backend-tests:
-    name: Backend tests (pytest)
-    runs-on: ubuntu-latest
+    name: Backend tests (pytest, ${{ matrix.platform.slug }})
+    runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: ubuntu-latest
+            slug: amd64
+          - runner: ubuntu-24.04-arm
+            slug: arm64
     env:
       UV_PYTHON_PREFERENCE: only-managed
     steps:
@@ -53,7 +61,7 @@ jobs:
 
       - name: Check the SQLite runtime
         working-directory: backend
-        run: uv run python -c "import storage, sqlite3; storage.require_supported_sqlite(); print('SQLite', sqlite3.sqlite_version)"
+        run: uv run python -c "import platform, sqlite3, storage; storage.require_supported_sqlite(); print(platform.machine(), 'SQLite', sqlite3.sqlite_version)"
 
       - name: Test
         working-directory: backend
@@ -116,17 +124,12 @@ jobs:
         run: npm test
 
   images:
-    name: Image ${{ matrix.image.name }} (${{ matrix.platform.slug }})
+    name: Images and Compose install (${{ matrix.platform.slug }})
     runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - name: backend
-            args: ""
-          - name: frontend
-            args: --build-arg VITE_API_URL=__CIPHERMOTH_API_URL__
         platform:
           - runner: ubuntu-latest
             slug: amd64
@@ -135,11 +138,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
-        run: docker build -f docker/${{ matrix.image.name }}/Dockerfile ${{ matrix.image.args }} -t ciphermoth-${{ matrix.image.name }}:ci .
-
-      - name: Check that released updaters refuse the image
+      - name: Build the production images
         run: |
-          label="$(docker image inspect ciphermoth-${{ matrix.image.name }}:ci --format '{{json .Config.Labels}}')"
-          echo "$label"
-          echo "$label" | grep -q '"io.ciphermoth.min-updater-protocol":"3"'
+          docker build -f docker/backend/Dockerfile -t ghcr.io/mr-grj/ciphermoth-backend:ci .
+          docker build -f docker/frontend/Dockerfile --build-arg VITE_API_URL=__CIPHERMOTH_API_URL__ -t ghcr.io/mr-grj/ciphermoth-frontend:ci .
+
+      - name: Check that released updaters refuse the images
+        run: |
+          for image in backend frontend; do
+            label="$(docker image inspect ghcr.io/mr-grj/ciphermoth-$image:ci --format '{{json .Config.Labels}}')"
+            echo "$image: $label"
+            echo "$label" | grep -q '"io.ciphermoth.min-updater-protocol":"3"'
+          done
+
+      - name: Install and exercise the Compose stack, the v1.6.0 refusal and install.sh
+        run: |
+          git fetch --no-tags --depth=1 origin d7bc836aec566d18252baa43ef000d5bdae5a605
+          git show d7bc836aec566d18252baa43ef000d5bdae5a605:docker-compose.prod.yml > "$RUNNER_TEMP/compose-v1.6.0.yml"
+          python3 docker/smoke/compose_smoke.py --tag ci --prefix cm-ci \
+            --legacy-compose "$RUNNER_TEMP/compose-v1.6.0.yml" --installer

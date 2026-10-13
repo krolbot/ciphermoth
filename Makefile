@@ -66,16 +66,16 @@ release-dry:
 
 .PHONY: lint
 lint:
-	cd backend && uv run ruff check .
+	cd backend && uv run ruff check . ../docker/smoke
 	cd frontend && npm run lint
 
 .PHONY: typecheck
 typecheck:
-	cd backend && uv run ty check .
+	cd backend && uv run ty check . ../docker/smoke
 
 .PHONY: format
 format:
-	cd backend && uv run ruff format .
+	cd backend && uv run ruff format . ../docker/smoke
 	cd frontend && npm run format
 
 # Tests use a throwaway SQLite vault in a temporary folder; no services needed.
@@ -98,5 +98,5 @@ test-stress:
 
 .PHONY: check
 check:
-	cd backend && uv run ruff check . && uv run ruff format --check . && uv run ty check .
+	cd backend && uv run ruff check . ../docker/smoke && uv run ruff format --check . ../docker/smoke && uv run ty check . ../docker/smoke
 	cd frontend && npm run lint && npm run format:check
