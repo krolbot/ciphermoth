@@ -40,6 +40,15 @@ _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 _SESSION_HEADER = "x-ciphermoth-session"
 _SESSIONS = "vault-sessions"
 _SLASH_NAMES = "entry-names-with-slash"
+_SERVER_TOO_OLD = (
+    "This server runs a CipherMoth release older than 1.5.0, which this CLI no "
+    "longer supports. Update the server, or use CipherMoth CLI 1.5.x."
+)
+_NO_UNLOCK_ROUTE = (
+    "No CipherMoth unlock route at {url!r}. Check that CIPHERMOTH_API_URL ends "
+    "in /api. A server older than 1.5.0 also answers like this: update it, or "
+    "use CipherMoth CLI 1.5.x."
+)
 
 
 def _api_url() -> str:
@@ -86,36 +95,37 @@ def _warn_plaintext_transport() -> None:
     )
 
 
-def _features(client: httpx.Client) -> list[str]:
+def _features(client: httpx.Client) -> list[str] | None:
     try:
         resp = client.get("/meta")
     except httpx.ConnectError:
         _die(f"Cannot reach the API at {_api_url()!r}. Is the service running?")
     except httpx.HTTPError:
-        return []
+        return None
+    if not resp.is_success:
+        return None
     try:
-        features = resp.json().get("features", []) if resp.is_success else []
+        features = resp.json().get("features", [])
     except (ValueError, AttributeError):
-        return []
+        return None
     if not isinstance(features, list):
-        return []
+        return None
     return [feature for feature in features if isinstance(feature, str)]
 
 
 class _Vault:
     """
-    One unlocked vault for the length of a command. Servers that offer vault
-    sessions get a session that is locked again when the command ends. Only a
-    server that has no unlock route at all (v1.4.x: routing 404 and no
-    vault-sessions feature) gets the deprecated vault key flow it expects.
+    One unlocked vault for the length of a command: a vault session that is
+    locked again when the command ends.
     """
 
     def __init__(self, client: httpx.Client) -> None:
         self.client = client
-        self.features = _features(client)
+        features = _features(client)
+        self.meta_known = features is not None
+        self.features = features or []
         self.master = ""
         self._auth: dict[str, str] = {}
-        self._session = False
 
     def unlock(self) -> None:
         self.master = typer.prompt("Master password", hide_input=True)
@@ -138,20 +148,17 @@ class _Vault:
 
     def _authenticate(self) -> None:
         resp = self._post_password("/master_password/unlock")
-        sessions = not self._has_no_unlock_route(resp)
-        if not sessions:
-            resp = self._post_password("/master_password/check")
+        if self._has_no_unlock_route(resp):
+            if self.meta_known:
+                _die(_SERVER_TOO_OLD)
+            _die(_NO_UNLOCK_ROUTE.format(url=_api_url()))
 
         _check(resp)
         data = resp.json()
         if not data.get("valid"):
             _die("Invalid master password.")
 
-        if sessions:
-            self._auth = {_SESSION_HEADER: data["session_token"]}
-        else:
-            self._auth = {"x-ciphermoth-key-derivation": data["key_derivation"]}
-        self._session = sessions
+        self._auth = {_SESSION_HEADER: data["session_token"]}
 
     def headers(self, name: str | None = None) -> dict[str, str]:
         headers = dict(self._auth)
@@ -163,7 +170,7 @@ class _Vault:
         self, method: str, url: str, *, name: str | None = None, **kwargs: Any
     ) -> httpx.Response:
         resp = self.client.request(method, url, headers=self.headers(name), **kwargs)
-        if resp.status_code == 401 and self._session:
+        if resp.status_code == 401 and self._auth:
             self._authenticate()
             resp = self.client.request(
                 method, url, headers=self.headers(name), **kwargs
@@ -182,11 +189,10 @@ class _Vault:
         return f"/passwords/{encoded}{suffix}"
 
     def lock(self) -> None:
-        if self._session:
+        if self._auth:
             with contextlib.suppress(httpx.HTTPError):
                 self.client.post("/master_password/lock", headers=self._auth)
         self._auth = {}
-        self._session = False
         self.master = ""
 
 

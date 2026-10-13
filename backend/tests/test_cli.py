@@ -431,11 +431,13 @@ async def test_cli_manages_names_with_a_slash_without_touching_others(
 
 
 @pytest.mark.parametrize("command", [["get"], ["delete", "--yes"], ["purge", "--yes"]])
-def test_cli_refuses_slash_names_against_a_server_that_would_misroute_them(
+def test_cli_refuses_slash_names_unless_the_server_says_it_routes_them(
     command: list[str],
 ) -> None:
     def respond(handler: _Recorder) -> None:
-        if not _answer_unlock(handler, "v1.4.6"):
+        if handler.path.endswith("/meta"):
+            handler.send(502, b"bad gateway")
+        elif not _answer_unlock(handler, "sessions"):
             handler.send(200, {})
 
     with _fake_server(respond) as (api, requests):
@@ -582,7 +584,7 @@ SERVERS = {
     "v1.4.7": {"version": "1.4.7", "features": ["entry-names-with-slash"]},
     "sessions": {
         "version": "1.5.0",
-        "features": ["entry-names-with-slash", "vault-sessions", "legacy-key-auth"],
+        "features": ["entry-names-with-slash", "vault-sessions"],
     },
 }
 
@@ -683,9 +685,7 @@ def test_cli_uses_a_session_and_locks_it_when_the_command_ends() -> None:
 
 
 @pytest.mark.parametrize("server", ["v1.4.6", "v1.4.7"])
-def test_cli_uses_the_vault_key_with_servers_that_predate_sessions(
-    server: str,
-) -> None:
+def test_cli_refuses_servers_that_predate_sessions(server: str) -> None:
     def respond(handler: _Recorder) -> None:
         if not _answer_unlock(handler, server):
             handler.send(200, [])
@@ -695,20 +695,34 @@ def test_cli_uses_the_vault_key_with_servers_that_predate_sessions(
             cli_app,
             ["password", "list"],
             input=MASTER_PASSWORD + "\n",
-            env={"CIPHERMOTH_API_URL": api},
+            env={"CIPHERMOTH_API_URL": api, "COLUMNS": "200"},
         )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1
+    assert "older than 1.5.0" in result.output
+    assert "Traceback" not in result.output
     paths = [path.removeprefix("/api") for _, path, _ in requests]
-    assert paths == [
-        "/meta",
-        "/master_password/unlock",
-        "/master_password/check",
-        "/passwords",
-    ]
-    headers = _lower(requests[-1][2])
-    assert headers["x-ciphermoth-key-derivation"] == FAKE_KEY
-    assert "x-ciphermoth-session" not in headers
+    assert paths == ["/meta", "/master_password/unlock"]
+    assert all("x-ciphermoth-key-derivation" not in _lower(h) for _, _, h in requests)
+
+
+def test_cli_points_at_the_api_url_when_nothing_answers_there() -> None:
+    with _fake_server(lambda handler: handler.send(404, {"detail": "Not Found"})) as (
+        api,
+        requests,
+    ):
+        result = runner.invoke(
+            cli_app,
+            ["password", "list"],
+            input=MASTER_PASSWORD + "\n",
+            env={"CIPHERMOTH_API_URL": api.removesuffix("/api"), "COLUMNS": "200"},
+        )
+
+    assert result.exit_code == 1
+    assert "CIPHERMOTH_API_URL ends in /api" in result.output
+    assert "Traceback" not in result.output
+    paths = [path for _, path, _ in requests]
+    assert paths == ["/meta", "/master_password/unlock"]
 
 
 @pytest.mark.parametrize("meta", ["unreachable", "broken"])
@@ -916,10 +930,7 @@ def test_cli_reports_server_errors_readably(
     status: int, payload: object, expected: str
 ) -> None:
     def respond(handler: _Recorder) -> None:
-        if handler.path.endswith("/master_password/check"):
-            handler.send(200, {"valid": True, "key_derivation": "K" * 43 + "="})
-        else:
-            handler.send(status, payload, **{"content-type": "application/json"})
+        handler.send(status, payload, **{"content-type": "application/json"})
 
     with _fake_server(respond) as (api, _):
         result = runner.invoke(
@@ -1045,7 +1056,7 @@ async def test_cli_reports_renamed_records(api: str, tmp_path: Path) -> None:
 
 def test_cli_names_the_entry_on_every_entry_request() -> None:
     def respond(handler: _Recorder) -> None:
-        if _answer_unlock(handler, "v1.4.7"):
+        if _answer_unlock(handler, "sessions"):
             return
         if handler.command == "GET":
             handler.send(200, {"password_name": "x/purge", "password_value": "v"})
