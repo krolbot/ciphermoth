@@ -59,7 +59,6 @@ async def _drop_expired_sessions(vault_sessions: VaultSessions) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     database: Database = app.state.database
     vault_sessions: VaultSessions = app.state.vault_sessions
-    database.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     with VaultLock(database.data_dir):
         await database.prepare()
         sweeper = asyncio.create_task(_drop_expired_sessions(vault_sessions))

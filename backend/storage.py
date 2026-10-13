@@ -301,7 +301,11 @@ class VaultLock:
         self._fd: int | None = None
 
     def acquire(self) -> None:
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as error:
+            raise StorageError(_unwritable(self.path.parent, error)) from error
         try:
             if sys.platform == "win32":
                 import msvcrt

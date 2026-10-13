@@ -382,6 +382,8 @@ async def test_unwritable_folders_fail_cleanly_and_change_nothing(
             storage.restore(folder, snap)
         with pytest.raises(StorageError, match="cannot write its vault"):
             storage.prepare_data_dir(folder / "inner")
+        with pytest.raises(StorageError, match="cannot write its vault"):
+            storage.VaultLock(folder / "inner").acquire()
     finally:
         folder.chmod(0o700)
     assert _raw(folder) == before
