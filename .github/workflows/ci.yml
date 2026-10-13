@@ -137,8 +137,6 @@ jobs:
             args: ""
           - name: frontend
             args: --build-arg VITE_API_URL=__CIPHERMOTH_API_URL__
-          - name: updater
-            args: ""
         platform:
           - runner: ubuntu-latest
             slug: amd64
@@ -150,17 +148,8 @@ jobs:
       - name: Build
         run: docker build -f docker/${{ matrix.image.name }}/Dockerfile ${{ matrix.image.args }} -t ciphermoth-${{ matrix.image.name }}:ci .
 
-      - name: Check the updater protocol labels
+      - name: Check that released updaters refuse the image
         run: |
           label="$(docker image inspect ciphermoth-${{ matrix.image.name }}:ci --format '{{json .Config.Labels}}')"
           echo "$label"
-          case "${{ matrix.image.name }}" in
-            updater) echo "$label" | grep -q '"io.ciphermoth.updater-protocol":"2"' ;;
-            *) echo "$label" | grep -q '"io.ciphermoth.min-updater-protocol":"2"' ;;
-          esac
-
-      - name: Smoke-test the updater
-        if: matrix.image.name == 'updater'
-        run: |
-          docker run --rm --entrypoint python3 ciphermoth-updater:ci /usr/local/lib/ciphermoth/updater.py newer v1.0.1 1.0.0
-          docker run --rm --entrypoint sh ciphermoth-updater:ci -c 'cosign version >/dev/null && pg_dump --version && docker compose version && tini --version'
+          echo "$label" | grep -q '"io.ciphermoth.min-updater-protocol":"3"'

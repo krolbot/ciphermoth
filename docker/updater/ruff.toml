@@ -1,2 +1,0 @@
-extend = "../../backend/pyproject.toml"
-target-version = "py312"
