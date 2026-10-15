@@ -47,7 +47,7 @@ docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
 
 - **Consistent while CipherMoth runs.** The copy goes through SQLite's online backup API, so it includes every committed change, also those still in the write-ahead log (`vault.db-wal`), and never a half-written one. Copying `vault.db` with `cp` or `docker cp` while CipherMoth runs is **not** safe: the file alone can miss recent changes.
 - **Checked.** A snapshot is written to a temporary file, checked with SQLite's `integrity_check` and `foreign_key_check` and for the vault's identity, flushed to disk, and only then renamed into `/data/snapshots/vault-<time>.db` (mode `0600`). It is one self-contained file with no `-wal` or `-shm` next to it.
-- **As safe as the vault.** A snapshot holds the same ciphertext as the vault and opens only with the master password that was current when it was taken. Like the vault, it reveals entry names, usernames and descriptions (see [SECURITY.md](../SECURITY.md)).
+- **As safe as the vault.** A snapshot holds the same ciphertext as the vault and opens only with the master password that was current when it was taken. Like the vault, it shows only counts, timestamps and sizes, never entry content (see [VAULT_FORMAT.md](VAULT_FORMAT.md#4-sqlite-layout-schema-2)).
 - Snapshots stay in the volume until you delete them. To keep one elsewhere, copy it out (it is a finished file, so this is safe):
 
   ```shell
@@ -61,7 +61,7 @@ docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
   docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin check /data/snapshots/vault-<time>.db
   ```
 
-The encrypted backup ZIP from the web UI or `cip backup` is a different thing: a portable export of your active entries that you can import anywhere, but without trash, password history, attachments or settings. A snapshot is the complete vault.
+A **backup** (`.cmbackup`, from the web UI's Backup button or `cip backup`) is a different thing: a complete, portable, password-protected copy of everything in the vault (entries, trash, history, attachments, settings) that you can restore into this vault or any other one, also on another machine. A **snapshot** is a raw copy of this installation's vault file, for getting this installation back to an earlier state. Keep both: snapshots for local recovery, backups somewhere else.
 
 ## Restore a snapshot
 
@@ -91,15 +91,46 @@ If the restore is interrupted at any point, `vault.db` is a complete vault, eith
 The backend checks the vault before serving anything, through a read-only connection that changes neither `vault.db` nor its write-ahead log, and stops with a message in `docker compose -f docker-compose.prod.yml logs backend` when one of the following is true. Docker keeps restarting the container until you fix the cause; nothing is written meanwhile.
 
 - **"failed SQLite's integrity check" / "SQLite cannot open the vault file"**: the file is damaged (a failing disk, or a copy taken while it was being written). Restore the most recent snapshot.
-- **"was written by a newer CipherMoth"**: you went back to an older release. Update again, or restore a snapshot taken by this release.
+- **"was created by CipherMoth 2.0 or earlier (vault format 1)"**: the vault uses the old format, see [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1). Nothing was changed.
+- **"was written by a newer CipherMoth"** (a newer schema or vault format): you went back to an older release. Update again, or restore a snapshot taken by this release.
 - **"is not a CipherMoth vault"**: the volume holds some other file as `vault.db`.
 - **"Another CipherMoth process is using /data"**: two backends share one volume. Run one.
 - **"CipherMoth cannot write its vault in ..."**: the data folder belongs to another user. The backend runs as uid 1000; a host folder mounted instead of the volume must belong to it (`sudo chown -R 1000:1000 <folder>`). The message names the owner it found.
 - **"no longer uses PostgreSQL"** (exit code 78): the container was started from a compose file of a PostgreSQL release; see the next section.
 
+## Moving from CipherMoth 2.0 (vault format 1)
+
+CipherMoth 2.0 stored entry names, usernames and descriptions in plaintext and checked the master password with a separate bcrypt hash. This release uses vault format 2 ([VAULT_FORMAT.md](VAULT_FORMAT.md)), which encrypts every part of an entry, and **does not open or convert a 2.0 vault**. Started on one, the backend stops with "was created by CipherMoth 2.0 or earlier" and changes nothing; pin `CIPHERMOTH_VERSION=2.0.0` in `.env` and run `up -d` to get the old version back.
+
+To move your entries:
+
+1. **Before updating**, in CipherMoth 2.0, make a backup (web UI **Backup**, or `cip backup`). The 2.0 backup ZIP carries your active entries with their fields, not the trash, password history, attachments or settings; download attachments you want to keep from the entries themselves. If you already updated, pin `2.0.0` again to make it.
+2. Take a snapshot as well (`ciphermoth-admin snapshot`), so the old vault can always be restored with 2.0.
+3. Update (`pull`), then move the old vault aside while the backend is stopped:
+
+   ```shell
+   docker compose -f docker-compose.prod.yml pull
+   docker compose -f docker-compose.prod.yml stop backend
+   docker compose -f docker-compose.prod.yml run --rm backend ciphermoth-admin set-aside
+   docker compose -f docker-compose.prod.yml up -d
+   ```
+
+   `set-aside` asks for confirmation, then moves `vault.db` and its write-ahead log, unchanged, into `/data/snapshots/set-aside-<time>/`. Nothing is deleted.
+4. Open the web UI, create a master password (a new vault), and import the ZIP from step 1 with its password (Import, "CipherMoth backup"). Then make a new backup: it is complete and much stronger than the old ZIP. Delete the old ZIP once you no longer need it; its entry names and the weak ZIP encryption stay readable to anyone who has it and the password.
+
+To go back to 2.0, move the new vault aside as well, put the old files back, and start 2.0:
+
+```shell
+docker compose -f docker-compose.prod.yml stop backend
+docker compose -f docker-compose.prod.yml run --rm backend ciphermoth-admin set-aside
+docker compose -f docker-compose.prod.yml run --rm --entrypoint sh backend -c 'mv /data/snapshots/set-aside-<time of the old vault>/vault.db* /data/'
+# set CIPHERMOTH_VERSION=2.0.0 in .env, then:
+docker compose -f docker-compose.prod.yml up -d
+```
+
 ## Moving from a PostgreSQL release (v1.6.0 and older)
 
-Releases up to v1.6.0 stored the vault in PostgreSQL. CipherMoth 2.0 keeps it in SQLite and **requires a fresh installation**: it starts a new, empty vault, does not read or convert the old database, and never deletes it. You can always go back.
+Releases up to v1.6.0 stored the vault in PostgreSQL. CipherMoth 2.0 and later keep it in SQLite and **require a fresh installation**: it starts a new, empty vault, does not read or convert the old database, and never deletes it. You can always go back.
 
 What protects an existing install:
 
@@ -109,7 +140,7 @@ What protects an existing install:
 
 Moving to 2.0:
 
-1. If you want to bring entries along, make an encrypted backup in the old version first (Settings, "Back up", or `cip backup`). It carries your active entries, not the trash, password history, attachments or settings.
+1. If you want to bring entries along, make an encrypted backup in the old version first (Settings, "Back up", or `cip backup`). It carries your active entries, not the trash, password history, attachments or settings, and this release can still import it.
 2. In your CipherMoth folder, stop the old stack, including the updater if you used it:
 
    ```shell

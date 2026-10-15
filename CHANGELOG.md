@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+This release changes how the vault is encrypted (vault format 2) and replaces the backup format. **It needs a new vault**: it does not open or convert a vault created by CipherMoth 2.0, and never changes or deletes one. The format is specified in [docs/VAULT_FORMAT.md](docs/VAULT_FORMAT.md).
+
+### Upgrading
+
+- **Make a backup in 2.0 before updating**, and a snapshot. A 2.0 vault is refused at startup with a message ("was created by CipherMoth 2.0 or earlier"); nothing is changed. Move it aside with the new `ciphermoth-admin set-aside` (it is moved into the snapshot folder, never deleted), start the new version, create a vault, and import the 2.0 backup ZIP. The steps, and how to go back to 2.0, are in [docs/UPDATING.md](docs/UPDATING.md#moving-from-ciphermoth-20-vault-format-1).
+- The 2.0 backup ZIP carries active entries only (no trash, history, attachments or settings), as before. New backups are complete.
+- Use the CLI of this release. A 2.0 CLI still works against this server, but its `backup` saves the new format under a `.zip` name and its `import` sends the current master password as the backup password.
+
+### Security
+
+- **Entry names, usernames and descriptions are encrypted.** Every entry is one AES-256-GCM document (name, type, username, password or note, website, 2FA secret, description, tags, folder, custom fields, password history, favorite), bound by its associated data to a random id of its own row, so an encrypted value cannot be moved to another entry or role without being detected. Attachment names, types and bytes are sealed the same way and bound to their entry. Entries are found by name through an HMAC-SHA256 index under a key derived from the vault key; there is no plaintext copy of any entry field in the file. What stays readable (counts, trash membership, timestamps, sizes, which entries share a name, the timeout settings) is listed in the format document.
+- **A random vault key, wrapped under the master password.** Unlock derives a key with Argon2id (same parameters as before, now stored with the vault so they can be raised later) and unwraps the vault key with AES-256-GCM, after checking a password commitment. **The bcrypt password hash is gone**, so a stolen vault offers no check cheaper than Argon2id. Changing the master password creates a new vault key and salt and re-encrypts every entry and attachment, as before.
+- **Complete, authenticated backups (`.cmbackup`).** A backup holds active and trashed entries with history, favorites and timestamps, attachments byte for byte, and the settings, encrypted with AES-256-GCM under Argon2id with the backup's own random salt and the current master password (checked before the file is written). A restore runs in one transaction after checking everything: a wrong password, a damaged, cut-off, reordered or inconsistent file changes nothing. The old ZIP format (WinZip AES, PBKDF2-SHA1 with 1,000 iterations) is no longer written.
+- **Strict reads.** A stored value that fails authentication or its format check stops the request with `"code": "vault_damaged"` (500) and the entry's row number, instead of being shown or overwritten.
+- A value SQLite cannot decode no longer makes every later write fail as busy: a connection that raised a database error is discarded instead of reused (Python's `sqlite3` kept the failed statement's old snapshot open).
+
+### Added
+
+- `ciphermoth-admin set-aside`: moves a vault this release cannot open (or any vault) with its write-ahead log into `snapshots/set-aside-<time>/`, so the next start creates a new one. Refuses while CipherMoth runs.
+- Restoring a complete backup into a vault that already has entries merges: new entries are added, an entry with the same name is kept ("skip") or moved to the trash and replaced ("overwrite"), trashed entries already present are not added twice. Settings are restored only into an empty vault. The import report also counts restored trash entries, attachments and settings.
+- A backup can be restored with the password it was made with, also after the master password changed or into another vault.
+
+### Changed
+
+- SQLite schema 2 (tables `vault`, `entries`, `attachments`). The schema version and the vault's cryptographic format version are checked separately; a newer one of either is refused at startup without changes.
+- Backups download as `ciphermoth_backup_<time>.cmbackup`. The backup import accepts files up to 1 GB; encrypted backups larger than 16 MB may be buffered in a temporary file by the server, which holds only ciphertext (CSV imports and attachments still stay in memory).
+- The import dialog and `ciphermoth import` ask for the **backup password** (the master password at the time of the backup) instead of the current master password.
+- A master password change no longer touches entries' `updated` time.
+
+### Removed
+
+- The bcrypt dependency, the Fernet columns and the format 1 test vectors (`fernet.json`, `key_check.json`, `bcrypt.json`); new frozen vectors are `vault-v2.json` and `backup-v2.json` with `backup-v2.cmbackup`.
+
 ## [2.0.0] - 2026-10-15
 
 CipherMoth 2.0 keeps the vault in one SQLite file instead of a PostgreSQL server: two containers and one volume, no database credentials, nothing to set up. It requires a fresh installation: 2.0 does not read, convert or delete a PostgreSQL vault.

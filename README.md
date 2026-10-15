@@ -65,7 +65,7 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
 - one master password unlocks the vault, no account, no email, no recovery codes sent to a phone number you changed three years ago
 - all passwords encrypted at rest with a key derived from your master password; the server never stores or logs that key
-- store a username, website, tags, folders, a two-factor (TOTP) secret, and your own custom fields alongside each entry (everything but the entry name, username and description is encrypted, see [Security](#security))
+- store a username, website, tags, folders, a two-factor (TOTP) secret, and your own custom fields alongside each entry, all encrypted, entry names included (see [Security](#security))
 - built-in two-factor: paste a 2FA secret, and CipherMoth shows the live rolling code, computed in the browser
 - secure notes for free-form secrets (recovery codes, Wi-Fi, passport details), encrypted just like passwords
 - attach files to any entry (recovery-code PDFs, license keys, key files), up to 5 MB each, encrypted with your vault key
@@ -74,8 +74,9 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 - light and dark themes that flip across the whole app, toggled by a moth that flutters off as the colours fade (and remembers your pick)
 - vault health check that flags weak, reused, and old passwords, entirely on your device
 - cryptographically secure password generator (not the `Math.random()` kind) with a strength indicator on every entry
-- import from Chrome, Bitwarden, KeePass, Proton Pass, and friends via CSV, or restore an encrypted CipherMoth backup
-- encrypted backup export, a CLI (`ciphermoth`) for the terminal, and auto-lock plus clipboard-clearing (for the small things that matter ^^)
+- import from Chrome, Bitwarden, KeePass, Proton Pass, and friends via CSV
+- complete encrypted backups (`.cmbackup`): every entry, the trash, password history, attachments and settings, restorable into this vault or a new one
+- a CLI (`ciphermoth`) for the terminal, and auto-lock plus clipboard-clearing (for the small things that matter ^^)
 - notices new releases (from your browser, never the server) and shows the commands to update, with a consistent, integrity-checked snapshot of the vault first; release images are signed (Sigstore / cosign)
 
 ## Who it's for (and who it isn't)
@@ -97,17 +98,23 @@ It's a personal project I use myself and built carefully, with the crypto kept s
 not been through a formal third-party security review. It's designed for self-hosted personal use on hardware you trust,
 not as a public, multi-tenant service holding other people's secrets. Weigh that accordingly.
 
-How it works:
+How it works (the full specification is [docs/VAULT_FORMAT.md](./docs/VAULT_FORMAT.md)):
 
-- your master password is hashed with **bcrypt**, never stored in plain; new vaults require a reasonably strong
-  one (12+ characters, mixed types), enforced on the server;
-- passwords, notes and the secret-ish details (websites, 2FA secrets, tags, folders, custom fields, password history,
-  attachments and their file names) are encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) using a key derived from
-  your master password via **Argon2id** (OWASP 2024 interactive profile), unique per vault thanks to a random salt;
-- **not encrypted yet:** each entry's **name, username and description**, plus its type, favorite flag, timestamps and
-  attachment sizes. Someone with the vault file can see which entries you have and the usernames on them, just not the
-  passwords. Encrypting those too is planned;
-- when you unlock, the server derives the key and keeps it in memory for a **session**; your browser and the CLI only
+- each vault has a random 256-bit **vault key**. It is stored only wrapped (AES-256-GCM) under a key derived from your
+  master password with **Argon2id** (OWASP 2024 interactive profile, a random salt per vault). There is no separate
+  password hash: a wrong master password simply cannot unwrap the key, and guessing costs one Argon2id run per try.
+  New vaults require a reasonably strong master password (12+ characters, mixed types), enforced on the server;
+- **everything you put in an entry is encrypted** with **AES-256-GCM**: its name, username, password or note, website,
+  2FA secret, description, tags, folder, custom fields, password history, favorite flag and type, and each attachment's
+  name, type and bytes. Every encrypted value is bound to its own record, so it cannot be swapped into another entry
+  without being detected. Entries are found by name through a keyed hash (HMAC-SHA256) of the name, never a plaintext
+  copy;
+- **what the vault file still shows** without your master password: how many entries and attachments there are, which
+  ones are in the trash, timestamps, attachment sizes, approximate entry sizes, which entries share a name (an entry and
+  its trashed copies) and your timeout settings. This is encryption of each entry, not of the whole file;
+- changing the master password creates a new vault key and re-encrypts everything, so the old password and the old key
+  open nothing in the vault afterwards (older snapshots and backups keep the password they were made with);
+- when you unlock, the server unwraps the key and keeps it in memory for a **session**; your browser and the CLI only
   get a random session token (the browser keeps it in `sessionStorage` for that tab), never the key, and no route
   hands the key out or accepts it back. The server ends the session after the inactivity timeout from Settings, when
   you log out, when the master password changes, and when it restarts (closing a tab without logging out leaves its
@@ -115,22 +122,24 @@ How it works:
   server process does handle the key and your passwords in plaintext: run it on a machine you trust;
 - a strict Content-Security-Policy restricts the web UI to connecting to its own API (and GitHub's release address
   for the update check);
-- backups are AES-256 encrypted ZIPs locked with your master password, but the ZIP format derives that key with
-  PBKDF2-SHA1 at 1,000 iterations, which is far cheaper to brute-force than the vault itself. Keep backup files
-  somewhere safe, and use a strong master password. A backup holds your active entries only, not the trash, password
-  history, attachments or settings, so it is an export, not a copy of your vault; for a complete copy, take a
-  snapshot (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md#snapshots));
+- **backups** (`.cmbackup`) are complete and authenticated: every entry including the trash and history, attachments
+  byte for byte, and your settings, encrypted with AES-256-GCM under Argon2id with the backup's own random salt and
+  your master password. A wrong password, a damaged or cut-off file changes nothing on restore. A backup is the
+  portable copy; a **snapshot** (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md#snapshots))
+  is a raw local copy of the vault file for recovering this installation;
 - the UI and API listen on `127.0.0.1` by default; exposing them to other machines is an explicit setting;
 - the password generator uses `crypto.getRandomValues` with rejection sampling, no `Math.random()`, no shortcuts;
 
-**It protects against** someone who steals the vault file, a snapshot or the disk (they get ciphertext, a bcrypt hash, and the entry
-names, usernames and descriptions listed above), accidental server-side exposure (the server never persists the master
-password, the derived key or session tokens), and casual inspection of stored data. A session token that leaks works
-only until that session ends; it never reveals the key.
+**It protects against** someone who steals the vault file, a snapshot, a backup or the disk (they get ciphertext and
+the counts and timestamps listed above, and each password guess costs a full Argon2id run), someone who edits the file
+without your master password (changes to encrypted data are detected and the vault refuses to show it), accidental
+server-side exposure (the server never persists the master password, the vault key or session tokens), and casual
+inspection of stored data. A session token that leaks works only until that session ends; it never reveals the key.
 
 **It does not protect against** malware or a keylogger on the device you unlock from, a weak master password, exposing
-the instance on the public internet without `https`, or forgetting your master password (there is no recovery). Run it
-on a machine and network you trust, use a strong master password, and keep a backup.
+the instance on the public internet without `https`, someone with write access to the vault file rolling it back to an
+older copy or deleting entries, or forgetting your master password (there is no recovery). Run it on a machine and
+network you trust, use a strong master password, and keep a backup.
 
 To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 

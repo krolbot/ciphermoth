@@ -55,8 +55,8 @@ ciphermoth password delete <name> [--yes]    Move an entry to the trash
 ciphermoth password trash                    List entries currently in the trash
 ciphermoth password restore <name>           Restore a trashed entry back to the vault
 ciphermoth password purge <name> [--yes]     Permanently delete a trashed entry
-ciphermoth backup [--out <dir>]              Export an encrypted backup ZIP
-ciphermoth import <file> [--on-conflict]     Import from a CipherMoth backup ZIP (skip|overwrite)
+ciphermoth backup [--out <dir>]              Save a complete encrypted backup (.cmbackup)
+ciphermoth import <file> [--on-conflict]     Restore a .cmbackup, or a backup ZIP from 2.0 or earlier (skip|overwrite)
 ciphermoth import-csv <file> [--on-conflict] Import a CSV from another manager (skip|overwrite)
 ```
 
@@ -120,12 +120,14 @@ gmail     Work email        ✓
 # Create an encrypted backup
 $ ciphermoth backup --out ~/backups
 Master password:
-✓  Backup saved to ~/backups/ciphermoth_backup_20260314_120000.zip
+✓  Backup saved to ~/backups/ciphermoth_backup_20260314_120000.cmbackup
 
-# Import with overwrite
-$ ciphermoth import ciphermoth_backup_20260314_120000.zip --on-conflict overwrite
+# Restore with overwrite (an overwritten entry moves to the trash)
+$ ciphermoth import ciphermoth_backup_20260314_120000.cmbackup --on-conflict overwrite
 Master password:
+Backup password (Enter if it is the current master password):
 ✓  Import complete - 3 added, 1 overwritten, 0 skipped
+✓  Also restored: 2 in the trash, 4 attachment(s)
 ```
 
 ## Backups from the Docker CLI
@@ -134,10 +136,10 @@ Master password:
 
 ```shell
 cip backup -o /tmp
-docker compose -f docker-compose.prod.yml cp backend:/tmp/ciphermoth_backup_20260314_120000.zip .
+docker compose -f docker-compose.prod.yml cp backend:/tmp/ciphermoth_backup_20260314_120000.cmbackup .
 ```
 
-The **Backup** button in the web UI downloads the same encrypted ZIP straight to your machine, which is usually easier.
+The **Backup** button in the web UI downloads the same file straight to your machine, which is usually easier.
 
 ## Vault snapshots (`ciphermoth-admin`)
 
@@ -148,7 +150,7 @@ docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
 docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin check      # integrity check of the vault (or of a snapshot path)
 ```
 
-`restore` replaces the vault with a snapshot and runs only while CipherMoth is stopped. A snapshot is the whole vault (trash, history, attachments, settings) under the master password of the moment it was taken; a backup ZIP is a portable export of your active entries. See [UPDATING.md](UPDATING.md#snapshots).
+`restore` replaces the vault with a snapshot and runs only while CipherMoth is stopped. `set-aside` moves a vault this release cannot open (one from CipherMoth 2.0) into the snapshot folder so the next start creates a new one. A snapshot is a raw copy of this installation's vault file under the master password of the moment it was taken; a backup (`.cmbackup`) is the complete, portable copy you can restore anywhere. See [UPDATING.md](UPDATING.md#snapshots).
 
 ## What the CLI does with your secrets
 
@@ -157,7 +159,7 @@ It follows the same zero-trust rules as the web UI, and it's small enough to rea
 - **Nothing is stored.** There is no token cache and no config file. Each command prompts for the master password, opens a vault session on the server for that one command, and locks it again when the command ends, even if it fails. The CLI never sees the vault key. That's also why every command asks again. It needs a CipherMoth server from v1.5.0 on; against an older one (recognized by its missing unlock route) it stops with a message instead of asking that server for the key. CLIs older than v1.5.0 are refused by servers from v1.6.0 on with a message to update.
 - **Secrets are never arguments.** Passwords and note bodies are typed at a hidden prompt, so they don't reach your shell history, `ps`, or `docker inspect`. Only entry names are arguments, so `cip password get github` does reveal in your history that a `github` entry exists.
 - **Redirects are never followed**, so the session token and the master password can't be replayed to another host.
-- **Backups are written `0600`**, readable only by you, on top of being AES-256 encrypted with your master password. The ZIP format turns that password into a key with PBKDF2-SHA1 at 1,000 iterations, which is much weaker than the vault's Argon2id, so treat the file itself as sensitive and keep it somewhere safe. It holds your active entries, not the trash, password history, attachments or settings.
+- **Backups are written `0600`**, readable only by you, on top of being encrypted (AES-256-GCM under Argon2id with the backup's own salt and your master password). The backup password `import` asks for is the master password the vault had when the backup was made; press Enter if it is the current one. It is prompted, never an argument.
 - **You get warned about plaintext transport.** If `CIPHERMOTH_API_URL` points at a remote host over plain `http://`, the CLI says so before prompting, because your master password would cross the network unencrypted. Put the API behind HTTPS, or reach it over a VPN or SSH tunnel.
 
 A note on entry names: any name works, including ones containing `/` (the CLI checks that the server routes them correctly and refuses them on older servers rather than risk acting on a different entry). New entries can't be named `.`, `..` or `trash`, because those can't be addressed in a web address; existing ones still work from the CLI, except that `get` and `update` can't open an entry named `trash`. Rename it in the web UI.
