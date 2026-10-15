@@ -2,13 +2,13 @@
 Unlocked vault sessions, held in the memory of the one process that serves the
 vault.
 
-A session maps an opaque bearer token to the vault key derived at unlock, so
-session clients never hold the key. Only a SHA-256 digest of each token is kept,
-as the lookup key. Sessions end when they sit idle longer than the configured
-inactivity timeout (plus ``EXPIRY_TOLERANCE_MS``), after an absolute lifetime,
-when they are locked, when the master password changes, and when the process
-exits. An ended session is deleted and can never be used again. Nothing is ever
-written to disk.
+A session maps an opaque bearer token to the keys unwrapped at unlock
+(``helpers.VaultKey``), so session clients never hold them. Only a SHA-256
+digest of each token is kept, as the lookup key. Sessions end when they sit
+idle longer than the configured inactivity timeout (plus
+``EXPIRY_TOLERANCE_MS``), after an absolute lifetime, when they are locked,
+when the master password changes, and when the process exits. An ended session
+is deleted and can never be used again. Nothing is ever written to disk.
 
 The tolerance exists only for request latency: a client measures inactivity
 from when it sent its last request, the server from when it received it, so a
@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from errors import SessionRequired
+from helpers import VaultKey
 
 TOKEN_BYTES = 32
 EXPIRY_TOLERANCE_MS = 5_000
@@ -71,7 +72,7 @@ def _digest(token: str) -> bytes:
 
 @dataclass(slots=True)
 class _Session:
-    key: str = field(repr=False)
+    key: VaultKey = field(repr=False)
     created: Instant
     last_used: Instant
 
@@ -121,7 +122,7 @@ class VaultSessions:
         with self._lock:
             return len(self._sessions)
 
-    def open(self, key: str) -> str:
+    def open(self, key: VaultKey) -> str:
         token = secrets.token_urlsafe(TOKEN_BYTES)
         now = self._clock()
         with self._lock:
@@ -133,7 +134,7 @@ class VaultSessions:
             )
         return token
 
-    def resolve(self, token: str | None, *, refresh: bool = True) -> str:
+    def resolve(self, token: str | None, *, refresh: bool = True) -> VaultKey:
         """
         Return the vault key of a live session. ``refresh`` records the request
         as activity, restarting the inactivity timeout; a session that has

@@ -36,6 +36,7 @@ _err = Console(stderr=True)
 _LABEL_WIDTH = 13
 _KINDS = ("login", "note")
 _CONFLICTS = ("skip", "overwrite")
+_TRANSFER_TIMEOUT = 600
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 _SESSION_HEADER = "x-ciphermoth-session"
 _SESSIONS = "vault-sessions"
@@ -516,14 +517,18 @@ def pw_purge(
 
 
 @app.command(
-    "backup", help="Export the vault as a ZIP encrypted with your master password."
+    "backup",
+    help=(
+        "Save a complete encrypted backup (.cmbackup): every entry, the trash, "
+        "history, attachments and settings, protected by your master password."
+    ),
 )
 def cmd_backup(
     out_dir: Annotated[
         Path, typer.Option("--out", "-o", help="Directory to save the backup file.")
     ] = Path("."),
 ) -> None:
-    with _vault(timeout=60) as vault:
+    with _vault(timeout=_TRANSFER_TIMEOUT) as vault:
         resp = vault.send(
             "POST", "/passwords/backup", json={"master_password": vault.master}
         )
@@ -531,7 +536,8 @@ def cmd_backup(
     _check(resp)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"ciphermoth_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.zip"
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    filename = f"ciphermoth_backup_{stamp}.cmbackup"
     dest = out_dir / filename
     dest.touch(mode=stat.S_IRUSR | stat.S_IWUSR)
     dest.chmod(stat.S_IRUSR | stat.S_IWUSR)
@@ -547,6 +553,19 @@ def _report_import(payload: dict) -> None:
         f"[cyan]{payload['overwritten']}[/cyan] overwritten, "
         f"[cyan]{payload['skipped']}[/cyan] skipped"
     )
+    restored = [
+        f"{payload[key]} {label}"
+        for key, label in (
+            ("trashed", "in the trash"),
+            ("attachments", "attachment(s)"),
+        )
+        if payload.get(key)
+    ]
+    if payload.get("settings_restored"):
+        restored.append("settings")
+    if restored:
+        _ok("Also restored: " + ", ".join(restored))
+
     for key, title in (
         ("renamed", "were imported under a new name"),
         ("ignored", "were not imported"),
@@ -573,24 +592,44 @@ def _read_import_file(file: Path, on_conflict: str) -> bytes:
     return file.read_bytes()
 
 
-@app.command("import", help="Restore entries from a CipherMoth backup ZIP.")
+@app.command(
+    "import",
+    help=(
+        "Restore a CipherMoth backup: a complete backup (.cmbackup) or a backup "
+        "ZIP from CipherMoth 2.0 or earlier."
+    ),
+)
 def cmd_import(
-    file: Annotated[Path, typer.Argument(help="Path to the ciphermoth backup ZIP.")],
+    file: Annotated[
+        Path, typer.Argument(help="Path to the backup (.cmbackup or legacy .zip).")
+    ],
     on_conflict: Annotated[
         str,
         typer.Option(
-            help="How to handle existing entries: skip or overwrite.",
+            help=(
+                "How to handle existing entries: skip or overwrite. A complete "
+                "backup moves each entry it overwrites to the trash."
+            ),
         ),
     ] = "skip",
 ) -> None:
     file_bytes = _read_import_file(file, on_conflict)
 
-    with _vault(timeout=60) as vault:
+    with _vault(timeout=_TRANSFER_TIMEOUT) as vault:
+        backup_password = typer.prompt(
+            "Backup password (Enter if it is the current master password)",
+            hide_input=True,
+            default="",
+            show_default=False,
+        )
         resp = vault.send(
             "POST",
             "/passwords/import",
-            data={"master_password": vault.master, "on_conflict": on_conflict},
-            files={"file": (file.name, file_bytes, "application/zip")},
+            data={
+                "master_password": backup_password or vault.master,
+                "on_conflict": on_conflict,
+            },
+            files={"file": (file.name, file_bytes, "application/octet-stream")},
         )
 
     _check(resp)

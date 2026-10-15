@@ -1,6 +1,5 @@
 import csv
 import io
-import json
 from pathlib import Path
 
 import httpx
@@ -8,7 +7,6 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from helpers import create_encrypted_zip, encrypt
 from tests.support import (
     MASTER_PASSWORD,
     Headers,
@@ -17,7 +15,9 @@ from tests.support import (
     db_execute,
     db_snapshot,
     entry,
-    stored_vault_key,
+    legacy_backup_zip,
+    name_index,
+    plant_entry,
 )
 
 KIB = 1024
@@ -49,12 +49,19 @@ async def _import_zip(
     entries: list,
     on_conflict: str = "skip",
 ) -> httpx.Response:
-    archive = create_encrypted_zip(entries, MASTER_PASSWORD)
+    archive = legacy_backup_zip(entries, MASTER_PASSWORD)
     return await client.post(
         "/passwords/import",
         data={"master_password": MASTER_PASSWORD, "on_conflict": on_conflict},
         files={"file": ("backup.zip", archive, "application/zip")},
         headers=headers,
+    )
+
+
+async def _keep_only_existing() -> None:
+    await db_execute(
+        "DELETE FROM entries WHERE name_index <> :index",
+        index=await name_index("existing"),
     )
 
 
@@ -276,7 +283,7 @@ async def test_a_backup_of_a_vault_with_legacy_values_restores_completely(
         "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=vault
     )
     assert backup.status_code == 200
-    await db_execute("DELETE FROM passwords")
+    await db_execute("DELETE FROM entries")
 
     resp = await client.post(
         "/passwords/import",
@@ -399,23 +406,16 @@ async def test_the_ignored_report_is_bounded(
 async def test_a_vault_poisoned_by_an_older_import_can_be_read_and_repaired(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    key = await stored_vault_key()
     long_name = "n" * 300
-    await db_execute(
-        "INSERT INTO passwords (password_name, username, description, "
-        "password_value, totp_secret, tags, custom_fields, folder) "
-        "VALUES (:name, :username, :description, :value, :totp, :tags, :fields, "
-        ":folder)",
-        name=long_name,
+    await plant_entry(
+        long_name,
+        "poisoned-Pass-1",
         username="u" * 300,
         description="d" * 2000,
-        value=encrypt(key, b"poisoned-Pass-1"),
-        totp=encrypt(key, b"not base32!"),
-        tags=encrypt(key, json.dumps([1, "ok", "t" * 60]).encode()),
-        fields=encrypt(
-            key, json.dumps([{"label": "l" * 150, "value": "v" * 5000}]).encode()
-        ),
-        folder=encrypt(key, ("f" * 300).encode()),
+        totp_secret="not base32!",
+        tags=["1", "ok", "t" * 60],
+        custom_fields=[{"label": "l" * 150, "value": "v" * 5000, "hidden": False}],
+        folder="f" * 300,
     )
 
     listing = await _listing(client, vault)
@@ -596,7 +596,7 @@ async def test_csv_import_property(
     client: httpx.AsyncClient, vault: Headers, case: tuple[list[dict], str | None]
 ) -> None:
     rows, defect = case
-    await db_execute("DELETE FROM passwords WHERE password_name <> 'existing'")
+    await _keep_only_existing()
     header = ["name", "username", "password", "url", "notes", "folder"]
     before = await db_snapshot()
 
@@ -625,7 +625,7 @@ async def test_csv_import_property(
 async def test_arbitrary_csv_bytes_never_break_the_vault(
     client: httpx.AsyncClient, vault: Headers, data: bytes
 ) -> None:
-    await db_execute("DELETE FROM passwords WHERE password_name <> 'existing'")
+    await _keep_only_existing()
     resp = await _import_csv(client, vault, b"name,password,notes\n" + data)
     assert resp.status_code in (200, 400), resp.text
     await _listing(client, vault)
@@ -672,7 +672,7 @@ _BACKUP_KEYS = st.sampled_from(
 async def test_arbitrary_backup_entries_never_break_the_vault(
     client: httpx.AsyncClient, vault: Headers, entries: list
 ) -> None:
-    await db_execute("DELETE FROM passwords WHERE password_name <> 'existing'")
+    await _keep_only_existing()
     before = await db_snapshot()
 
     resp = await _import_zip(client, vault, entries, on_conflict="overwrite")
@@ -687,13 +687,11 @@ async def test_arbitrary_backup_entries_never_break_the_vault(
 async def test_secrets_stored_by_older_imports_still_produce_codes(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    key = await stored_vault_key()
-    await db_execute(
-        "INSERT INTO passwords (password_name, password_value, totp_secret, folder) "
-        "VALUES ('legacy uri', :value, :totp, :folder)",
-        value=encrypt(key, b"v"),
-        totp=encrypt(key, b"otpauth://totp/x?secret=jbsw y3dp ehpk 3pxp"),
-        folder=encrypt(key, b""),
+    await plant_entry(
+        "legacy uri",
+        "v",
+        totp_secret="otpauth://totp/x?secret=jbsw y3dp ehpk 3pxp",
+        folder="",
     )
     [got] = [
         p for p in await _listing(client, vault) if p["password_name"] == "legacy uri"

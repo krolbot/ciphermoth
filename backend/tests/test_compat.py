@@ -1,11 +1,6 @@
-import io
-import json
-
 import httpx
 import pytest
-import pyzipper
 
-from helpers import create_encrypted_zip
 from settings import get_api_settings
 from tests.support import (
     MASTER_PASSWORD,
@@ -14,6 +9,7 @@ from tests.support import (
     create_vault,
     db_execute,
     entry,
+    legacy_backup_zip,
     reset_vault,
     stored_vault_key,
     unlock,
@@ -171,7 +167,7 @@ async def test_trash_restore_and_purge(client: httpx.AsyncClient) -> None:
 
     resp = await client.delete("/passwords/site/purge", headers=headers)
     assert resp.status_code == 200
-    assert await db_execute("SELECT id FROM password_attachments") == []
+    assert await db_execute("SELECT id FROM attachments") == []
     assert (await _get(client, key, "site"))["password_value"] == "replacement-1"
     resp = await client.get("/passwords/trash", headers=headers)
     assert resp.json() == []
@@ -238,6 +234,9 @@ async def test_csv_import_skip_and_overwrite(client: httpx.AsyncClient) -> None:
         "ignored_rows": [],
         "renamed": 0,
         "renamed_rows": [],
+        "trashed": 0,
+        "attachments": 0,
+        "settings_restored": False,
     }
     assert (await _get(client, key, "mail"))["password_value"] == "old-1"
 
@@ -273,10 +272,9 @@ async def test_backup_export_and_restore_into_a_fresh_vault(
     )
     assert resp.status_code == 200
     archive = resp.content
-    with pyzipper.AESZipFile(io.BytesIO(archive)) as zf:
-        zf.setpassword(MASTER_PASSWORD.encode())
-        payload = json.loads(zf.read("ciphermoth_backup.json"))
-    assert {p["name"] for p in payload["passwords"]} == {"GitHub #work", "Wi-Fi ключ"}
+    assert archive.startswith(b"CMBACKUP")
+    for secret in (b"GitHub #work", "Wi-Fi ключ".encode(), b"ciphermoth-backup"):
+        assert secret not in archive
     exported = await client.get("/passwords", headers=headers)
 
     await reset_vault()
@@ -285,14 +283,14 @@ async def test_backup_export_and_restore_into_a_fresh_vault(
     resp = await client.post(
         "/passwords/import",
         data={"master_password": WRONG_MASTER_PASSWORD},
-        files={"file": ("b.zip", archive, "application/zip")},
+        files={"file": ("b.cmbackup", archive, "application/octet-stream")},
         headers=auth(new_key),
     )
     assert resp.status_code == 403
     resp = await client.post(
         "/passwords/import",
         data={"master_password": MASTER_PASSWORD},
-        files={"file": ("b.zip", archive, "application/zip")},
+        files={"file": ("b.cmbackup", archive, "application/octet-stream")},
         headers=auth(new_key),
     )
     assert resp.json()["imported"] == 2
@@ -303,7 +301,7 @@ async def test_backup_export_and_restore_into_a_fresh_vault(
         {f: p[f] for f in fields} for p in exported.json()
     ]
 
-    legacy = create_encrypted_zip(
+    legacy = legacy_backup_zip(
         [{"name": "legacy", "value": "v1-backup", "description": "old format"}],
         MASTER_PASSWORD,
     )
@@ -346,4 +344,4 @@ async def test_writes_are_committed_before_the_response(
     monkeypatch.undo()
 
     assert resp.status_code == 500
-    assert await db_execute("SELECT id FROM passwords") == []
+    assert await db_execute("SELECT id FROM entries") == []

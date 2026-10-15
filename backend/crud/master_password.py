@@ -1,233 +1,229 @@
 import logging
-import os
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from crud.base import BaseCRUD
+from crud.records import (
+    open_attachment_content,
+    open_attachment_metadata,
+    open_entry,
+    seal_attachment,
+    seal_entry,
+)
 from errors import Forbidden, InvalidKey, InvalidRequest, NotFound
 from helpers import (
-    create_key_check,
-    decrypt,
-    decrypt_bytes,
-    derive_key,
-    encrypt,
-    hash_password,
-    password_matches,
-    verify_key_check,
+    FORMAT_VERSION,
+    KDF_NAME,
+    DecryptionFailed,
+    KdfParams,
+    KeyMaterial,
+    UnsupportedKdf,
+    VaultKey,
+    create_key_material,
+    unlock_key_material,
 )
-from models import MasterPasswordModel, PasswordAttachmentModel, PasswordModel
+from models import AttachmentModel, EntryModel, VaultModel
 from schemas import MasterPasswordUpdate
 
 logger = logging.getLogger(__name__)
 
 _INVALID_KEY = "Invalid or expired vault key. Unlock the vault again."
 
-
 _DAMAGED = (
-    "The vault's key check does not match its master password. The vault file may "
-    "be damaged; restore a snapshot (docs/UPDATING.md)."
+    "The vault's key record does not verify with this master password. The vault "
+    "file may be damaged; restore a snapshot (docs/UPDATING.md)."
 )
 
 
-async def fetch_master_password(session: AsyncSession) -> MasterPasswordModel | None:
+async def fetch_vault(session: AsyncSession) -> VaultModel | None:
     stmt = (
-        select(MasterPasswordModel)
-        .order_by(MasterPasswordModel.id)
-        .limit(1)
+        select(VaultModel)
+        .where(VaultModel.id == 1)
         .execution_options(populate_existing=True)
     )
     return (await session.execute(stmt)).scalar()
 
 
-class MasterPasswordCRUD(BaseCRUD):
-    _OPTIONAL_ENCRYPTED_FIELDS = (
-        "url",
-        "totp_secret",
-        "tags",
-        "custom_fields",
-        "folder",
-        "password_history",
+def key_material(model: VaultModel) -> KeyMaterial:
+    return KeyMaterial(
+        params=KdfParams(model.kdf_memory_kib, model.kdf_iterations, model.kdf_lanes),
+        salt=bytes(model.kdf_salt),
+        password_check=bytes(model.password_check),
+        wrapped_key=bytes(model.wrapped_key),
+        key_check=bytes(model.key_check),
     )
 
-    @staticmethod
-    def _reencrypt(
-        old_key: bytes | str, new_key: bytes | str, token: bytes, pwd: PasswordModel
-    ) -> bytes:
-        plaintext = decrypt(old_key, token)
-        if plaintext is None:
-            raise InvalidRequest(f"Could not decrypt password '{pwd.password_name}'.")
-        return encrypt(new_key, plaintext.encode())
 
-    @classmethod
-    def _reencrypt_optional(
-        cls,
-        old_key: bytes | str,
-        new_key: bytes | str,
-        token: bytes | None,
-        pwd: PasswordModel,
-    ) -> bytes | None:
-        if token is None:
-            return None
-        return cls._reencrypt(old_key, new_key, token, pwd)
+def _store(model: VaultModel, material: KeyMaterial) -> None:
+    model.format_version = FORMAT_VERSION
+    model.kdf = KDF_NAME
+    model.kdf_memory_kib = material.params.memory_kib
+    model.kdf_iterations = material.params.iterations
+    model.kdf_lanes = material.params.lanes
+    model.kdf_salt = material.salt
+    model.password_check = material.password_check
+    model.wrapped_key = material.wrapped_key
+    model.key_check = material.key_check
 
-    @staticmethod
-    def _reencrypt_text(
-        old_key: bytes | str, new_key: bytes | str, token: bytes | None
-    ) -> bytes | None:
-        if token is None:
-            return None
-        plaintext = decrypt(old_key, token)
-        if plaintext is None:
-            raise InvalidRequest("Could not decrypt an attachment.")
-        return encrypt(new_key, plaintext.encode())
 
-    @staticmethod
-    def _reencrypt_binary(
-        old_key: bytes | str, new_key: bytes | str, token: bytes
-    ) -> bytes:
-        raw = decrypt_bytes(old_key, token)
-        if raw is None:
-            raise InvalidRequest("Could not decrypt an attachment.")
-        return encrypt(new_key, raw)
-
+class MasterPasswordCRUD(BaseCRUD):
     async def is_initialized(self) -> bool:
-        return await fetch_master_password(self.session) is not None
+        return await fetch_vault(self.session) is not None
 
-    async def _get_model(self) -> MasterPasswordModel:
-        model = await fetch_master_password(self.session)
+    async def _get_model(self) -> VaultModel:
+        model = await fetch_vault(self.session)
         if not model:
             raise NotFound("No master password found.")
+        if model.format_version != FORMAT_VERSION or model.kdf != KDF_NAME:
+            raise InvalidRequest(
+                "The vault uses a key format this release cannot read."
+            )
         return model
 
-    async def verify_vault_key(self, key_derivation: str | None) -> str:
+    @staticmethod
+    async def _open(master_password: str, material: KeyMaterial) -> VaultKey | None:
+        try:
+            return await unlock_key_material(master_password, material)
+        except UnsupportedKdf as error:
+            raise InvalidRequest(str(error)) from None
+        except DecryptionFailed:
+            logger.error("The vault key record failed to verify.")
+            raise InvalidRequest(_DAMAGED) from None
+
+    async def verify_vault_key(self, key: VaultKey | None) -> VaultKey:
         """
-        Check that ``key_derivation`` is the current vault key, inside the
+        Check that ``key`` belongs to the current vault key, inside the
         request's transaction. Write requests run under SQLite's write lock from
         their first statement (BEGIN IMMEDIATE), so a master password change can
         never commit between this check and their writes; read requests see the
         key check and the rows of one snapshot.
         """
-        if not key_derivation:
-            raise InvalidKey("Key derivation is missing.")
-        model = await fetch_master_password(self.session)
+        if key is None:
+            raise InvalidKey("Vault key is missing.")
+        model = await fetch_vault(self.session)
         if model is None:
             raise Forbidden("No master password set.")
-        if not verify_key_check(key_derivation, model.key_check, model.salt):
+        if not key.matches(model.key_check):
             raise InvalidKey(_INVALID_KEY)
-        return key_derivation
+        return key
 
-    async def unlock(self, master_password: str) -> str | None:
+    async def unlock(self, master_password: str) -> VaultKey | None:
         """
         Return the vault key for ``master_password``, or None if it is wrong.
 
-        The transaction is ended before the slow KDFs so a queue of unlocks holds
+        The transaction is ended before the slow KDF so a queue of unlocks holds
         no connection and no lock. The key is then confirmed against the current
         key check, so a password that a concurrent change has just replaced is
         refused instead of opening a session every route would reject.
         """
-        model = await self._get_model()
+        material = key_material(await self._get_model())
         await self.session.commit()
-        if not await password_matches(master_password, model.hash_key):
+        key = await self._open(master_password, material)
+        if key is None:
             return None
-        key = (await derive_key(model.salt, master_password)).decode()
-        if not verify_key_check(key, model.key_check, model.salt):
-            logger.error("The vault key check does not match the verified password.")
-            raise InvalidRequest(_DAMAGED)
-        current = await fetch_master_password(self.session)
-        if current is None or not verify_key_check(
-            key, current.key_check, current.salt
-        ):
+        current = await fetch_vault(self.session)
+        if current is None or not key.matches(current.key_check):
             return None
         return key
 
-    async def create_master_password(self, master_password: str) -> str:
+    async def create_master_password(self, master_password: str) -> VaultKey:
         if await self.is_initialized():
             raise Forbidden("Master password already exists.")
         await self.session.commit()
-        salt = os.urandom(16)
-        key_derivation = await derive_key(salt, master_password)
-        hash_key = await hash_password(master_password)
+        material, key = await create_key_material(master_password)
 
         if await self.is_initialized():
             raise Forbidden("Master password already exists.")
 
-        self.session.add(
-            MasterPasswordModel(
-                salt=salt,
-                hash_key=hash_key,
-                key_check=create_key_check(key_derivation, salt),
-            )
-        )
+        model = VaultModel(id=1)
+        _store(model, material)
+        self.session.add(model)
         await self.session.flush()
-        return key_derivation.decode()
+        return key
+
+    async def check_master_password(self, master_password: str) -> VaultKey:
+        """
+        Check the master password a backup asks for and return the key it
+        opens. The transaction is ended first, so the KDF never holds the write
+        lock; ``confirm_same_key`` must run afterwards, in the new transaction.
+        """
+        material = key_material(await self._get_model())
+        await self.session.commit()
+        opened = await self._open(master_password, material)
+        if opened is None:
+            raise Forbidden("Incorrect master password.")
+        return opened
+
+    async def confirm_same_key(self, opened: VaultKey, key: VaultKey) -> None:
+        """Check, in the request's new transaction, that the session's key is
+        still the vault's and is the one the master password opened, so a
+        master password change that committed meanwhile stops the request."""
+        await self.verify_vault_key(key)
+        if not opened.matches(key.check):
+            raise InvalidKey(_INVALID_KEY)
 
     async def update_master_password(
         self, master_password: str, new_master_password: str
     ) -> MasterPasswordUpdate:
         """
-        Re-encrypt every entry and attachment under a key derived from the new
-        password and a new salt. The KDFs run before the write lock is taken; the
-        re-encryption then runs in one write transaction that first confirms the
-        vault still holds the salt, hash and key check the KDFs were based on.
+        Re-key the vault: a new random vault key and salt, every entry and
+        attachment decrypted with the old keys and sealed again with the new
+        ones, every name index recomputed. The KDFs run before the write lock
+        is taken; the re-encryption then runs in one write transaction that
+        first confirms the vault still holds the key record the KDFs used.
         """
-        model = await self._get_model()
-        observed = (model.salt, model.hash_key, model.key_check)
+        observed = key_material(await self._get_model())
         await self.session.commit()
-        if not await password_matches(master_password, model.hash_key):
+        old_key = await self._open(master_password, observed)
+        if old_key is None:
             raise Forbidden("Current master password is incorrect.")
 
-        key_derivation = await derive_key(model.salt, master_password)
-        if not verify_key_check(key_derivation, model.key_check, model.salt):
-            raise InvalidKey(_INVALID_KEY)
-
-        new_salt = os.urandom(16)
-        new_key_derivation = await derive_key(new_salt, new_master_password)
-        new_hash_key = await hash_password(new_master_password)
+        material, new_key = await create_key_material(new_master_password)
 
         model = await self._get_model()
-        if (model.salt, model.hash_key, model.key_check) != observed:
+        if key_material(model) != observed:
             raise InvalidKey(_INVALID_KEY)
 
-        passwords = (
-            await self.session.execute(
-                select(PasswordModel).order_by(PasswordModel.password_name)
-            )
-        ).scalars()
+        await _reencrypt_entries(self.session, old_key, new_key)
+        await _reencrypt_attachments(self.session, old_key, new_key)
 
-        for pwd in passwords:
-            pwd.password_value = self._reencrypt(
-                key_derivation, new_key_derivation, pwd.password_value, pwd
-            )
-            for field in self._OPTIONAL_ENCRYPTED_FIELDS:
-                setattr(
-                    pwd,
-                    field,
-                    self._reencrypt_optional(
-                        key_derivation, new_key_derivation, getattr(pwd, field), pwd
-                    ),
-                )
-
-        attachments = (
-            await self.session.execute(select(PasswordAttachmentModel))
-        ).scalars()
-        for att in attachments:
-            att.filename = self._reencrypt_binary(
-                key_derivation, new_key_derivation, att.filename
-            )
-            att.content = self._reencrypt_binary(
-                key_derivation, new_key_derivation, att.content
-            )
-            att.content_type = self._reencrypt_text(
-                key_derivation, new_key_derivation, att.content_type
-            )
-
-        model.salt = new_salt
-        model.hash_key = new_hash_key
-        model.key_check = create_key_check(new_key_derivation, new_salt)
+        _store(model, material)
         self.session.add(model)
         await self.session.flush()
 
         return MasterPasswordUpdate(
             updated=True, detail="Master password updated successfully."
         )
+
+
+async def _reencrypt_entries(
+    session: AsyncSession, old_key: VaultKey, new_key: VaultKey
+) -> None:
+    ids = (await session.scalars(select(EntryModel.id).order_by(EntryModel.id))).all()
+    for entry_id in ids:
+        entry = await session.get_one(EntryModel, entry_id)
+        seal_entry(new_key, entry, open_entry(old_key, entry))
+        flag_modified(entry, "updated")
+        await session.flush()
+        session.expunge(entry)
+
+
+async def _reencrypt_attachments(
+    session: AsyncSession, old_key: VaultKey, new_key: VaultKey
+) -> None:
+    rows = (
+        await session.execute(
+            select(AttachmentModel.id, EntryModel.uid)
+            .join(EntryModel, AttachmentModel.entry_id == EntryModel.id)
+            .order_by(AttachmentModel.id)
+        )
+    ).all()
+    for attachment_id, entry_uid in rows:
+        attachment = await session.get_one(AttachmentModel, attachment_id)
+        metadata = open_attachment_metadata(old_key, attachment, entry_uid)
+        content = open_attachment_content(old_key, attachment, entry_uid)
+        seal_attachment(new_key, attachment, entry_uid, metadata, content)
+        await session.flush()
+        session.expunge(attachment)

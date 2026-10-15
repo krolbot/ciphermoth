@@ -74,5 +74,37 @@ def restore(
     typer.echo("Restored. Start CipherMoth and unlock with that snapshot's password.")
 
 
+@app.command(
+    "set-aside",
+    help=(
+        "Move the vault file (with its WAL) into a new folder in the snapshot "
+        "folder, so the next start creates a new, empty vault. Nothing is "
+        "deleted. Use it for a vault this release refuses to open, such as one "
+        "from CipherMoth 2.0. Stop CipherMoth first."
+    ),
+)
+def set_aside(
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask to confirm.")] = False,
+) -> None:
+    if not yes:
+        typer.confirm(
+            f"Move the vault in {_data_dir()} aside and start over with an empty "
+            "vault the next time CipherMoth starts?",
+            abort=True,
+        )
+    try:
+        kept = storage.set_aside(_data_dir())
+    except storage.StorageError as error:
+        raise _fail(error) from None
+    if kept is None:
+        typer.echo("There is no vault file to move.")
+        return
+    typer.echo(f"The vault was moved to {kept}")
+    typer.echo(
+        "Start CipherMoth to create a new vault. To go back, stop CipherMoth and "
+        "move the files in that folder back into the data folder."
+    )
+
+
 if __name__ == "__main__":
     app()

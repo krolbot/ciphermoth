@@ -3,7 +3,6 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 
-from helpers import create_encrypted_zip
 from main import app
 from tests.support import (
     MASTER_PASSWORD,
@@ -15,6 +14,7 @@ from tests.support import (
     entry,
     forged_keys,
     forged_tokens,
+    legacy_backup_zip,
     retired_key_header,
     stored_vault_key,
     unlock,
@@ -151,7 +151,7 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
     resp = await client.delete("/passwords/beta", headers=headers)
     assert resp.status_code == 200, resp.text
     await client.get("/settings", headers=headers)
-    backup_zip = create_encrypted_zip(
+    backup_zip = legacy_backup_zip(
         [{"name": "from-backup", "value": "restored-Value-1"}], MASTER_PASSWORD
     )
     return {"attachment_id": attachment_id, "backup_zip": backup_zip}

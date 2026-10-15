@@ -1,6 +1,5 @@
 import http.server
 import importlib.util
-import io
 import json
 import os
 import shutil
@@ -15,19 +14,17 @@ from urllib.parse import quote
 
 import httpx
 import pytest
-import pyzipper
 import typer
-from cryptography.fernet import Fernet
 from typer.testing import CliRunner, Result
 
 from cli import app as cli_app
-from helpers import encrypt
 from tests.support import (
     MASTER_PASSWORD,
     WRONG_MASTER_PASSWORD,
     db_execute,
     db_snapshot,
-    stored_vault_key,
+    name_index,
+    plant_entry,
 )
 
 runner = CliRunner()
@@ -133,20 +130,19 @@ async def test_cli_backup_import_and_csv(api: str, tmp_path: Path) -> None:
         )
     )
     ok(cli(api, "backup", "--out", str(tmp_path)))
-    [archive] = list(tmp_path.glob("ciphermoth_backup_*.zip"))
+    [archive] = list(tmp_path.glob("ciphermoth_backup_*.cmbackup"))
     assert stat.S_IMODE(archive.stat().st_mode) == 0o600
-    with pyzipper.AESZipFile(io.BytesIO(archive.read_bytes())) as zf:
-        zf.setpassword(MASTER_PASSWORD.encode())
-        names = [
-            p["name"]
-            for p in json.loads(zf.read("ciphermoth_backup.json"))["passwords"]
-        ]
-    assert names == ["mail"]
+    content = archive.read_bytes()
+    assert content.startswith(b"CMBACKUP")
+    assert b"mail" not in content
 
     ok(cli(api, "password", "delete", "mail", "--yes"))
     ok(cli(api, "password", "purge", "mail", "--yes"))
-    assert "1 added" in ok(cli(api, "import", str(archive)))
+    assert "1 added" in ok(cli(api, "import", str(archive), answers=[""]))
     assert "mail-Pass-1" in ok(cli(api, "password", "get", "mail"))
+    wrong = cli(api, "import", str(archive), answers=[WRONG_MASTER_PASSWORD])
+    assert wrong.exit_code == 1
+    assert "Incorrect backup password" in wrong.output
 
     csv_file = tmp_path / "export.csv"
     csv_file.write_text("name,password\nmail,csv-Pass-2\nshop,shop-Pass-3\n")
@@ -191,7 +187,7 @@ async def test_live_server_logs_do_not_contain_secrets(
     assert '"GET /api/passwords/{password_name} HTTP/1.1" 200' in log
 
 
-async def test_cli_can_remove_an_entry_it_cannot_decrypt(api: str) -> None:
+async def test_cli_explains_a_damaged_vault_without_a_traceback(api: str) -> None:
     ok(
         cli(
             api,
@@ -201,16 +197,18 @@ async def test_cli_can_remove_an_entry_it_cannot_decrypt(api: str) -> None:
             answers=["good-Pass-1", "good-Pass-1", "", "", "", "", ""],
         )
     )
+    planted = await plant_entry("planted")
     await db_execute(
-        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
-        n="planted",
-        v=encrypt(Fernet.generate_key(), b"written with another key"),
+        "UPDATE entries SET document = :document WHERE id = :id",
+        document=b"\x02" + os.urandom(60),
+        id=planted,
     )
-    assert cli(api, "password", "list").exit_code == 1
-
-    ok(cli(api, "password", "delete", "planted", "--yes"))
-    ok(cli(api, "password", "purge", "planted", "--yes"))
-    assert "good" in ok(cli(api, "password", "list"))
+    listing = cli(api, "password", "list")
+    assert listing.exit_code == 1
+    assert f"Entry #{planted}" in listing.output
+    assert "restore a snapshot" in listing.output
+    assert "Traceback" not in listing.output
+    assert "good-Pass-1" in ok(cli(api, "password", "get", "good"))
 
     missing = cli(api, "password", "delete", "never-existed", "--yes")
     assert missing.exit_code == 1
@@ -337,11 +335,7 @@ async def test_cli_reaches_exactly_the_named_entry(
     for decoy in ("notes", "a", "50", "escape", "decoy"):
         _api_create(api, key, {"password_name": decoy, "password_value": f"{decoy}-v"})
     if name in (".", ".."):
-        await db_execute(
-            "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
-            n=name,
-            v=encrypt(await stored_vault_key(), b"target-Value-1"),
-        )
+        await plant_entry(name, "target-Value-1")
     else:
         _api_create(
             api, key, {"password_name": name, "password_value": "target-Value-1"}
@@ -351,10 +345,8 @@ async def test_cli_reaches_exactly_the_named_entry(
     assert "target-Value-1" in ok(cli(api, "password", "get", stored))
     ok(cli(api, "password", "delete", stored, "--yes"))
 
-    rows = await db_execute(
-        "SELECT password_name FROM passwords WHERE deleted IS NOT NULL"
-    )
-    assert rows == [(stored,)]
+    rows = await db_execute("SELECT name_index FROM entries WHERE deleted IS NOT NULL")
+    assert rows == [(await name_index(stored),)]
 
 
 SLASH_NAMES = ["a/b", "x/purge", "x/restore", "x/attachments/1", "../x", "x/.."]
@@ -371,10 +363,15 @@ async def _slash_vault(api: str, key: dict[str, str], name: str) -> list[tuple]:
     )
     assert resp.status_code == 200
     _api_create(api, key, {"password_name": name, "password_value": "slash-v"})
+    return await _rows_named("x")
+
+
+async def _rows_named(name: str) -> list[tuple]:
     return await db_execute(
-        "SELECT p.id, p.password_value, p.deleted, a.id FROM passwords p "
-        "LEFT JOIN password_attachments a ON a.password_id = p.id "
-        "WHERE p.password_name = 'x' ORDER BY p.id"
+        "SELECT e.id, e.document, e.deleted, a.id FROM entries e "
+        "LEFT JOIN attachments a ON a.entry_id = e.id "
+        "WHERE e.name_index = :index ORDER BY e.id",
+        index=await name_index(name),
     )
 
 
@@ -390,17 +387,8 @@ async def test_cli_manages_names_with_a_slash_without_touching_others(
     ok(cli(api, "password", "delete", name, "--yes"))
     ok(cli(api, "password", "purge", name, "--yes"))
 
-    assert (
-        await db_execute(
-            "SELECT p.id, p.password_value, p.deleted, a.id FROM passwords p "
-            "LEFT JOIN password_attachments a ON a.password_id = p.id "
-            "WHERE p.password_name = 'x' ORDER BY p.id"
-        )
-        == decoys
-    )
-    assert await db_execute(
-        "SELECT count(*) FROM passwords WHERE password_name = :n", n=name
-    ) == [(0,)]
+    assert await _rows_named("x") == decoys
+    assert await _rows_named(name) == []
 
 
 @pytest.mark.parametrize("command", [["get"], ["delete", "--yes"], ["purge", "--yes"]])
@@ -429,10 +417,7 @@ def test_cli_refuses_slash_names_unless_the_server_says_it_routes_them(
 async def test_cli_explains_an_entry_it_cannot_open_by_name(
     api: str, key: dict[str, str]
 ) -> None:
-    await db_execute(
-        "INSERT INTO passwords (password_name, password_value) VALUES ('trash', :v)",
-        v=encrypt(await stored_vault_key(), b"legacy-v"),
-    )
+    await plant_entry("trash", "legacy-v")
     for command in ("get", "update"):
         result = cli(api, "password", command, "trash")
         assert result.exit_code == 1
@@ -440,8 +425,9 @@ async def test_cli_explains_an_entry_it_cannot_open_by_name(
         assert "Traceback" not in result.output
     ok(cli(api, "password", "delete", "trash", "--yes"))
     assert await db_execute(
-        "SELECT count(*) FROM passwords WHERE password_name = 'trash' "
-        "AND deleted IS NOT NULL"
+        "SELECT count(*) FROM entries WHERE name_index = :index "
+        "AND deleted IS NOT NULL",
+        index=await name_index("trash"),
     ) == [(1,)]
 
 

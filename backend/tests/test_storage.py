@@ -228,7 +228,7 @@ async def test_a_corrupted_vault_is_refused_at_startup(tmp_path: Path) -> None:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         page_size = connection.execute("PRAGMA page_size").fetchone()[0]
         root = connection.execute(
-            "SELECT rootpage FROM sqlite_schema WHERE name = 'uq_passwords_name_active'"
+            "SELECT rootpage FROM sqlite_schema WHERE name = 'uq_entries_name_active'"
         ).fetchone()[0]
     data = bytearray(vault.read_bytes())
     offset = (root - 1) * page_size + 100
@@ -267,7 +267,8 @@ async def test_a_snapshot_is_consistent_while_a_writer_holds_the_vault(
     await _populate(client, ["alpha", "beta"])
     with write_lock_held() as writer:
         writer.execute(
-            "INSERT INTO passwords (password_name, password_value) VALUES ('x', 'y')"
+            "INSERT INTO entries (uid, name_index, document) "
+            "VALUES (randomblob(16), randomblob(32), x'00')"
         )
         target = storage.snapshot(data_dir(), tmp_path / "snap.db")
     assert check_file(target) == []
@@ -275,10 +276,8 @@ async def test_a_snapshot_is_consistent_while_a_writer_holds_the_vault(
     if os.name != "nt":
         assert _mode(target) == 0o600
     with closing(sqlite3.connect(target)) as connection:
-        names = [
-            row[0] for row in connection.execute("SELECT password_name FROM passwords")
-        ]
-    assert sorted(names) == ["alpha", "beta"]
+        rows = connection.execute("SELECT count(*) FROM entries").fetchone()
+    assert rows == (2,)
     assert not list(tmp_path.glob("*.partial"))
 
 
@@ -290,9 +289,7 @@ async def test_a_snapshot_contains_writes_that_are_only_in_the_wal(
     target = storage.snapshot(data_dir())
     assert target.parent == data_dir() / "snapshots"
     with closing(sqlite3.connect(target)) as connection:
-        assert connection.execute("SELECT password_name FROM passwords").fetchall() == [
-            ("alpha",)
-        ]
+        assert connection.execute("SELECT count(*) FROM entries").fetchone() == (1,)
     target.unlink()
 
 
@@ -323,10 +320,8 @@ async def test_a_snapshot_restores_the_complete_vault(tmp_path: Path) -> None:
         )
         assert [item["password_name"] for item in resp.json()] == ["beta"]
     with closing(sqlite3.connect(kept / VAULT_FILE)) as connection:
-        names = connection.execute(
-            "SELECT password_name FROM passwords ORDER BY password_name"
-        ).fetchall()
-    assert names == [("alpha",), ("beta",), ("later",)]
+        rows = connection.execute("SELECT count(*) FROM entries").fetchone()
+    assert rows == (3,)
 
 
 async def _raw(folder: Path) -> dict:
@@ -340,7 +335,7 @@ async def _raw(folder: Path) -> dict:
                         text(f"SELECT * FROM {table} ORDER BY id")
                     )
                 ]
-                for table in ("master_password", "passwords", "password_attachments")
+                for table in ("vault", "entries", "attachments")
             }
     finally:
         await database.dispose()
@@ -520,9 +515,9 @@ async def test_deleting_an_entry_row_deletes_its_attachments(
     client: httpx.AsyncClient,
 ) -> None:
     await _populate(client, ["alpha"])
-    assert await db_execute("SELECT count(*) FROM password_attachments") == [(1,)]
-    await db_execute("DELETE FROM passwords WHERE password_name = 'alpha'")
-    assert await db_execute("SELECT count(*) FROM password_attachments") == [(0,)]
+    assert await db_execute("SELECT count(*) FROM attachments") == [(1,)]
+    await db_execute("DELETE FROM entries")
+    assert await db_execute("SELECT count(*) FROM attachments") == [(0,)]
 
 
 async def test_ids_are_never_reused(client: httpx.AsyncClient) -> None:
@@ -601,7 +596,7 @@ async def test_a_restore_never_replays_the_old_wal_into_the_restored_vault(
         assert connection.execute("SELECT hidden_ms FROM settings").fetchone() == (
             SETTINGS_DEFAULTS["hidden_ms"],
         )
-        assert connection.execute("SELECT count(*) FROM passwords").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM entries").fetchone() == (1,)
     assert kept is not None
     with closing(sqlite3.connect(kept / VAULT_FILE)) as connection:
         assert connection.execute("SELECT hidden_ms FROM settings").fetchone() == (

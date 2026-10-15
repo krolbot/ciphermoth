@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import URL, Connection, event
-from sqlalchemy.exc import DatabaseError, OperationalError
+from sqlalchemy.exc import DatabaseError, DBAPIError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -81,14 +81,19 @@ def _run(session: AsyncSession, hooks: str) -> None:
 
 class Database:
     """
-    The SQLite vault of one app instance. The engine is created on first use, so
-    building an app opens no file.
+    The SQLite vault of one app instance. The engine is created on first use,
+    so building an app opens no file.
 
-    Read transactions are deferred and see one consistent WAL snapshot next to a
-    running writer. Write transactions start with BEGIN IMMEDIATE, which takes
-    SQLite's single write lock before their first read, so every write request
-    checks its session key, reads and writes as one serialized unit, and a
-    master password change can never interleave with another write.
+    Read transactions are deferred and see one consistent WAL snapshot next to
+    a running writer. A connection that raised a database error is discarded
+    instead of returned to the pool: Python's sqlite3 module leaves a statement
+    that failed while fetching (a value it cannot decode, for example) un-
+    reset, and that statement would keep its old snapshot open, so every later
+    write on the connection would fail as busy. Write transactions start with
+    BEGIN IMMEDIATE, which takes SQLite's single write lock before their first
+    read, so every write request checks its session key, reads and writes as
+    one serialized unit, and a master password change can never interleave with
+    another write.
     """
 
     def __init__(
@@ -132,7 +137,10 @@ class Database:
                 await session.commit()
             except BaseException as error:
                 try:
-                    await session.rollback()
+                    if isinstance(error, DBAPIError):
+                        await session.invalidate()
+                    else:
+                        await session.rollback()
                 finally:
                     _run(session, _AFTER_ROLLBACK)
                 if (

@@ -9,11 +9,13 @@ from typing import Any
 
 from sqlalchemy import Connection, insert
 
+from helpers import FORMAT_VERSION
 from models import SETTINGS_DEFAULTS, BaseModel, SettingsModel
 
 MIN_SQLITE_VERSION = (3, 51, 3)
 APPLICATION_ID = 0x434D5448
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+FORMAT_1_SCHEMA = 1
 BUSY_TIMEOUT_MS = 15_000
 RESTORE_BUSY_TIMEOUT_MS = 2_000
 JOURNAL_SIZE_LIMIT = 16 * 1024 * 1024
@@ -114,9 +116,20 @@ def configure_connection(dbapi_connection: Any) -> None:
         cursor.close()
 
 
+FORMAT_1_VAULT = (
+    "was created by CipherMoth 2.0 or earlier (vault format 1), which this "
+    "release no longer opens. Nothing was changed. To move your entries, make a "
+    "backup with CipherMoth 2.0, stop CipherMoth, run 'ciphermoth-admin "
+    "set-aside' to move the old vault into the snapshot folder, start this "
+    "release, create a new vault and import the backup (docs/UPDATING.md)"
+)
+
+
 def identity_problem(application_id: int, user_version: int) -> str | None:
     if application_id != APPLICATION_ID:
         return "is not a CipherMoth vault"
+    if user_version == FORMAT_1_SCHEMA:
+        return FORMAT_1_VAULT
     if user_version > SCHEMA_VERSION:
         return (
             f"was written by a newer CipherMoth (vault schema {user_version}, this "
@@ -124,6 +137,25 @@ def identity_problem(application_id: int, user_version: int) -> str | None:
         )
     if user_version != SCHEMA_VERSION:
         return f"has an unsupported vault schema ({user_version})"
+    return None
+
+
+_VAULT_FORMATS = "SELECT format_version FROM vault"
+
+
+def format_problem(formats: list[int]) -> str | None:
+    """Whether the vault row (if the vault is set up) has a cryptographic format
+    this release reads. Kept apart from the schema version: the same tables
+    could one day hold a newer format."""
+    if len(formats) > 1:
+        return "has more than one vault key row"
+    if formats and formats[0] != FORMAT_VERSION:
+        if formats[0] > FORMAT_VERSION:
+            return (
+                f"was written by a newer CipherMoth (vault format {formats[0]}, "
+                f"this release understands {FORMAT_VERSION}); update CipherMoth"
+            )
+        return f"has an unsupported vault format ({formats[0]})"
     return None
 
 
@@ -141,6 +173,9 @@ def ensure_schema(connection: Connection) -> None:
         connection.exec_driver_sql(f"PRAGMA user_version={SCHEMA_VERSION}")
         return
     problem = identity_problem(application_id or 0, user_version or 0)
+    if problem is None:
+        formats = connection.exec_driver_sql(_VAULT_FORMATS).scalars().all()
+        problem = format_problem(list(formats))
     if problem:
         raise StorageError(f"The vault file {problem}.")
 
@@ -162,6 +197,8 @@ def refuse_unusable_file(path: Path) -> None:
             if application_id == 0 and user_version == 0 and objects == (0,):
                 return
             problem = identity_problem(application_id, user_version)
+            if problem is None:
+                problem = format_problem(_formats(connection))
             if problem:
                 raise StorageError(f"The vault file {problem}.")
             damage = [
@@ -191,15 +228,21 @@ def check_connection(connection: sqlite3.Connection) -> list[str]:
         if str(row[0]) != "ok"
     ]
     problems += [
-        f"attachment row {row[1]} references a missing entry"
+        f"{row[0]} row {row[1]} references a missing row of {row[2]}"
         for row in connection.execute("PRAGMA foreign_key_check")
     ]
     application_id = connection.execute("PRAGMA application_id").fetchone()[0]
     user_version = connection.execute("PRAGMA user_version").fetchone()[0]
     problem = identity_problem(application_id, user_version)
+    if problem is None:
+        problem = format_problem(_formats(connection))
     if problem:
         problems.append(f"the file {problem}")
     return problems
+
+
+def _formats(connection: sqlite3.Connection) -> list[int]:
+    return [row[0] for row in connection.execute(_VAULT_FORMATS)]
 
 
 def _connect_existing(path: Path, *, writable: bool = False) -> sqlite3.Connection:
@@ -484,4 +527,39 @@ def restore(data_dir: Path, source: Path) -> Path | None:
         raise StorageError(
             f"The restore failed: {error}. Nothing was replaced."
         ) from error
+    return kept
+
+
+def set_aside(data_dir: Path) -> Path | None:
+    """
+    Move the vault file and its journal files, unchanged and together, into a
+    new folder in the snapshot folder, so that the next start creates a new,
+    empty vault. Nothing is deleted or rewritten: moving the files back (with
+    CipherMoth stopped) restores the vault exactly. Works on any file, also one
+    this release refuses to open. CipherMoth must not be running. Returns the
+    folder, or None if there was nothing to move.
+    """
+    require_supported_sqlite()
+    live = vault_file(data_dir)
+    files = [live.with_name(live.name + suffix) for suffix in ("", *_SIDECARS)]
+    if not any(path.exists() for path in files):
+        return None
+    folder = snapshot_dir(data_dir)
+    try:
+        with VaultLock(data_dir):
+            if live.exists() and live.stat().st_size > 0:
+                connection = _take_exclusively(live)
+                if connection is not None:
+                    connection.close()
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+            kept = folder / timestamped("set-aside").removesuffix(".db")
+            kept.mkdir(mode=0o700)
+            for path in files:
+                if path.exists():
+                    os.replace(path, kept / path.name)
+            _fsync_dir(kept)
+            _fsync_dir(folder)
+            _fsync_dir(data_dir)
+    except OSError as error:
+        raise StorageError(f"Could not move the vault aside: {error}") from error
     return kept

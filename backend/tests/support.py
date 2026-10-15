@@ -1,9 +1,12 @@
 import asyncio
 import base64
+import io
+import json
 import os
 import secrets
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import time
@@ -13,10 +16,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+import pyzipper
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy import insert, text
 
 from crud.engine import Database
-from helpers import generate_key_derivation
+from helpers import VaultKey
 from main import app, get_application
 from models import SETTINGS_DEFAULTS, SettingsModel
 from storage import VAULT_FILE
@@ -28,7 +36,7 @@ MASTER_PASSWORD = "Moth-Test-Vault-2026!"
 NEW_MASTER_PASSWORD = "Moth-Rotated-Vault-2027?"
 WRONG_MASTER_PASSWORD = "Not-The-Vault-Password-1"
 
-TABLES = ("master_password", "passwords", "password_attachments", "settings")
+TABLES = ("vault", "entries", "attachments", "settings")
 
 engine = app.state.database.engine
 
@@ -40,7 +48,7 @@ def data_dir() -> Path:
 async def reset_vault() -> None:
     """Return the shared test vault to the state of a fresh install."""
     async with engine.begin() as conn:
-        for table in ("password_attachments", "passwords", "master_password"):
+        for table in ("attachments", "entries", "vault"):
             await conn.execute(text(f"DELETE FROM {table}"))
         await conn.execute(text("DELETE FROM settings"))
         await conn.execute(text("DELETE FROM sqlite_sequence"))
@@ -98,10 +106,51 @@ async def unlock(
     return body["session_token"]
 
 
+def _hkdf(key: bytes, label: str) -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(), length=32, salt=None, info=label.encode()
+    ).derive(key)
+
+
+def unwrap_vault_key(row: tuple, master_password: str) -> bytes:
+    """The raw vault key of a ``vault`` row, unwrapped with the primitives
+    following docs/VAULT_FORMAT.md rather than through helpers.py."""
+    memory, iterations, lanes, salt, wrapped = row
+    derived = Argon2id(
+        salt=bytes(salt),
+        length=32,
+        iterations=iterations,
+        lanes=lanes,
+        memory_cost=memory,
+    ).derive(master_password.encode())
+    wrapped = bytes(wrapped)
+    associated = (
+        b"ciphermoth/v2/wrapped-vault-key"
+        + struct.pack(">HIII", 2, memory, iterations, lanes)
+        + bytes(salt)
+    )
+    return AESGCM(_hkdf(derived, "ciphermoth/v2/key-wrapping")).decrypt(
+        wrapped[1:13], wrapped[13:], associated
+    )
+
+
+async def raw_vault_key(master_password: str = MASTER_PASSWORD) -> bytes:
+    [row] = await db_execute(
+        "SELECT kdf_memory_kib, kdf_iterations, kdf_lanes, kdf_salt, wrapped_key "
+        "FROM vault"
+    )
+    return unwrap_vault_key(row, master_password)
+
+
 async def stored_vault_key(master_password: str = MASTER_PASSWORD) -> str:
-    """The vault key, derived from the stored salt without asking the API."""
-    [(salt,)] = await db_execute("SELECT salt FROM master_password ORDER BY id LIMIT 1")
-    return generate_key_derivation(bytes(salt), master_password).decode()
+    """The raw vault key as text (base64url), for checking that it never shows
+    up in responses or logs and for forged credentials."""
+    raw = await raw_vault_key(master_password)
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+async def vault_key(master_password: str = MASTER_PASSWORD) -> VaultKey:
+    return VaultKey(await raw_vault_key(master_password))
 
 
 def entry(name: str, value: str = "s3cret-Value!", **fields: object) -> dict:
@@ -311,9 +360,157 @@ def corrupt_name_index(vault: Path) -> None:
     with closing(sqlite3.connect(f"{vault.resolve().as_uri()}?mode=ro", uri=True)) as c:
         page_size = c.execute("PRAGMA page_size").fetchone()[0]
         root = c.execute(
-            "SELECT rootpage FROM sqlite_schema WHERE name = 'uq_passwords_name_active'"
+            "SELECT rootpage FROM sqlite_schema WHERE name = 'uq_entries_name_active'"
         ).fetchone()[0]
     data = bytearray(vault.read_bytes())
     offset = (root - 1) * page_size
     data[offset : offset + 8] = b"\xff" * 8
     vault.write_bytes(bytes(data))
+
+
+async def plant_entry(
+    name: str,
+    value: str = "planted-Value-1",
+    *,
+    master_password: str = MASTER_PASSWORD,
+    deleted: str | None = None,
+    **fields: object,
+) -> int:
+    """Store an entry directly in the vault file, sealed with the vault key but
+    without the API's input rules, like a row an older release or an import
+    without validation could have written."""
+    key = await vault_key(master_password)
+    document = {
+        "name": name,
+        "kind": "login",
+        "username": None,
+        "value": value,
+        "url": None,
+        "totp_secret": None,
+        "description": None,
+        "tags": [],
+        "custom_fields": [],
+        "folder": None,
+        "favorite": False,
+        "history": [],
+        **fields,
+    }
+    uid = os.urandom(16)
+    sealed = key.seal_entry(uid, json.dumps(document).encode())
+    await db_execute(
+        "INSERT INTO entries (uid, name_index, document, backed_up, deleted) "
+        "VALUES (:uid, :index, :document, 0, :deleted)",
+        uid=uid,
+        index=key.name_index(name),
+        document=sealed,
+        deleted=deleted,
+    )
+    [(entry_id,)] = await db_execute("SELECT id FROM entries WHERE uid = :uid", uid=uid)
+    return entry_id
+
+
+def legacy_backup_zip(entries: list[dict[str, object]], password: str) -> bytes:
+    """A backup ZIP as CipherMoth 2.0 and earlier wrote it (backup format 1)."""
+    payload = json.dumps(
+        {"exported_at": "2026-10-01T00:00:00+00:00", "passwords": entries},
+        indent=2,
+        ensure_ascii=False,
+    ).encode("utf-8")
+    buffer = io.BytesIO()
+    with pyzipper.AESZipFile(
+        buffer, "w", compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES
+    ) as archive:
+        archive.setpassword(password.encode())
+        archive.writestr("ciphermoth_backup.json", payload)
+    return buffer.getvalue()
+
+
+async def read_current_vault(
+    master_password: str = MASTER_PASSWORD, *, strict: bool = True
+):
+    """Every entry and attachment of the shared test vault, decrypted by the
+    independent reader in tests/integrity.py."""
+    from tests.integrity import read_vault
+
+    key = await stored_vault_key(master_password)
+    async with engine.connect() as conn:
+        return await read_vault(
+            conn, key, master_password=master_password, strict=strict
+        )
+
+
+async def name_index(name: str, master_password: str = MASTER_PASSWORD) -> bytes:
+    return (await vault_key(master_password)).name_index(name)
+
+
+async def active_rows_named(name: str) -> int:
+    [(count,)] = await db_execute(
+        "SELECT count(*) FROM entries WHERE name_index = :index AND deleted IS NULL",
+        index=await name_index(name),
+    )
+    return count
+
+
+def backup_entry(name: str, value: str = "backed-Value-1", **fields: object) -> dict:
+    return {
+        "name": name,
+        "kind": "login",
+        "username": None,
+        "value": value,
+        "url": None,
+        "totp_secret": None,
+        "description": None,
+        "tags": [],
+        "custom_fields": [],
+        "folder": None,
+        "favorite": False,
+        "history": [],
+        "created": "2026-01-02T03:04:05.000006+00:00",
+        "updated": "2026-01-03T03:04:05.000006+00:00",
+        "deleted": None,
+        "attachments": [],
+        **fields,
+    }
+
+
+def backup_file(
+    entries: list[dict],
+    password: str = MASTER_PASSWORD,
+    *,
+    contents: tuple[bytes, ...] | list[bytes] = (),
+    settings: dict | None = None,
+    manifest: dict | None = None,
+    frames: int | None = None,
+) -> bytes:
+    """A backup (format 2) built with the frame writer, for import tests that
+    need files the export would never produce."""
+    from backup_format import BackupWriter
+    from helpers import (
+        DEFAULT_KDF,
+        BackupHeader,
+        BackupKey,
+        argon2id,
+    )
+
+    document = manifest or {
+        "format": "ciphermoth-backup",
+        "version": 2,
+        "exported_at": "2026-10-15T00:00:00+00:00",
+        "app_version": "test",
+        "settings": settings or dict(SETTINGS_DEFAULTS),
+        "entries": entries,
+    }
+    salt = os.urandom(16)
+    key = BackupKey(argon2id(password, salt, DEFAULT_KDF))
+    header = BackupHeader(
+        params=DEFAULT_KDF,
+        salt=salt,
+        frames=frames if frames is not None else 1 + len(contents),
+        commitment=key.commitment,
+    )
+    target = io.BytesIO()
+    writer = BackupWriter(target, key, header)
+    writer.write(json.dumps(document).encode())
+    for content in contents:
+        writer.write(content)
+    return target.getvalue()

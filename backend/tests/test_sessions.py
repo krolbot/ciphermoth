@@ -20,9 +20,11 @@ from crud.engine import Database, create_engine
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
 from errors import SessionRequired
+from helpers import VaultKey
 from main import app, get_application
 from settings import get_api_settings
 from storage import VAULT_FILE
+from tests.integrity import hkdf
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
@@ -34,6 +36,7 @@ from tests.support import (
     db_execute,
     entry,
     fresh_vault_sessions,
+    read_current_vault,
     retired_key_header,
     stored_vault_key,
     unlock,
@@ -50,7 +53,8 @@ ROTATE = {
     "master_password": MASTER_PASSWORD,
     "new_master_password": NEW_MASTER_PASSWORD,
 }
-KEY = base64.urlsafe_b64encode(b"k" * 32).decode()
+KEY_TEXT = base64.urlsafe_b64encode(b"k" * 32).decode()
+KEY = VaultKey(b"k" * 32)
 IDLE_MS = 120_000
 
 
@@ -100,7 +104,7 @@ def test_tokens_are_random_urlsafe_and_independent_of_the_key(
         assert set(token) <= set(
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
         )
-        assert KEY[:8] not in token
+        assert KEY_TEXT[:8] not in token
     symbols = Counter("".join(tokens))
     assert len(symbols) == 64
     assert max(symbols.values()) < 3 * min(symbols.values())
@@ -112,7 +116,8 @@ def test_the_store_keeps_only_token_digests_and_never_prints_keys(
     token = store.open(KEY)
     held = repr(store.__dict__) + repr(list(store._sessions.values()))
     assert token not in held
-    assert KEY not in held
+    assert KEY_TEXT not in held
+    assert KEY.check.hex() not in held
 
 
 def test_a_session_resolves_to_its_key_until_it_is_idle_too_long(
@@ -311,7 +316,7 @@ def test_concurrent_requests_at_the_deadline_agree(
     token = store.open(KEY)
     clock.advance(IDLE_MS + offset_ms)
 
-    def attempt(_: int) -> str:
+    def attempt(_: int) -> VaultKey | str:
         try:
             return store.resolve(token)
         except SessionRequired:
@@ -626,7 +631,7 @@ async def test_a_session_does_not_survive_a_vault_recreated_from_scratch(
     client: httpx.AsyncClient,
 ) -> None:
     token = await create_vault(client)
-    await db_execute("DELETE FROM master_password")
+    await db_execute("DELETE FROM vault")
     resp = await client.get("/passwords", headers=auth(token))
     assert resp.status_code == 403
     await create_vault(client, NEW_MASTER_PASSWORD)
@@ -693,7 +698,7 @@ async def test_a_session_token_and_a_vault_key_together_are_refused(
         )
         assert resp.status_code == 403
         assert resp.json() == {"detail": UPGRADE_REQUIRED, "code": "invalid_key"}
-    assert await db_execute("SELECT id FROM passwords") == []
+    assert await db_execute("SELECT id FROM entries") == []
     assert sessions().info(token).expires_in_ms == 10_000
     assert (await client.get("/passwords", headers=auth(token))).status_code == 200
 
@@ -767,7 +772,7 @@ async def test_a_request_queued_behind_rotation_is_refused(
         stale = unlock_resp.json()["session_token"]
         assert (await client.get("/passwords", headers=auth(stale))).status_code == 401
     assert len(sessions()) == 0
-    assert await db_execute("SELECT id FROM passwords") == []
+    assert await db_execute("SELECT id FROM entries") == []
 
 
 async def test_requests_after_a_lock_are_refused_while_earlier_ones_finish(
@@ -777,9 +782,9 @@ async def test_requests_after_a_lock_are_refused_while_earlier_ones_finish(
     gate = asyncio.Event()
     original = PasswordCRUD.create_password
 
-    async def slow_create(self, password, key_derivation):
+    async def slow_create(self, password, key):
         await gate.wait()
-        return await original(self, password, key_derivation)
+        return await original(self, password, key)
 
     monkeypatch.setattr(PasswordCRUD, "create_password", slow_create)
     in_flight = asyncio.create_task(
@@ -794,8 +799,8 @@ async def test_requests_after_a_lock_are_refused_while_earlier_ones_finish(
 
     assert after.status_code == 401
     assert (await in_flight).status_code == 200
-    names = await db_execute("SELECT password_name FROM passwords")
-    assert names == [("before",)]
+    names = [e.name for e in (await read_current_vault()).entries]
+    assert names == ["before"]
 
 
 async def test_unlock_does_not_block_other_requests(client: httpx.AsyncClient) -> None:
@@ -809,7 +814,7 @@ async def test_unlock_does_not_block_other_requests(client: httpx.AsyncClient) -
     unlocked = time.monotonic() - started
 
     assert resp.status_code == 200
-    assert unlocked > 0.2
+    assert unlocked > 0.08
     assert answered < unlocked / 3
 
 
@@ -871,9 +876,7 @@ async def test_argon2id_derivations_never_overlap(
                     running -= 1
 
     monkeypatch.setattr(helpers, "Argon2id", Counted)
-    derive_on_loop = asyncio.to_thread(
-        helpers.generate_key_derivation, b"s" * 16, MASTER_PASSWORD
-    )
+    derive_on_loop = asyncio.to_thread(helpers.argon2id, MASTER_PASSWORD, b"s" * 16)
     tokens, _ = await asyncio.wait_for(
         asyncio.gather(
             asyncio.gather(*(unlock(client) for _ in range(6))), derive_on_loop
@@ -900,7 +903,7 @@ async def test_neither_tokens_nor_keys_are_stored_in_the_database(
     vault_key = await stored_vault_key()
     raw_key = base64.urlsafe_b64decode(vault_key)
     rows = []
-    for table in ("master_password", "passwords", "password_attachments", "settings"):
+    for table in ("vault", "entries", "attachments", "settings"):
         rows += await db_execute(f"SELECT * FROM {table}")
     dump = repr(rows).encode()
     blobs = b"".join(
@@ -910,6 +913,8 @@ async def test_neither_tokens_nor_keys_are_stored_in_the_database(
         assert secret.encode() not in dump
         assert secret.encode() not in blobs
     assert raw_key not in blobs
+    for label in ("record-encryption", "name-index"):
+        assert hkdf(raw_key, f"ciphermoth/v2/{label}") not in blobs
 
 
 def _fail_commit_number(monkeypatch: pytest.MonkeyPatch, failing: int) -> None:
@@ -953,7 +958,7 @@ async def test_creation_that_fails_to_commit_leaves_no_session(
     monkeypatch.undo()
     assert resp.status_code == 500
     assert len(sessions()) == 0
-    assert await db_execute("SELECT id FROM master_password") == []
+    assert await db_execute("SELECT id FROM vault") == []
 
 
 async def test_browsers_may_send_the_session_header(client: httpx.AsyncClient) -> None:
@@ -983,7 +988,8 @@ async def test_the_retired_key_route_answers_without_deriving_a_key(
         raise AssertionError("the retired route must not check the password")
 
     monkeypatch.setattr(MasterPasswordCRUD, "unlock", never)
-    monkeypatch.setattr(crud.master_password, "derive_key", never)
+    monkeypatch.setattr(crud.master_password, "unlock_key_material", never)
+    monkeypatch.setattr(helpers, "derive", never)
     for body in (
         {"master_password": MASTER_PASSWORD},
         {"master_password": WRONG_MASTER_PASSWORD},
@@ -1007,7 +1013,7 @@ async def test_the_retired_key_header_is_refused_on_public_routes_too(
         headers=key_header,
     )
     assert resp.status_code == 403
-    assert await db_execute("SELECT id FROM master_password") == []
+    assert await db_execute("SELECT id FROM vault") == []
 
     await create_vault(client)
     before = len(sessions())

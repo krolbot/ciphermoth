@@ -1,29 +1,54 @@
+import base64
 import hashlib
+import hmac
 import json
+import struct
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from helpers import verify_key_check, verify_master_password
-
 ENCRYPTED_COLUMNS = {
-    "passwords": (
-        "password_value",
-        "url",
-        "totp_secret",
-        "tags",
-        "custom_fields",
-        "folder",
-        "password_history",
-    ),
-    "password_attachments": ("filename", "content", "content_type"),
+    "vault": ("wrapped_key",),
+    "entries": ("document",),
+    "attachments": ("meta", "content"),
 }
 KINDS = ("login", "note")
+DOCUMENT_KEYS = {
+    "name",
+    "kind",
+    "username",
+    "value",
+    "url",
+    "totp_secret",
+    "description",
+    "tags",
+    "custom_fields",
+    "folder",
+    "favorite",
+    "history",
+}
+
+
+def hkdf(key: bytes, label: str) -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(), length=32, salt=None, info=label.encode()
+    ).derive(key)
+
+
+def associated_data(*parts: bytes) -> bytes:
+    data = b"\x02ciphermoth/v2"
+    for part in parts:
+        data += struct.pack(">I", len(part)) + part
+    return data
 
 
 @dataclass(frozen=True)
@@ -89,7 +114,7 @@ class Entry:
 @dataclass(frozen=True)
 class VaultContents:
     revision: int | None
-    master_rows: int
+    vault_rows: int
     key_check: str
     entries: tuple[Entry, ...]
     settings: tuple[Mapping[str, object], ...]
@@ -131,149 +156,199 @@ async def raw_rows(conn: AsyncConnection, table: str) -> dict[int, dict[str, Any
 async def raw_vault(conn: AsyncConnection) -> dict[str, dict[int, dict[str, Any]]]:
     return {
         table: await raw_rows(conn, table)
-        for table in ("master_password", "passwords", "password_attachments")
+        for table in ("vault", "entries", "attachments")
     }
 
 
+def raw_key_bytes(key: str | bytes) -> bytes:
+    return base64.urlsafe_b64decode(key) if isinstance(key, str) else bytes(key)
+
+
 class _Reader:
-    def __init__(self, key: str) -> None:
-        self.fernet = Fernet(key)
+    """An independent format 2 reader built on the primitives, following
+    docs/VAULT_FORMAT.md, so the tests do not check helpers.py with itself."""
+
+    def __init__(self, raw_key: bytes) -> None:
+        self.records = AESGCM(hkdf(raw_key, "ciphermoth/v2/record-encryption"))
+        self.index_key = hkdf(raw_key, "ciphermoth/v2/name-index")
+        self.check = hkdf(raw_key, "ciphermoth/v2/key-check")
         self.problems: list[Problem] = []
 
     def flag(self, table: str, row_id: object, column: str, reason: str) -> None:
         self.problems.append(Problem(table, row_id, column, reason))
 
-    def raw(self, table: str, row_id: object, column: str, token: object) -> bytes:
-        return self.raw_or_none(table, row_id, column, token) or b""
-
-    def raw_or_none(
-        self, table: str, row_id: object, column: str, token: object
+    def open(
+        self, table: str, row_id: object, column: str, sealed: object, *parts: bytes
     ) -> bytes | None:
-        if not isinstance(token, bytes):
-            self.flag(table, row_id, column, "missing or not bytes")
+        if not isinstance(sealed, bytes) or len(sealed) < 29 or sealed[:1] != b"\x02":
+            self.flag(table, row_id, column, "missing or not a sealed value")
             return None
         try:
-            return self.fernet.decrypt(token)
-        except InvalidToken:
-            self.flag(table, row_id, column, "token does not decrypt")
+            return self.records.decrypt(
+                sealed[1:13], sealed[13:], associated_data(*parts)
+            )
+        except InvalidTag:
+            self.flag(table, row_id, column, "does not authenticate")
             return None
 
-    def text(self, table: str, row_id: object, column: str, token: object) -> str:
-        data = self.raw(table, row_id, column, token)
+    def document(
+        self, table: str, row_id: object, column: str, plaintext: bytes | None
+    ) -> dict[str, Any]:
+        if plaintext is None:
+            return {}
         try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError:
-            self.flag(table, row_id, column, "plaintext is not UTF-8")
-            return ""
-
-    def optional(
-        self, table: str, row_id: object, column: str, token: object
-    ) -> str | None:
-        return None if token is None else self.text(table, row_id, column, token)
-
-    def json_list(self, row_id: object, column: str, token: object) -> list:
-        if token is None:
-            return []
-        try:
-            data = json.loads(self.text("passwords", row_id, column, token) or "[]")
-        except json.JSONDecodeError:
-            self.flag("passwords", row_id, column, "plaintext is not JSON")
-            return []
-        if not isinstance(data, list):
-            self.flag("passwords", row_id, column, "JSON is not a list")
-            return []
+            data = json.loads(plaintext.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.flag(table, row_id, column, "plaintext is not UTF-8 JSON")
+            return {}
+        if not isinstance(data, dict):
+            self.flag(table, row_id, column, "JSON is not an object")
+            return {}
+        if len(plaintext) % 64:
+            self.flag(table, row_id, column, "not padded to 64 bytes")
         return data
 
-    def tags(self, row_id: object, token: object) -> tuple[str, ...]:
-        items = self.json_list(row_id, "tags", token)
-        if not all(isinstance(tag, str) for tag in items):
-            self.flag("passwords", row_id, "tags", "a tag is not a string")
-        return tuple(str(tag) for tag in items)
-
-    def custom_fields(
-        self, row_id: object, token: object
-    ) -> tuple[tuple[str, str, bool], ...]:
-        out: list[tuple[str, str, bool]] = []
-        for item in self.json_list(row_id, "custom_fields", token):
-            label = item.get("label") if isinstance(item, dict) else None
-            value = item.get("value", "") if isinstance(item, dict) else None
-            hidden = item.get("hidden", False) if isinstance(item, dict) else None
-            if (
-                not isinstance(label, str)
-                or not isinstance(value, str)
-                or not isinstance(hidden, bool)
-            ):
-                self.flag("passwords", row_id, "custom_fields", "malformed field")
-                continue
-            out.append((label, value, hidden))
-        return tuple(out)
-
-    def history(self, row_id: object, token: object) -> tuple[tuple[str, str], ...]:
-        out: list[tuple[str, str]] = []
-        for item in self.json_list(row_id, "password_history", token):
-            value = item.get("value") if isinstance(item, dict) else None
-            changed = item.get("changed_at") if isinstance(item, dict) else None
-            if not isinstance(value, str) or not isinstance(changed, str):
-                self.flag("passwords", row_id, "password_history", "malformed item")
-                continue
-            try:
-                datetime.fromisoformat(changed)
-            except ValueError:
-                self.flag("passwords", row_id, "password_history", "bad timestamp")
-            out.append((value, changed))
-        return tuple(out)
+    def name_index(self, name: str) -> bytes:
+        return hmac.new(self.index_key, name.encode(), hashlib.sha256).digest()
 
 
-def _check_master(
-    reader: _Reader,
-    rows: list[dict[str, Any]],
-    key: str,
-    master_password: str | None,
+def _check_vault_row(
+    reader: _Reader, rows: list[dict[str, Any]], master_password: str | None
 ) -> str:
     if not rows:
-        reader.flag("master_password", None, "*", "no master password row")
+        reader.flag("vault", None, "*", "no vault row")
         return "absent"
     if len(rows) > 1:
-        reader.flag("master_password", None, "*", f"{len(rows)} rows")
-    first = rows[0]
-    if master_password is not None and not verify_master_password(
-        master_password, first["hash_key"]
-    ):
-        reader.flag("master_password", first["id"], "hash_key", "password rejected")
-    if first.get("key_check") is None:
-        reader.flag("master_password", first["id"], "key_check", "absent")
-        return "absent"
-    if verify_key_check(key, first["key_check"], first["salt"]):
+        reader.flag("vault", None, "*", f"{len(rows)} rows")
+    row = rows[0]
+    if row["format_version"] != 2 or row["kdf"] != "argon2id":
+        reader.flag("vault", row["id"], "format_version", "not format 2 argon2id")
+    if master_password is not None:
+        derived = Argon2id(
+            salt=row["kdf_salt"],
+            length=32,
+            iterations=row["kdf_iterations"],
+            lanes=row["kdf_lanes"],
+            memory_cost=row["kdf_memory_kib"],
+        ).derive(master_password.encode())
+        commitment = hkdf(derived, "ciphermoth/v2/password-commitment")
+        if not hmac.compare_digest(commitment, row["password_check"]):
+            reader.flag("vault", row["id"], "password_check", "password rejected")
+        else:
+            associated = (
+                b"ciphermoth/v2/wrapped-vault-key"
+                + struct.pack(
+                    ">HIII",
+                    2,
+                    row["kdf_memory_kib"],
+                    row["kdf_iterations"],
+                    row["kdf_lanes"],
+                )
+                + row["kdf_salt"]
+            )
+            wrapped = row["wrapped_key"]
+            try:
+                raw = AESGCM(hkdf(derived, "ciphermoth/v2/key-wrapping")).decrypt(
+                    wrapped[1:13], wrapped[13:], associated
+                )
+            except InvalidTag:
+                reader.flag("vault", row["id"], "wrapped_key", "does not unwrap")
+            else:
+                if hkdf(raw, "ciphermoth/v2/key-check") != reader.check:
+                    reader.flag("vault", row["id"], "wrapped_key", "another key")
+    if hmac.compare_digest(reader.check, row["key_check"]):
         return "valid"
-    reader.flag("master_password", first["id"], "key_check", "does not verify")
+    reader.flag("vault", row["id"], "key_check", "does not match the key")
     return "invalid"
 
 
 def _attachments(
-    reader: _Reader, rows: dict[int, dict[str, Any]], entry_ids: set[int]
+    reader: _Reader,
+    rows: dict[int, dict[str, Any]],
+    entry_uids: dict[int, bytes],
 ) -> dict[int, list[Attachment]]:
-    table = "password_attachments"
+    table = "attachments"
     by_entry: dict[int, list[Attachment]] = {}
     for row_id, row in rows.items():
-        content = reader.raw_or_none(table, row_id, "content", row["content"])
-        if row["password_id"] not in entry_ids:
-            reader.flag(table, row_id, "password_id", "no such entry")
+        entry_uid = entry_uids.get(row["entry_id"])
+        if entry_uid is None:
+            reader.flag(table, row_id, "entry_id", "no such entry")
+            entry_uid = b""
+        content = reader.open(
+            table,
+            row_id,
+            "content",
+            row["content"],
+            b"attachment-content",
+            row["uid"],
+            entry_uid,
+        )
         if content is not None and len(content) != row["size_bytes"]:
             reader.flag(table, row_id, "size_bytes", "does not match the content")
-        content = content or b""
-        by_entry.setdefault(row["password_id"], []).append(
+        metadata = reader.document(
+            table,
+            row_id,
+            "meta",
+            reader.open(
+                table,
+                row_id,
+                "meta",
+                row["meta"],
+                b"attachment-metadata",
+                row["uid"],
+                entry_uid,
+            ),
+        )
+        if metadata and set(metadata) != {"filename", "content_type"}:
+            reader.flag(table, row_id, "meta", f"keys {sorted(metadata)}")
+        by_entry.setdefault(row["entry_id"], []).append(
             Attachment(
                 id=row_id,
-                filename=reader.text(table, row_id, "filename", row["filename"]),
-                content_type=reader.optional(
-                    table, row_id, "content_type", row["content_type"]
-                ),
+                filename=metadata.get("filename", ""),
+                content_type=metadata.get("content_type"),
                 size_bytes=row["size_bytes"],
-                sha256=hashlib.sha256(content).hexdigest(),
+                sha256=hashlib.sha256(content or b"").hexdigest(),
                 created=row.get("created"),
             )
         )
     return by_entry
+
+
+def _history(
+    reader: _Reader, row_id: object, items: object
+) -> tuple[tuple[str, str], ...]:
+    out: list[tuple[str, str]] = []
+    for item in items if isinstance(items, list) else []:
+        value = item.get("value") if isinstance(item, dict) else None
+        changed = item.get("changed_at") if isinstance(item, dict) else None
+        if not isinstance(value, str) or not isinstance(changed, str):
+            reader.flag("entries", row_id, "history", "malformed item")
+            continue
+        try:
+            datetime.fromisoformat(changed)
+        except ValueError:
+            reader.flag("entries", row_id, "history", "bad timestamp")
+        out.append((value, changed))
+    return tuple(out)
+
+
+def _custom_fields(
+    reader: _Reader, row_id: object, items: object
+) -> tuple[tuple[str, str, bool], ...]:
+    out: list[tuple[str, str, bool]] = []
+    for item in items if isinstance(items, list) else []:
+        fields = item if isinstance(item, dict) else {}
+        label, value, hidden = (fields.get(k) for k in ("label", "value", "hidden"))
+        if (
+            set(fields) != {"label", "value", "hidden"}
+            or not isinstance(label, str)
+            or not isinstance(value, str)
+            or not isinstance(hidden, bool)
+        ):
+            reader.flag("entries", row_id, "custom_fields", "malformed field")
+            continue
+        out.append((label, value, hidden))
+    return tuple(out)
 
 
 def _entries(
@@ -281,39 +356,52 @@ def _entries(
     rows: dict[int, dict[str, Any]],
     attachments: dict[int, list[Attachment]],
 ) -> list[Entry]:
-    table = "passwords"
+    table = "entries"
     entries = []
     active_names: set[str] = set()
     for row_id, row in rows.items():
-        kind = row.get("kind", "login")
+        doc = reader.document(
+            table,
+            row_id,
+            "document",
+            reader.open(
+                table, row_id, "document", row["document"], b"entry", row["uid"]
+            ),
+        )
+        if doc and set(doc) != DOCUMENT_KEYS:
+            reader.flag(table, row_id, "document", f"keys {sorted(doc)}")
+        name = doc.get("name", "")
+        kind = doc.get("kind", "login")
         if kind not in KINDS:
             reader.flag(table, row_id, "kind", f"unknown kind {kind!r}")
+        if doc and reader.name_index(str(name)) != row["name_index"]:
+            reader.flag(table, row_id, "name_index", "does not match the name")
         if row.get("deleted") is None:
-            if row["password_name"] in active_names:
-                reader.flag(table, row_id, "password_name", "duplicate active name")
-            active_names.add(row["password_name"])
+            if name in active_names:
+                reader.flag(table, row_id, "name", "duplicate active name")
+            active_names.add(name)
+        tags = doc.get("tags", [])
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            reader.flag(table, row_id, "tags", "a tag is not a string")
+            tags = []
         created, updated = row.get("created"), row.get("updated")
         if created and updated and updated < created:
             reader.flag(table, row_id, "updated", "earlier than created")
         entries.append(
             Entry(
                 id=row_id,
-                name=row["password_name"],
+                name=name,
                 kind=kind,
-                username=row.get("username"),
-                description=row.get("description"),
-                value=reader.text(
-                    table, row_id, "password_value", row["password_value"]
-                ),
-                url=reader.optional(table, row_id, "url", row.get("url")),
-                totp_secret=reader.optional(
-                    table, row_id, "totp_secret", row.get("totp_secret")
-                ),
-                tags=reader.tags(row_id, row.get("tags")),
-                custom_fields=reader.custom_fields(row_id, row.get("custom_fields")),
-                folder=reader.optional(table, row_id, "folder", row.get("folder")),
-                history=reader.history(row_id, row.get("password_history")),
-                favorite=bool(row.get("favorite")),
+                username=doc.get("username"),
+                description=doc.get("description"),
+                value=doc.get("value", ""),
+                url=doc.get("url"),
+                totp_secret=doc.get("totp_secret"),
+                tags=tuple(tags),
+                custom_fields=_custom_fields(reader, row_id, doc.get("custom_fields")),
+                folder=doc.get("folder"),
+                history=_history(reader, row_id, doc.get("history")),
+                favorite=doc.get("favorite") is True,
                 backed_up=bool(row.get("backed_up")),
                 created=created,
                 updated=updated,
@@ -326,34 +414,30 @@ def _entries(
 
 async def read_vault(
     conn: AsyncConnection,
-    key: str,
+    key: str | bytes,
     *,
     master_password: str | None = None,
     strict: bool = True,
 ) -> VaultContents:
     """
-    Decrypt every encrypted column of every entry, active and trashed, and every
-    attachment, and check the structural invariants of a vault.
-
-    Unlike the application's read path nothing is silently replaced: a token
-    that does not decrypt, text that is not UTF-8 or JSON of the wrong shape is
-    a problem. With ``strict`` any problem raises VaultIntegrityError.
+    Decrypt every entry, active and trashed, and every attachment with an
+    independent format 2 reader, and check the structural invariants of a
+    vault: authenticated ciphertext bound to its row, exact document keys,
+    name indexes that match the names, unique active names, attachment sizes.
+    With ``strict`` any problem raises VaultIntegrityError.
     """
-    reader = _Reader(key)
+    reader = _Reader(raw_key_bytes(key))
     raw = await raw_vault(conn)
-    key_check = _check_master(
-        reader,
-        list(raw["master_password"].values()),
-        key,
-        master_password,
-    )
+    key_check = _check_vault_row(reader, list(raw["vault"].values()), master_password)
 
     revision = await conn.scalar(text("PRAGMA user_version"))
 
     attachments = _attachments(
-        reader, raw["password_attachments"], set(raw["passwords"])
+        reader,
+        raw["attachments"],
+        {row_id: row["uid"] for row_id, row in raw["entries"].items()},
     )
-    entries = _entries(reader, raw["passwords"], attachments)
+    entries = _entries(reader, raw["entries"], attachments)
 
     settings = tuple(
         {k: v for k, v in row.items() if k not in ("id", "created", "updated")}
@@ -366,7 +450,7 @@ async def read_vault(
         raise VaultIntegrityError(reader.problems)
     return VaultContents(
         revision=revision,
-        master_rows=len(raw["master_password"]),
+        vault_rows=len(raw["vault"]),
         key_check=key_check,
         entries=tuple(entries),
         settings=settings,

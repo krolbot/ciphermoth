@@ -25,3 +25,8 @@ class SessionRequired(VaultError):
 
 class VaultBusy(VaultError):
     pass
+
+
+class VaultDamaged(VaultError):
+    """A stored value failed authenticated decryption or its format check: the
+    vault file was damaged or altered."""

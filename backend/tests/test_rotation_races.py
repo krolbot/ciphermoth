@@ -2,28 +2,27 @@ import asyncio
 
 import httpx
 import pytest
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import crud.master_password
-import crud.password
 import crud.settings
+import helpers
 from crud.engine import Database, create_engine
 from crud.password import PasswordCRUD
-from helpers import create_encrypted_zip
 from main import app, get_application
 from storage import VAULT_FILE, check_file
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     auth,
+    backup_entry,
+    backup_file,
     create_vault,
     data_dir,
     db_execute,
     db_snapshot,
     engine,
     entry,
-    stored_vault_key,
+    read_current_vault,
     unlock,
     wait_for_queued_requests,
     write_lock_held,
@@ -46,29 +45,23 @@ class FirstDerivationWaits:
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.calls = 0
-        original = crud.master_password.derive_key
+        original = helpers.derive
 
-        async def derive_key(salt: bytes, password: str) -> bytes:
+        async def derive(
+            password: str, salt: bytes, params: helpers.KdfParams = helpers.DEFAULT_KDF
+        ) -> bytes:
             self.calls += 1
             if self.calls == 1:
                 self.entered.set()
                 await asyncio.wait_for(self.release.wait(), GATE_SECONDS)
-            return await original(salt, password)
+            return await original(password, salt, params)
 
-        monkeypatch.setattr(crud.master_password, "derive_key", derive_key)
+        monkeypatch.setattr(helpers, "derive", derive)
 
 
-def _decrypts(key: str, tokens: list[bytes]) -> bool:
-    try:
-        for token in tokens:
-            Fernet(key).decrypt(token)
-    except InvalidToken:
-        return False
+async def _decrypts(master_password: str) -> bool:
+    await read_current_vault(master_password)
     return True
-
-
-async def _tokens() -> list[bytes]:
-    return [row[0] for row in await db_execute("SELECT password_value FROM passwords")]
 
 
 async def _names(client: httpx.AsyncClient, password: str) -> list[str]:
@@ -133,7 +126,7 @@ async def test_of_two_concurrent_rotations_only_the_first_applies(
     assert first.status_code == 200, first.text
     assert late_resp.status_code == 401, late_resp.text
     assert late_resp.json()["code"] == "invalid_session"
-    assert _decrypts(await stored_vault_key(NEW_MASTER_PASSWORD), await _tokens())
+    assert await _decrypts(NEW_MASTER_PASSWORD)
     resp = await client.post(
         "/master_password/unlock", json={"master_password": OTHER_PASSWORD}
     )
@@ -173,7 +166,7 @@ async def test_writes_go_on_while_a_rotation_derives_its_keys(
         "/passwords/during", headers=auth(await unlock(client, NEW_MASTER_PASSWORD))
     )
     assert resp.json()["password_value"] == "written-During-1"
-    assert _decrypts(await stored_vault_key(NEW_MASTER_PASSWORD), await _tokens())
+    assert await _decrypts(NEW_MASTER_PASSWORD)
 
 
 async def test_a_rotation_whose_final_commit_fails_changes_nothing(
@@ -205,30 +198,11 @@ async def test_a_rotation_whose_final_commit_fails_changes_nothing(
     assert await _names(client, MASTER_PASSWORD) == ["kept"]
 
 
-class FirstPasswordCheckWaits:
-    """Hold the first master password check of a backup or an import."""
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.entered = asyncio.Event()
-        self.release = asyncio.Event()
-        self.calls = 0
-        original = crud.password.password_matches
-
-        async def password_matches(password: str, hashed: str) -> bool:
-            self.calls += 1
-            if self.calls == 1:
-                self.entered.set()
-                await asyncio.wait_for(self.release.wait(), GATE_SECONDS)
-            return await original(password, hashed)
-
-        monkeypatch.setattr(crud.password, "password_matches", password_matches)
-
-
 async def test_writes_go_on_while_a_backup_checks_the_master_password(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     token = await create_vault(client)
-    waits = FirstPasswordCheckWaits(monkeypatch)
+    waits = FirstDerivationWaits(monkeypatch)
 
     backup = asyncio.create_task(
         client.post(
@@ -257,7 +231,7 @@ async def test_an_import_overtaken_by_a_rotation_writes_nothing(
     token = await create_vault(client)
     await client.post("/passwords/create", json=entry("kept"), headers=auth(token))
     importer = await unlock(client)
-    waits = FirstPasswordCheckWaits(monkeypatch)
+    waits = FirstDerivationWaits(monkeypatch)
 
     imported = asyncio.create_task(
         client.post(
@@ -265,11 +239,9 @@ async def test_an_import_overtaken_by_a_rotation_writes_nothing(
             data={"master_password": MASTER_PASSWORD, "on_conflict": "skip"},
             files={
                 "file": (
-                    "b.zip",
-                    create_encrypted_zip(
-                        [{"name": "late", "value": "late-Value-1"}], MASTER_PASSWORD
-                    ),
-                    "application/zip",
+                    "b.cmbackup",
+                    backup_file([backup_entry("late", "late-Value-1")]),
+                    "application/octet-stream",
                 )
             },
             headers=auth(importer),
@@ -285,7 +257,7 @@ async def test_an_import_overtaken_by_a_rotation_writes_nothing(
     assert rotated.status_code == 200, rotated.text
     assert resp.status_code == 403, resp.text
     assert resp.json()["code"] == "invalid_key"
-    assert _decrypts(await stored_vault_key(NEW_MASTER_PASSWORD), await _tokens())
+    assert await _decrypts(NEW_MASTER_PASSWORD)
     assert await _names(client, NEW_MASTER_PASSWORD) == ["kept"]
 
 
@@ -333,7 +305,7 @@ async def test_a_session_opened_after_the_rotation_ended_all_sessions_is_refused
     for attempt in attempts:
         assert (await attempt).status_code == 401
     assert len(app.state.vault_sessions) == 0
-    assert _decrypts(await stored_vault_key(NEW_MASTER_PASSWORD), await _tokens())
+    assert await _decrypts(NEW_MASTER_PASSWORD)
     assert await _names(client, NEW_MASTER_PASSWORD) == ["kept"]
 
 
@@ -356,7 +328,7 @@ async def test_of_two_racing_vault_creations_only_one_initializes_the_vault(
     assert second.status_code == 200, second.text
     assert resp.status_code == 403, resp.text
     assert "session_token" not in resp.text
-    assert await db_execute("SELECT count(*) FROM master_password") == [(1,)]
+    assert await db_execute("SELECT count(*) FROM vault") == [(1,)]
     assert len(app.state.vault_sessions) == 1
     assert await _names(client, NEW_MASTER_PASSWORD) == []
     resp = await client.post(
@@ -396,9 +368,7 @@ async def test_a_request_that_cannot_get_a_connection_is_a_clean_503(
     assert starved.status_code == 503, starved.text
     assert starved.json()["code"] == "busy"
     assert await db_snapshot() != before
-    assert [
-        row[0] for row in await db_execute("SELECT password_name FROM passwords")
-    ] == ["a"]
+    assert [e.name for e in (await read_current_vault()).entries] == ["a"]
 
 
 async def test_cancelled_writes_leave_the_vault_consistent_and_unlocked(
@@ -424,8 +394,8 @@ async def test_cancelled_writes_leave_the_vault_consistent_and_unlocked(
     written, release = asyncio.Event(), asyncio.Event()
     original = PasswordCRUD.create_password
 
-    async def create_then_wait(self, password, key_derivation):
-        result = await original(self, password, key_derivation)
+    async def create_then_wait(self, password, key):
+        result = await original(self, password, key)
         written.set()
         await asyncio.wait_for(release.wait(), GATE_SECONDS)
         return result

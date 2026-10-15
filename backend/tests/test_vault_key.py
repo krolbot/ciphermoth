@@ -1,15 +1,16 @@
 import asyncio
+import base64
+import hmac
 import json
 import os
 
 import httpx
 import pytest
-from cryptography.fernet import Fernet, InvalidToken
 
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
-from helpers import create_key_check, verify_key_check
 from main import app
+from tests.integrity import hkdf, raw_key_bytes, read_vault
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
@@ -19,7 +20,9 @@ from tests.support import (
     create_vault,
     db_execute,
     db_snapshot,
+    engine,
     entry,
+    read_current_vault,
     retired_key_header,
     stored_vault_key,
     unlock,
@@ -32,36 +35,30 @@ ROTATE = {
 
 
 async def _key_check() -> bytes | None:
-    rows = await db_execute("SELECT key_check FROM master_password")
+    rows = await db_execute("SELECT key_check FROM vault")
     assert len(rows) == 1
     return rows[0][0]
 
 
 async def _accepts(key: str) -> bool:
-    [(token, salt)] = await db_execute("SELECT key_check, salt FROM master_password")
-    return verify_key_check(key, token, salt)
+    expected = hkdf(raw_key_bytes(key), "ciphermoth/v2/key-check")
+    return hmac.compare_digest(expected, await _key_check() or b"")
 
 
-async def _encrypted_columns() -> list[bytes]:
-    tokens: list[bytes] = []
-    for row in await db_execute(
-        "SELECT password_value, url, totp_secret, tags, custom_fields, folder, "
-        "password_history FROM passwords"
-    ):
-        tokens.extend(token for token in row if token is not None)
-    for row in await db_execute(
-        "SELECT filename, content, content_type FROM password_attachments"
-    ):
-        tokens.extend(token for token in row if token is not None)
-    return tokens
+async def _sealed_values() -> int:
+    [(entries,)] = await db_execute("SELECT count(*) FROM entries")
+    [(attachments,)] = await db_execute("SELECT count(*) FROM attachments")
+    return entries + 2 * attachments
 
 
-def _decrypts(key: str, token: bytes) -> bool:
-    try:
-        Fernet(key).decrypt(token)
-    except InvalidToken:
-        return False
-    return True
+async def _failures(key: str) -> int:
+    async with engine.connect() as conn:
+        vault = await read_vault(conn, key, strict=False)
+    return sum(1 for p in vault.problems if p.reason == "does not authenticate")
+
+
+def _random_key() -> str:
+    return base64.urlsafe_b64encode(os.urandom(32)).decode()
 
 
 async def test_create_stores_a_key_check_for_the_vault_key(
@@ -87,7 +84,7 @@ async def test_concurrent_creates_produce_exactly_one_vault(
 
     statuses = sorted(r.status_code for r in responses)
     assert statuses == [200, 403, 403, 403]
-    assert len(await db_execute("SELECT id FROM master_password")) == 1
+    assert len(await db_execute("SELECT id FROM vault")) == 1
 
     winner = next(r for r in responses if r.status_code == 200)
     winning_password = passwords[responses.index(winner)]
@@ -204,10 +201,9 @@ async def test_rotation_reencrypts_everything_and_revokes_the_old_key(
     assert (await client.get("/passwords", headers=auth(token))).status_code == 401
     assert await _readable_state(client, auth(fresh)) == before
 
-    tokens = await _encrypted_columns()
-    assert tokens
-    assert all(_decrypts(new_key, t) for t in tokens)
-    assert not any(_decrypts(old_key, t) for t in tokens)
+    assert await _sealed_values() > 0
+    assert await _failures(new_key) == 0
+    assert await _failures(old_key) == await _sealed_values()
 
 
 async def test_rotation_with_wrong_current_password_changes_nothing(
@@ -234,11 +230,7 @@ async def test_rotation_carrying_a_vault_key_header_changes_nothing(
 ) -> None:
     token = await create_vault(client)
     await _seed_everything(client, auth(token))
-    key = (
-        await stored_vault_key()
-        if header_key == "real"
-        else Fernet.generate_key().decode()
-    )
+    key = await stored_vault_key() if header_key == "real" else _random_key()
     before = await db_snapshot()
 
     resp = await client.patch(
@@ -260,8 +252,8 @@ async def test_write_in_flight_during_rotation_is_reencrypted(
     gate = asyncio.Event()
     original = PasswordCRUD.create_password
 
-    async def slow_create(self, password, key_derivation):
-        result = await original(self, password, key_derivation)
+    async def slow_create(self, password, key):
+        result = await original(self, password, key)
         await gate.wait()
         return result
 
@@ -282,9 +274,7 @@ async def test_write_in_flight_during_rotation_is_reencrypted(
     assert rotate_resp.status_code == 200, rotate_resp.text
     fresh = await unlock(client, NEW_MASTER_PASSWORD)
     new_key = await stored_vault_key(NEW_MASTER_PASSWORD)
-    tokens = await _encrypted_columns()
-    assert tokens
-    assert all(_decrypts(new_key, t) for t in tokens)
+    assert await _failures(new_key) == 0
     resp = await client.get("/passwords/racer", headers=auth(fresh))
     assert resp.status_code == 200
     assert resp.json()["password_value"] == "s3cret-Value!"
@@ -322,10 +312,8 @@ async def test_write_queued_behind_rotation_is_rejected(
 
     assert rotate_resp.status_code == 200, rotate_resp.text
     assert create_resp.status_code == 401, create_resp.text
-    new_key = await stored_vault_key(NEW_MASTER_PASSWORD)
-    assert all(_decrypts(new_key, t) for t in await _encrypted_columns())
-    names = await db_execute("SELECT password_name FROM passwords")
-    assert names == [("existing",)]
+    vault = await read_current_vault(NEW_MASTER_PASSWORD)
+    assert [e.name for e in vault.entries] == ["existing"]
 
 
 async def test_backup_and_import_still_require_the_master_password(
@@ -349,7 +337,8 @@ async def test_key_check_never_appears_in_api_responses(
     assert token is not None
     for path in ("/master_password/status", "/settings", "/passwords"):
         resp = await client.get(path, headers=auth(session_token))
-        assert token.decode() not in resp.text
+        assert token.hex() not in resp.text
+        assert base64.b64encode(token).decode() not in resp.text
         assert "key_check" not in json.dumps(resp.json())
 
 
@@ -363,8 +352,7 @@ async def test_a_damaged_key_check_fails_closed_and_is_never_rewritten(
     )
     assert resp.status_code == 200
     if damage == "foreign key":
-        [(salt,)] = await db_execute("SELECT salt FROM master_password")
-        damaged = create_key_check(Fernet.generate_key(), salt)
+        damaged = hkdf(os.urandom(32), "ciphermoth/v2/key-check")
     else:
         damaged = await _key_check()
         resp = await client.patch(
@@ -373,7 +361,7 @@ async def test_a_damaged_key_check_fails_closed_and_is_never_rewritten(
         assert resp.status_code == 200
         token = await unlock(client, NEW_MASTER_PASSWORD)
     password = MASTER_PASSWORD if damage == "foreign key" else NEW_MASTER_PASSWORD
-    await db_execute("UPDATE master_password SET key_check = :token", token=damaged)
+    await db_execute("UPDATE vault SET key_check = :token", token=damaged)
     before = await db_snapshot()
 
     resp = await client.get("/passwords", headers=auth(token))

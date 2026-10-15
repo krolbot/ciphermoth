@@ -9,11 +9,11 @@ import pytest
 
 from api.body_limit import (
     ATTACHMENT_MAX_BODY_BYTES,
+    BACKUP_IMPORT_MAX_BODY_BYTES,
+    CSV_IMPORT_MAX_BODY_BYTES,
     DEFAULT_MAX_BODY_BYTES,
-    IMPORT_MAX_BODY_BYTES,
     body_limit_for,
 )
-from helpers import create_encrypted_zip
 from tests.support import (
     MASTER_PASSWORD,
     Headers,
@@ -21,6 +21,7 @@ from tests.support import (
     create_vault,
     db_execute,
     entry,
+    legacy_backup_zip,
 )
 
 MIB = 1024 * 1024
@@ -60,7 +61,7 @@ def _binary(size: int) -> bytes:
 
 
 async def _attachment_rows() -> int:
-    return len(await db_execute("SELECT id FROM password_attachments"))
+    return len(await db_execute("SELECT id FROM attachments"))
 
 
 @pytest.mark.parametrize(
@@ -83,7 +84,7 @@ async def test_binary_attachment_round_trips_without_touching_disk(
     assert resp.json()["size_bytes"] == size
     assert disk_spills == []
 
-    stored = await db_execute("SELECT content FROM password_attachments")
+    stored = await db_execute("SELECT content FROM attachments")
     assert blob not in stored[0][0]
     download = await client.get(
         f"/passwords/box/attachments/{resp.json()['id']}", headers=headers
@@ -160,7 +161,7 @@ async def test_oversized_json_body_is_refused(client: httpx.AsyncClient) -> None
         "/passwords/create", json=entry("huge-note", huge), headers=headers
     )
     assert resp.status_code == 413
-    assert len(await db_execute("SELECT id FROM passwords")) == 1
+    assert len(await db_execute("SELECT id FROM entries")) == 1
 
 
 async def test_large_secure_note_below_the_limit_still_works(
@@ -212,7 +213,7 @@ async def test_csv_import_over_cap_is_rejected(
     )
     assert resp.status_code == 400
     assert disk_spills == []
-    assert len(await db_execute("SELECT id FROM passwords")) == 1
+    assert len(await db_execute("SELECT id FROM entries")) == 1
 
 
 async def test_backup_import_above_old_threshold_stays_in_memory(
@@ -220,7 +221,7 @@ async def test_backup_import_above_old_threshold_stays_in_memory(
 ) -> None:
     headers = await _vault_with_entry(client)
     big_value = base64.b64encode(os.urandom(int(1.5 * MIB))).decode()
-    archive = create_encrypted_zip(
+    archive = legacy_backup_zip(
         [{"name": "restored", "value": big_value}], MASTER_PASSWORD
     )
     assert len(archive) > OLD_SPOOL_THRESHOLD
@@ -241,14 +242,17 @@ def test_route_limits() -> None:
     assert body_limit_for("POST", "/api/passwords/box/attachments") == (
         ATTACHMENT_MAX_BODY_BYTES
     )
-    assert body_limit_for("POST", "/api/passwords/import") == IMPORT_MAX_BODY_BYTES
+    assert body_limit_for("POST", "/api/passwords/import") == (
+        BACKUP_IMPORT_MAX_BODY_BYTES
+    )
     assert body_limit_for("POST", "/api/passwords/import/csv") == (
-        IMPORT_MAX_BODY_BYTES
+        CSV_IMPORT_MAX_BODY_BYTES
     )
     assert body_limit_for("POST", "/api/passwords/create") == DEFAULT_MAX_BODY_BYTES
     assert body_limit_for("PATCH", "/api/passwords/update") == DEFAULT_MAX_BODY_BYTES
     assert ATTACHMENT_MAX_BODY_BYTES > ATTACHMENT_CAP
-    assert IMPORT_MAX_BODY_BYTES > IMPORT_CAP
+    assert CSV_IMPORT_MAX_BODY_BYTES > IMPORT_CAP
+    assert BACKUP_IMPORT_MAX_BODY_BYTES > 1024 * MIB
 
 
 def _csv_of_exact_size(size: int) -> bytes:
@@ -294,9 +298,7 @@ async def test_largest_backup_zip_v145_accepted_still_imports(
     archive = b""
     for _ in range(6):
         value = base64.b64encode(os.urandom(size)).decode()
-        archive = create_encrypted_zip(
-            [{"name": "big", "value": value}], MASTER_PASSWORD
-        )
+        archive = legacy_backup_zip([{"name": "big", "value": value}], MASTER_PASSWORD)
         if 9.5 * MIB < len(archive) <= IMPORT_CAP:
             break
         size = int(size * (9.8 * MIB) / len(archive))
@@ -317,19 +319,21 @@ async def test_imports_between_the_old_cap_and_the_limit_keep_the_old_error(
     client: httpx.AsyncClient,
 ) -> None:
     headers = await _vault_with_entry(client)
-    payload = b"x" * (IMPORT_CAP + 1)
-    for path, data in (
-        ("/passwords/import/csv", {}),
-        ("/passwords/import", {"master_password": MASTER_PASSWORD}),
-    ):
-        resp = await client.post(
-            path,
-            data=data,
-            files={"file": ("f", payload, "application/octet-stream")},
-            headers=headers,
-        )
-        assert resp.status_code == 400, resp.text
-        assert resp.json()["detail"] == "File too large. Maximum allowed size is 10 MB."
+    resp = await client.post(
+        "/passwords/import/csv",
+        files={"file": ("f", b"x" * (IMPORT_CAP + 1), "application/octet-stream")},
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"] == "File too large. Maximum allowed size is 10 MB."
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD},
+        files={"file": ("f.zip", b"PK\x03\x04" + b"x" * IMPORT_CAP, "x/y")},
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "larger than 10 MB" in resp.json()["detail"]
 
 
 async def test_imports_over_the_route_limit_are_refused(
@@ -338,7 +342,7 @@ async def test_imports_over_the_route_limit_are_refused(
     headers = await _vault_with_entry(client)
     resp = await client.post(
         "/passwords/import/csv",
-        files={"file": ("f.csv", b"x" * IMPORT_MAX_BODY_BYTES, "text/csv")},
+        files={"file": ("f.csv", b"x" * CSV_IMPORT_MAX_BODY_BYTES, "text/csv")},
         headers=headers,
     )
     assert resp.status_code == 413

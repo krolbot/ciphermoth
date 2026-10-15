@@ -1,6 +1,5 @@
 import base64
 import hashlib
-import hmac
 import io
 import json
 import struct
@@ -9,8 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 import pyzipper
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import helpers
 from schemas import MasterPassword
@@ -30,18 +28,8 @@ def _ids(vectors: list[dict]) -> list[str]:
     return [v.get("note") or v.get("source", "") for v in vectors]
 
 
-def reference_decrypt(key: str, token: bytes) -> bytes:
-    raw_key = base64.urlsafe_b64decode(key)
-    data = base64.urlsafe_b64decode(token)
-    body, mac = data[:-32], data[-32:]
-    expected = hmac.new(raw_key[:16], body, hashlib.sha256).digest()
-    assert hmac.compare_digest(mac, expected)
-    assert body[0] == 0x80
-    iv, ciphertext = body[9:25], body[25:]
-    decryptor = Cipher(algorithms.AES(raw_key[16:]), modes.CBC(iv)).decryptor()
-    padded = decryptor.update(ciphertext) + decryptor.finalize()
-    unpadder = padding.PKCS7(128).unpadder()
-    return unpadder.update(padded) + unpadder.finalize()
+def _note(vector: dict) -> str:
+    return vector.get("note", "")
 
 
 ARGON2 = load("argon2id.json")
@@ -50,10 +38,8 @@ ARGON2 = load("argon2id.json")
 @pytest.mark.parametrize("vector", ARGON2["vectors"], ids=_ids(ARGON2["vectors"]))
 def test_argon2id_key_derivation(vector: dict) -> None:
     assert vector["password"].encode().hex() == vector["password_utf8_hex"]
-    key = helpers.generate_key_derivation(
-        bytes.fromhex(vector["salt_hex"]), vector["password"]
-    )
-    assert key.decode() == vector["key"]
+    derived = helpers.argon2id(vector["password"], bytes.fromhex(vector["salt_hex"]))
+    assert base64.urlsafe_b64encode(derived).decode() == vector["key"]
 
 
 def test_argon2id_applies_no_unicode_normalization() -> None:
@@ -67,83 +53,128 @@ def test_master_password_reaching_the_kdf(case: dict) -> None:
     assert submitted.master_password == case["kdf_input"]
 
 
-FERNET = load("fernet.json")
+VAULT = load("vault-v2.json")
 
 
-@pytest.mark.parametrize("vector", FERNET["vectors"], ids=_ids(FERNET["vectors"]))
-def test_fernet_tokens_decrypt(vector: dict) -> None:
-    token = vector["token"].encode()
-    expected = bytes.fromhex(vector["plaintext_hex"])
-    assert helpers.decrypt_bytes(vector["key"], token) == expected
-    assert reference_decrypt(vector["key"], token) == expected
-    if vector["plaintext"] is not None:
-        assert helpers.decrypt(vector["key"], token) == vector["plaintext"]
-        assert helpers.decrypt_optional(vector["key"], token) == vector["plaintext"]
-    data = base64.urlsafe_b64decode(token)
-    assert data[0] == 0x80
-    assert struct.unpack(">Q", data[1:9])[0] == vector["timestamp"]
-    assert data[9:25].hex() == vector["iv_hex"]
-
-
-@pytest.mark.parametrize("vector", FERNET["invalid"], ids=_ids(FERNET["invalid"]))
-def test_invalid_fernet_tokens_are_refused(vector: dict) -> None:
-    assert helpers.decrypt(vector["key"], vector["token"].encode()) is None
-    assert helpers.decrypt_bytes(vector["key"], vector["token"].encode()) is None
-
-
-@pytest.mark.parametrize(
-    "plaintext", [b"", b"x", "ключ 🦋".encode(), bytes(range(256)) * 3]
-)
-def test_new_tokens_follow_the_specification(plaintext: bytes) -> None:
-    key = FERNET["vectors"][0]["key"]
-    token = helpers.encrypt(key, plaintext)
-    assert reference_decrypt(key, token) == plaintext
-    assert helpers.encrypt(key, plaintext) != token
-
-
-KEY_CHECK = load("key_check.json")
-
-
-def test_key_check_token_verifies() -> None:
-    salt = bytes.fromhex(KEY_CHECK["salt_hex"])
-    key = helpers.generate_key_derivation(salt, KEY_CHECK["password"]).decode()
-    assert key == KEY_CHECK["key"]
-    token = KEY_CHECK["token"].encode()
-    assert helpers.verify_key_check(key, token, salt)
-    assert helpers.verify_key_check(key.encode(), token, salt)
-    assert not helpers.verify_key_check(key, token, bytes(16))
-    fresh = helpers.create_key_check(key, salt)
-    assert reference_decrypt(key, fresh) == b"ciphermoth-key-check-v1:" + salt
-
-
-@pytest.mark.parametrize(
-    "rejected", KEY_CHECK["rejected_keys"], ids=_ids(KEY_CHECK["rejected_keys"])
-)
-def test_key_check_rejects_non_canonical_and_partial_keys(rejected: dict) -> None:
-    assert not helpers.verify_key_check(
-        rejected["key"],
-        KEY_CHECK["token"].encode(),
-        bytes.fromhex(KEY_CHECK["salt_hex"]),
+def _vault_material(vector: dict) -> helpers.KeyMaterial:
+    return helpers.KeyMaterial(
+        params=helpers.DEFAULT_KDF,
+        salt=bytes.fromhex(vector["salt_hex"]),
+        password_check=bytes.fromhex(vector["password_check_hex"]),
+        wrapped_key=bytes.fromhex(vector["wrapped_key_hex"]),
+        key_check=bytes.fromhex(vector["key_check_hex"]),
     )
 
 
-BCRYPT = load("bcrypt.json")
+@pytest.mark.parametrize("vector", VAULT["vaults"], ids=lambda v: v["password"])
+def test_a_frozen_vault_key_record_unlocks(vector: dict) -> None:
+    derived = helpers.argon2id(vector["password"], bytes.fromhex(vector["salt_hex"]))
+    assert derived.hex() == vector["derived_hex"]
+    key = helpers.open_key_material(derived, _vault_material(vector))
+    assert key is not None
+    assert key.check.hex() == vector["key_check_hex"]
+    raw = bytes.fromhex(vector["vault_key_hex"])
+    assert helpers.VaultKey(raw).check == key.check
+    material = helpers.seal_key_material(
+        derived, raw, helpers.DEFAULT_KDF, bytes.fromhex(vector["salt_hex"])
+    )
+    assert material.password_check.hex() == vector["password_check_hex"]
+    assert material.key_check.hex() == vector["key_check_hex"]
+    assert material.wrapped_key != bytes.fromhex(vector["wrapped_key_hex"])
+    reopened = helpers.open_key_material(derived, material)
+    assert reopened is not None and reopened.check == key.check
 
 
-@pytest.mark.parametrize("vector", BCRYPT["vectors"], ids=_ids(BCRYPT["vectors"]))
-def test_bcrypt_hashes_verify(vector: dict) -> None:
-    assert helpers.verify_master_password(vector["password"], vector["hash"])
+@pytest.mark.parametrize("wrong", VAULT["wrong_passwords"], ids=_note)
+def test_a_wrong_password_never_opens_a_frozen_vault(wrong: dict) -> None:
+    vector = VAULT["vaults"][wrong["vault"]]
+    derived = helpers.argon2id(wrong["password"], bytes.fromhex(vector["salt_hex"]))
+    assert helpers.open_key_material(derived, _vault_material(vector)) is None
 
 
-@pytest.mark.parametrize("vector", BCRYPT["mismatches"], ids=_ids(BCRYPT["mismatches"]))
-def test_bcrypt_mismatches_do_not_verify(vector: dict) -> None:
-    assert not helpers.verify_master_password(vector["password"], vector["hash"])
+def test_a_matching_commitment_with_a_damaged_wrapped_key_is_damage() -> None:
+    vector = VAULT["vaults"][0]
+    derived = bytes.fromhex(vector["derived_hex"])
+    material = _vault_material(vector)
+    wrapped = bytearray(material.wrapped_key)
+    wrapped[-1] ^= 1
+    for damaged in (
+        helpers.KeyMaterial(
+            material.params,
+            material.salt,
+            material.password_check,
+            bytes(wrapped),
+            material.key_check,
+        ),
+        helpers.KeyMaterial(
+            helpers.KdfParams(65536, 4, 4),
+            material.salt,
+            material.password_check,
+            material.wrapped_key,
+            material.key_check,
+        ),
+        helpers.KeyMaterial(
+            material.params,
+            material.salt,
+            material.password_check,
+            material.wrapped_key,
+            bytes(32),
+        ),
+    ):
+        with pytest.raises(helpers.DecryptionFailed):
+            helpers.open_key_material(derived, damaged)
 
 
-def test_new_bcrypt_hashes_use_the_documented_scheme() -> None:
-    hashed = helpers.hash_master_password("Moth-Test-Vault-2026!")
-    assert hashed.startswith("$2b$12$")
-    assert helpers.verify_master_password("Moth-Test-Vault-2026!", hashed)
+def _frozen_key() -> helpers.VaultKey:
+    return helpers.VaultKey(bytes.fromhex(VAULT["vaults"][0]["vault_key_hex"]))
+
+
+@pytest.mark.parametrize("vector", VAULT["name_index"], ids=_note)
+def test_name_index(vector: dict) -> None:
+    assert _frozen_key().name_index(vector["name"]).hex() == vector["index_hex"]
+
+
+def _open(key: helpers.VaultKey, sealed: bytes, parts: list[bytes]) -> bytes:
+    role = parts[0]
+    if role == b"entry":
+        return key.open_entry(parts[1], sealed)
+    if role == b"attachment-metadata":
+        return key.open_attachment_metadata(parts[1], parts[2], sealed)
+    assert role == b"attachment-content"
+    return key.open_attachment_content(parts[1], parts[2], sealed)
+
+
+@pytest.mark.parametrize("vector", VAULT["records"], ids=_note)
+def test_frozen_records_open(vector: dict) -> None:
+    parts = [bytes.fromhex(p) for p in vector["parts_hex"]]
+    plaintext = _open(_frozen_key(), bytes.fromhex(vector["sealed_hex"]), parts)
+    assert plaintext.hex() == vector["plaintext_hex"]
+
+
+@pytest.mark.parametrize("vector", VAULT["rejected"], ids=_note)
+def test_altered_or_moved_records_are_refused(vector: dict) -> None:
+    parts = [bytes.fromhex(p) for p in vector["parts_hex"]]
+    with pytest.raises(helpers.DecryptionFailed):
+        _open(_frozen_key(), bytes.fromhex(vector["sealed_hex"]), parts)
+
+
+def test_new_records_follow_the_specification() -> None:
+    vector = VAULT["vaults"][0]
+    key = _frozen_key()
+    record_key = AESGCM(bytes.fromhex(vector["record_key_hex"]))
+    uid, entry_uid = bytes(range(16)), bytes(range(16, 32))
+    document = b'{"name": "x"}'
+    sealed = key.seal_entry(uid, document)
+    assert sealed[0] == 2 and len(sealed) == 1 + 12 + 64 + 16
+    associated = b"\x02ciphermoth/v2" + b"".join(
+        struct.pack(">I", len(p)) + p for p in (b"entry", uid)
+    )
+    plain = record_key.decrypt(sealed[1:13], sealed[13:], associated)
+    assert plain == document + b" " * (64 - len(document))
+    content = bytes(range(256))
+    sealed = key.seal_attachment_content(uid, entry_uid, content)
+    assert len(sealed) == 1 + 12 + len(content) + 16
+    assert key.seal_entry(uid, document) != key.seal_entry(uid, document)
 
 
 TOTP = load("totp.json")
@@ -201,16 +232,65 @@ async def test_frozen_backup_zip_restores_into_a_new_vault(
         assert got["favorite"] == item["favorite"]
 
 
-@pytest.mark.parametrize(
-    ("name", "build"),
-    [
-        ("argon2id.json", generate_vectors.argon2id_vectors),
-        ("fernet.json", generate_vectors.fernet_vectors),
-        ("key_check.json", generate_vectors.key_check_vectors),
-        ("bcrypt.json", generate_vectors.bcrypt_vectors),
-    ],
-)
-def test_the_reference_construction_still_reproduces_the_frozen_files(
-    name: str, build
+def test_the_reference_construction_still_reproduces_the_frozen_files() -> None:
+    documents, binaries = generate_vectors.outputs()
+    for name, content in documents.items():
+        if name == "backup_zip.json":
+            continue
+        assert json.loads(json.dumps(content, ensure_ascii=False)) == load(name)
+    assert (
+        binaries["backup-v2.cmbackup"] == (VECTORS / "backup-v2.cmbackup").read_bytes()
+    )
+
+
+BACKUP_V2 = load("backup-v2.json")
+
+
+def test_the_frozen_backup_reads_with_the_frame_reader() -> None:
+    from backup_format import BackupReader
+
+    data = (VECTORS / BACKUP_V2["file"]).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == BACKUP_V2["file_sha256"]
+    reader = BackupReader(io.BytesIO(data))
+    key = helpers.BackupKey(bytes.fromhex(BACKUP_V2["derived_hex"]))
+    assert key.matches(reader.header)
+    assert json.loads(reader.read(key, 1 << 20)) == BACKUP_V2["manifest"]
+    assert reader.read(key, 1 << 20).hex() == BACKUP_V2["attachment_hex"]
+    reader.finish()
+    derived = helpers.argon2id(BACKUP_V2["password"], reader.header.salt)
+    assert derived.hex() == BACKUP_V2["derived_hex"]
+
+
+async def test_the_frozen_backup_restores_completely_into_a_new_vault(
+    client: httpx.AsyncClient,
 ) -> None:
-    assert json.loads(json.dumps(build(), ensure_ascii=False)) == load(name)
+    token = await create_vault(client)
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": BACKUP_V2["password"]},
+        files={
+            "file": ("b.cmbackup", (VECTORS / BACKUP_V2["file"]).read_bytes(), "x/y")
+        },
+        headers=auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["imported"] == 1
+    assert resp.json()["trashed"] == 1
+    assert resp.json()["attachments"] == 1
+    assert resp.json()["settings_restored"] is True
+    [active] = (await client.get("/passwords", headers=auth(token))).json()
+    expected = BACKUP_V2["manifest"]["entries"][0]
+    assert active["password_value"] == expected["value"]
+    assert active["password_history"][0]["value"] == expected["history"][0]["value"]
+    assert active["updated"] == expected["updated"].removesuffix("+00:00")
+    [attachment] = (
+        await client.get("/passwords/GitHub/attachments", headers=auth(token))
+    ).json()
+    download = await client.get(
+        f"/passwords/GitHub/attachments/{attachment['id']}", headers=auth(token)
+    )
+    assert download.content.hex() == BACKUP_V2["attachment_hex"]
+    [trashed] = (await client.get("/passwords/trash", headers=auth(token))).json()
+    assert trashed["deleted"] == "2025-12-24T18:00:00.123456"
+    settings = (await client.get("/settings", headers=auth(token))).json()
+    assert settings == BACKUP_V2["manifest"]["settings"]

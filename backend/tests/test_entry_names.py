@@ -3,14 +3,14 @@ from urllib.parse import quote
 import httpx
 import pytest
 
-from helpers import encrypt
 from tests.support import (
     Headers,
     auth,
     create_vault,
     db_execute,
     entry,
-    stored_vault_key,
+    plant_entry,
+    vault_key,
 )
 
 HOSTILE_NAMES = [
@@ -57,9 +57,10 @@ async def vault(client: httpx.AsyncClient) -> Headers:
 
 async def _decoys() -> list[tuple]:
     return await db_execute(
-        "SELECT p.id, p.password_name, p.password_value, p.favorite, p.deleted, "
-        "a.id, a.content FROM passwords p LEFT JOIN password_attachments a "
-        "ON a.password_id = p.id WHERE p.password_name = 'x' ORDER BY p.id, a.id"
+        "SELECT e.id, e.name_index, e.document, e.backed_up, e.deleted, "
+        "a.id, a.meta, a.content FROM entries e LEFT JOIN attachments a "
+        "ON a.entry_id = e.id WHERE e.name_index = :index ORDER BY e.id, a.id",
+        index=(await vault_key()).name_index("x"),
     )
 
 
@@ -111,7 +112,8 @@ async def test_every_operation_reaches_exactly_the_named_entry(
 
     assert await _decoys() == decoys
     assert await db_execute(
-        "SELECT count(*) FROM passwords WHERE password_name = :n", n=name
+        "SELECT count(*) FROM entries WHERE name_index = :index",
+        index=(await vault_key()).name_index(name),
     ) == [(0,)]
 
 
@@ -153,12 +155,7 @@ async def test_a_literal_nul_in_the_path_is_refused(
 async def test_legacy_unaddressable_names_are_readable_and_can_be_renamed(
     client: httpx.AsyncClient, vault: Headers, name: str
 ) -> None:
-    key = await stored_vault_key()
-    await db_execute(
-        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
-        n=name,
-        v=encrypt(key, b"legacy-Value-1"),
-    )
+    await plant_entry(name, "legacy-Value-1")
     listing = (await client.get("/passwords", headers=vault)).json()
     assert name in [p["password_name"] for p in listing]
 
@@ -189,11 +186,7 @@ async def test_meta_advertises_slash_routing(client: httpx.AsyncClient) -> None:
 async def test_a_legacy_entry_named_trash_is_managed_without_touching_the_trash(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    key = await stored_vault_key()
-    await db_execute(
-        "INSERT INTO passwords (password_name, password_value) VALUES ('trash', :v)",
-        v=encrypt(key, b"legacy-Value-1"),
-    )
+    await plant_entry("trash", "legacy-Value-1")
     decoys = await _decoys()
 
     resp = await client.patch(
@@ -211,17 +204,12 @@ async def test_a_legacy_entry_named_trash_is_managed_without_touching_the_trash(
 async def test_editing_a_name_with_surrounding_spaces_never_touches_another_entry(
     client: httpx.AsyncClient, vault: Headers, legacy: str
 ) -> None:
-    key = await stored_vault_key()
     await client.post(
         "/passwords/create",
         json=entry("foo", "real-foo", username="real"),
         headers=vault,
     )
-    await db_execute(
-        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
-        n=legacy,
-        v=encrypt(key, b"legacy-foo"),
-    )
+    await plant_entry(legacy, "legacy-foo")
     real_before = (await client.get("/passwords/foo", headers=vault)).json()
 
     resp = await client.patch(

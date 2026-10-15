@@ -1,12 +1,12 @@
 import asyncio
+import base64
+import os
 import secrets
 
 import httpx
 import pytest
-from cryptography.fernet import Fernet, InvalidToken
 
 from crud.master_password import MasterPasswordCRUD
-from helpers import encrypt
 from models import SETTINGS_DEFAULTS
 from tests.support import (
     MASTER_PASSWORD,
@@ -16,6 +16,8 @@ from tests.support import (
     db_execute,
     db_snapshot,
     entry,
+    plant_entry,
+    read_current_vault,
     retired_key_header,
     stored_vault_key,
     unlock,
@@ -27,17 +29,8 @@ ROTATE = {
 }
 
 
-def _all_decrypt(key: str, tokens: list[bytes]) -> bool:
-    try:
-        for token in tokens:
-            Fernet(key).decrypt(token)
-    except InvalidToken:
-        return False
-    return True
-
-
-async def _value_tokens() -> list[bytes]:
-    return [row[0] for row in await db_execute("SELECT password_value FROM passwords")]
+def _random_key() -> bytes:
+    return base64.urlsafe_b64encode(os.urandom(32))
 
 
 async def test_method_and_path_variants_stay_protected(
@@ -65,7 +58,7 @@ async def test_duplicate_or_misspelled_key_headers_do_not_help(
 ) -> None:
     await create_vault(client)
     key = await stored_vault_key()
-    forged = Fernet.generate_key()
+    forged = _random_key()
     name = b"x-ciphermoth-key-derivation"
     variants = [
         key.encode() + b"\x00",
@@ -121,8 +114,7 @@ async def test_concurrent_rotations_with_the_same_key_apply_once(
 
     assert sorted([first.status_code, second.status_code]) == [200, 401]
     await unlock(client, NEW_MASTER_PASSWORD)
-    new_key = await stored_vault_key(NEW_MASTER_PASSWORD)
-    assert _all_decrypt(new_key, await _value_tokens())
+    assert len((await read_current_vault(NEW_MASTER_PASSWORD)).entries) == 1
 
 
 async def test_write_burst_racing_a_rotation_never_corrupts_or_deadlocks(
@@ -142,44 +134,41 @@ async def test_write_burst_racing_a_rotation_never_corrupts_or_deadlocks(
     assert responses[10].status_code == 200
     assert set(statuses) <= {200, 401}
     await unlock(client, NEW_MASTER_PASSWORD)
-    new_key = await stored_vault_key(NEW_MASTER_PASSWORD)
-    assert _all_decrypt(new_key, await _value_tokens())
     created = sum(1 for r in responses if r.status_code == 200) - 1
-    assert len(await _value_tokens()) == created
+    assert len((await read_current_vault(NEW_MASTER_PASSWORD)).entries) == created
 
 
-async def test_vault_damaged_before_the_patch_can_be_recovered(
+async def test_a_row_sealed_with_another_key_stops_reads_and_changes_nothing(
     client: httpx.AsyncClient,
 ) -> None:
     headers = auth(await create_vault(client))
     await client.post("/passwords/create", json=entry("good"), headers=headers)
+    planted = await plant_entry("planted", master_password=MASTER_PASSWORD)
     await db_execute(
-        "INSERT INTO passwords (password_name, password_value) VALUES (:n, :v)",
-        n="planted",
-        v=encrypt(Fernet.generate_key(), b"attacker data"),
+        "UPDATE entries SET document = :document WHERE id = :id",
+        document=b"\x02" + os.urandom(80),
+        id=planted,
     )
     listing = await client.get("/passwords", headers=headers)
-    assert listing.status_code == 400
-    assert "planted" in listing.json()["detail"]
+    assert listing.status_code == 500
+    assert listing.json()["code"] == "vault_damaged"
+    assert f"Entry #{planted}" in listing.json()["detail"]
+    assert "planted" not in listing.text
     before = await db_snapshot()
-    rotation = await client.patch(
-        "/master_password/update", json=ROTATE, headers=headers
-    )
-    assert rotation.status_code == 400
+    for request in (
+        client.patch("/master_password/update", json=ROTATE, headers=headers),
+        client.post(
+            "/passwords/backup",
+            json={"master_password": MASTER_PASSWORD},
+            headers=headers,
+        ),
+    ):
+        resp = await request
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "vault_damaged"
     assert await db_snapshot() == before
-
-    assert (
-        await client.delete("/passwords/planted", headers=headers)
-    ).status_code == 200
-    resp = await client.delete("/passwords/planted/purge", headers=headers)
+    resp = await client.get("/passwords/good", headers=headers)
     assert resp.status_code == 200
-
-    listing = await client.get("/passwords", headers=headers)
-    assert [p["password_name"] for p in listing.json()] == ["good"]
-    rotation = await client.patch(
-        "/master_password/update", json=ROTATE, headers=headers
-    )
-    assert rotation.status_code == 200
 
 
 async def test_unauthenticated_bodies_are_bounded(client: httpx.AsyncClient) -> None:
@@ -214,7 +203,7 @@ async def test_forged_credentials_never_wait_on_vault_locks(
         for forged, refused in (
             (auth(secrets.token_urlsafe(32)), 401),
             (retired_key_header(real_key), 403),
-            (retired_key_header(Fernet.generate_key()), 403),
+            (retired_key_header(_random_key()), 403),
         ):
             resp = await asyncio.wait_for(
                 client.get("/passwords", headers=forged), timeout=3

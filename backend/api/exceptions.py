@@ -18,6 +18,7 @@ from errors import (
     NotFound,
     SessionRequired,
     VaultBusy,
+    VaultDamaged,
     VaultError,
 )
 
@@ -31,6 +32,7 @@ _ERROR_RESPONSES: tuple[tuple[type[VaultError], int, str | None], ...] = (
     (NotFound, status.HTTP_404_NOT_FOUND, None),
     (InvalidRequest, status.HTTP_400_BAD_REQUEST, None),
     (VaultBusy, status.HTTP_503_SERVICE_UNAVAILABLE, "busy"),
+    (VaultDamaged, status.HTTP_500_INTERNAL_SERVER_ERROR, "vault_damaged"),
     (VaultError, status.HTTP_400_BAD_REQUEST, None),
 )
 

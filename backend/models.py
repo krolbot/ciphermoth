@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     TIMESTAMP,
     Boolean,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
@@ -13,6 +14,8 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from helpers import new_uid
 
 SETTINGS_DEFAULTS = {
     "inactivity_ms": 120_000,
@@ -32,8 +35,14 @@ class BaseModel(DeclarativeBase):
     pass
 
 
-class MasterPasswordModel(BaseModel):
-    __tablename__ = "master_password"
+class VaultModel(BaseModel):
+    __tablename__ = "vault"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_vault_singleton"),
+        CheckConstraint("length(kdf_salt) = 16", name="ck_vault_salt"),
+        CheckConstraint("length(password_check) = 32", name="ck_vault_password_check"),
+        CheckConstraint("length(key_check) = 32", name="ck_vault_key_check"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created: Mapped[datetime] = mapped_column(
@@ -45,26 +54,38 @@ class MasterPasswordModel(BaseModel):
         onupdate=utc_now,
         server_default=func.current_timestamp(),
     )
-    deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
 
-    salt: Mapped[bytes] = mapped_column(LargeBinary)
-    hash_key: Mapped[str] = mapped_column(String)
+    format_version: Mapped[int] = mapped_column(Integer)
+    kdf: Mapped[str] = mapped_column(String)
+    kdf_memory_kib: Mapped[int] = mapped_column(Integer)
+    kdf_iterations: Mapped[int] = mapped_column(Integer)
+    kdf_lanes: Mapped[int] = mapped_column(Integer)
+    kdf_salt: Mapped[bytes] = mapped_column(LargeBinary)
+    password_check: Mapped[bytes] = mapped_column(LargeBinary)
+    wrapped_key: Mapped[bytes] = mapped_column(LargeBinary)
     key_check: Mapped[bytes] = mapped_column(LargeBinary)
 
 
-class PasswordModel(BaseModel):
-    __tablename__ = "passwords"
+class EntryModel(BaseModel):
+    __tablename__ = "entries"
     __table_args__ = (
         Index(
-            "uq_passwords_name_active",
-            "password_name",
+            "uq_entries_name_active",
+            "name_index",
             unique=True,
             sqlite_where=text("deleted IS NULL"),
         ),
+        CheckConstraint("length(uid) = 16", name="ck_entries_uid"),
+        CheckConstraint("length(name_index) = 32", name="ck_entries_name_index"),
         {"sqlite_autoincrement": True},
     )
 
+    def __init__(self, **fields: object) -> None:
+        fields.setdefault("uid", new_uid())
+        super().__init__(**fields)
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uid: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
     created: Mapped[datetime] = mapped_column(
         TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
     )
@@ -76,43 +97,39 @@ class PasswordModel(BaseModel):
     )
     deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
 
-    password_name: Mapped[str] = mapped_column(String)
-    kind: Mapped[str] = mapped_column(String, default="login", server_default="login")
-    username: Mapped[str | None] = mapped_column(String)
-    password_value: Mapped[bytes] = mapped_column(LargeBinary)
-    description: Mapped[str | None] = mapped_column(String)
-    url: Mapped[bytes | None] = mapped_column(LargeBinary)
-    totp_secret: Mapped[bytes | None] = mapped_column(LargeBinary)
-    tags: Mapped[bytes | None] = mapped_column(LargeBinary)
-    custom_fields: Mapped[bytes | None] = mapped_column(LargeBinary)
-    folder: Mapped[bytes | None] = mapped_column(LargeBinary)
-    password_history: Mapped[bytes | None] = mapped_column(LargeBinary)
-    favorite: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=false()
-    )
+    name_index: Mapped[bytes] = mapped_column(LargeBinary)
+    document: Mapped[bytes] = mapped_column(LargeBinary)
     backed_up: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
 
 
-class PasswordAttachmentModel(BaseModel):
-    __tablename__ = "password_attachments"
-    __table_args__ = {"sqlite_autoincrement": True}
+class AttachmentModel(BaseModel):
+    __tablename__ = "attachments"
+    __table_args__ = (
+        CheckConstraint("length(uid) = 16", name="ck_attachments_uid"),
+        CheckConstraint("size_bytes > 0", name="ck_attachments_size"),
+        {"sqlite_autoincrement": True},
+    )
+
+    def __init__(self, **fields: object) -> None:
+        fields.setdefault("uid", new_uid())
+        super().__init__(**fields)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uid: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
     created: Mapped[datetime] = mapped_column(
         TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
     )
-    password_id: Mapped[int] = mapped_column(
+    entry_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("passwords.id", ondelete="CASCADE"),
+        ForeignKey("entries.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    filename: Mapped[bytes] = mapped_column(LargeBinary)
-    content: Mapped[bytes] = mapped_column(LargeBinary)
-    content_type: Mapped[bytes | None] = mapped_column(LargeBinary)
     size_bytes: Mapped[int] = mapped_column(Integer)
+    meta: Mapped[bytes] = mapped_column(LargeBinary)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
 
 
 class SettingsModel(BaseModel):

@@ -9,11 +9,16 @@ _MIB = 1024 * 1024
 
 DEFAULT_MAX_BODY_BYTES = 16 * _MIB
 ATTACHMENT_MAX_BODY_BYTES = 6 * _MIB
-IMPORT_MAX_BODY_BYTES = 11 * _MIB
+CSV_IMPORT_MAX_BODY_BYTES = 11 * _MIB
+BACKUP_IMPORT_MAX_BODY_BYTES = 1025 * _MIB
 
-_ROUTE_LIMITS = (
+_PLAINTEXT_ROUTE_LIMITS = (
     ("POST", re.compile(r"/passwords/[^/]+/attachments$"), ATTACHMENT_MAX_BODY_BYTES),
-    ("POST", re.compile(r"/passwords/import(?:/csv)?$"), IMPORT_MAX_BODY_BYTES),
+    ("POST", re.compile(r"/passwords/import/csv$"), CSV_IMPORT_MAX_BODY_BYTES),
+)
+_ROUTE_LIMITS = (
+    *_PLAINTEXT_ROUTE_LIMITS,
+    ("POST", re.compile(r"/passwords/import$"), BACKUP_IMPORT_MAX_BODY_BYTES),
 )
 
 
@@ -36,12 +41,13 @@ class RequestTooLarge(HTTPException):
 def keep_uploads_in_memory() -> None:
     """
     Starlette spools multipart file parts larger than 1 MB to a temporary file on
-    disk, which would put attachments and imports there in plaintext. With every
-    request body capped, raising the spool threshold to the largest cap keeps each
-    part in memory.
+    disk, which would put attachments and CSV imports there in plaintext. Raising
+    the spool threshold to the largest cap of every route that receives
+    plaintext keeps those parts in memory. Encrypted backups, which can be far
+    larger, may still be spooled: they hold only ciphertext.
     """
     MultiPartParser.spool_max_size = max(
-        DEFAULT_MAX_BODY_BYTES, *(limit for _, _, limit in _ROUTE_LIMITS)
+        DEFAULT_MAX_BODY_BYTES, *(limit for _, _, limit in _PLAINTEXT_ROUTE_LIMITS)
     )
 
 

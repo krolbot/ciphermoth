@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import os
 import random
 import signal
@@ -10,11 +12,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from crud.engine import Database
-from helpers import generate_key_derivation, verify_master_password
 from storage import VAULT_FILE, check_file
 from tests.integrity import VaultContents, assert_same_vault, raw_vault, read_vault
 from tests.support import (
@@ -22,6 +24,9 @@ from tests.support import (
     NEW_MASTER_PASSWORD,
     ApiServer,
     api_server,
+    backup_entry,
+    backup_file,
+    unwrap_vault_key,
 )
 
 ATTACHMENT_BYTES = 4 * 1024 * 1024
@@ -82,16 +87,26 @@ async def _scan(folder: Path, key: str) -> VaultContents:
         return await read_vault(conn, key)
 
 
-def _master(folder: Path) -> tuple[bytes, str]:
+def _vault_row(folder: Path) -> tuple:
     with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
-        salt, hash_key = connection.execute(
-            "SELECT salt, hash_key FROM master_password"
+        return connection.execute(
+            "SELECT kdf_memory_kib, kdf_iterations, kdf_lanes, kdf_salt, wrapped_key "
+            "FROM vault"
         ).fetchone()
-    return salt, hash_key
 
 
 def _key(folder: Path, password: str = MASTER_PASSWORD) -> str:
-    return generate_key_derivation(_master(folder)[0], password).decode()
+    return base64.urlsafe_b64encode(
+        unwrap_vault_key(_vault_row(folder), password)
+    ).decode()
+
+
+def _opens(folder: Path, password: str) -> bool:
+    try:
+        unwrap_vault_key(_vault_row(folder), password)
+    except InvalidTag:
+        return False
+    return True
 
 
 def _kill(server: ApiServer) -> None:
@@ -167,7 +182,8 @@ async def test_killing_the_server_before_a_rotation_commits_keeps_the_old_vault(
     assert check_file(folder / VAULT_FILE) == []
     assert await _state(folder) == before_state
     assert_same_vault(before, await _scan(folder, key))
-    assert verify_master_password(MASTER_PASSWORD, _master(folder)[1])
+    assert _opens(folder, MASTER_PASSWORD)
+    assert not _opens(folder, NEW_MASTER_PASSWORD)
 
 
 async def test_killing_the_server_before_an_import_commits_writes_nothing(
@@ -188,6 +204,47 @@ async def test_killing_the_server_before_an_import_commits_writes_nothing(
         ),
     )
 
+    assert check_file(folder / VAULT_FILE) == []
+    assert await _state(folder) == before
+
+
+async def test_killing_the_server_before_a_backup_restore_commits_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    folder = await _seeded(tmp_path, entries=5)
+    before = await _state(folder)
+    content = os.urandom(ATTACHMENT_BYTES)
+    restored = [
+        backup_entry(
+            f"restored-{i:03d}",
+            attachments=[
+                {
+                    "filename": f"r{i}.bin",
+                    "content_type": None,
+                    "size": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "created": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+        )
+        for i in range(2)
+    ]
+    archive = backup_file(
+        [backup_entry("entry-004", "overwritten"), *restored],
+        contents=[content, content],
+    )
+
+    written = await _kill_before_commit(
+        tmp_path,
+        lambda http, headers: http.post(
+            "/passwords/import",
+            data={"master_password": MASTER_PASSWORD, "on_conflict": "overwrite"},
+            files={"file": ("b.cmbackup", archive, "application/octet-stream")},
+            headers=headers,
+        ),
+    )
+
+    assert written > ATTACHMENT_BYTES, "the restore never spilled into the WAL"
     assert check_file(folder / VAULT_FILE) == []
     assert await _state(folder) == before
 
@@ -229,12 +286,11 @@ async def test_rotations_killed_at_random_points_are_all_or_nothing(
                     pass
 
         assert check_file(folder / VAULT_FILE) == []
-        hash_key = _master(folder)[1]
-        if verify_master_password(passwords[1 - current], hash_key):
+        if _opens(folder, passwords[1 - current]):
             current = 1 - current
             outcomes["new"] += 1
         else:
-            assert verify_master_password(passwords[current], hash_key)
+            assert _opens(folder, passwords[current])
             outcomes["old"] += 1
         assert_same_vault(
             reference, await _scan(folder, _key(folder, passwords[current]))

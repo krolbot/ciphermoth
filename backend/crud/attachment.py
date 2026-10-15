@@ -1,42 +1,32 @@
 from sqlalchemy import func, select
 
 from crud.base import BaseCRUD
-from errors import InvalidRequest, NotFound
-from helpers import (
-    decrypt,
-    decrypt_bytes,
-    encrypt,
-    encrypt_optional,
+from crud.records import (
+    AttachmentMetadata,
+    find_entry,
+    open_attachment_content,
+    open_attachment_metadata,
+    seal_attachment,
 )
-from models import PasswordAttachmentModel, PasswordModel
+from errors import InvalidRequest, NotFound
+from helpers import VaultKey
+from models import AttachmentModel, EntryModel
 from schemas import AttachmentResponse
 
-_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024  # 5 MB per file
-_MAX_ATTACHMENTS_PER_ENTRY = 20
-_MAX_TOTAL_BYTES = 25 * 1024 * 1024  # 25 MB across all attachments of one entry
+MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_ATTACHMENTS_PER_ENTRY = 20
+MAX_TOTAL_BYTES = 25 * 1024 * 1024
 
 
 class AttachmentCRUD(BaseCRUD):
-    async def _get_active_password(self, password_name: str) -> PasswordModel:
-        model = None
-        if "\x00" not in password_name:
-            stmt = select(PasswordModel).where(
-                PasswordModel.password_name == password_name,
-                PasswordModel.deleted.is_(None),
-            )
-            model = (await self.session.execute(stmt)).scalar()
-        if not model:
-            raise NotFound(f"No password found for '{password_name}' in the vault.")
-        return model
-
     async def _get_attachment(
-        self, password_id: int, attachment_id: int
-    ) -> PasswordAttachmentModel:
+        self, entry_id: int, attachment_id: int
+    ) -> AttachmentModel:
         model = (
             await self.session.execute(
-                select(PasswordAttachmentModel).where(
-                    PasswordAttachmentModel.id == attachment_id,
-                    PasswordAttachmentModel.password_id == password_id,
+                select(AttachmentModel).where(
+                    AttachmentModel.id == attachment_id,
+                    AttachmentModel.entry_id == entry_id,
                 )
             )
         ).scalar()
@@ -46,33 +36,31 @@ class AttachmentCRUD(BaseCRUD):
 
     @staticmethod
     def _to_response(
-        model: PasswordAttachmentModel, key_derivation: str
+        model: AttachmentModel, metadata: AttachmentMetadata
     ) -> AttachmentResponse:
-        filename = decrypt(key_derivation, model.filename)
-        if filename is None:
-            raise InvalidRequest("Invalid key for attachment.")
         return AttachmentResponse(
             id=model.id,
-            filename=filename,
-            content_type=decrypt(key_derivation, model.content_type)
-            if model.content_type is not None
-            else None,
+            filename=metadata.filename,
+            content_type=metadata.content_type,
             size_bytes=model.size_bytes,
             created=model.created,
         )
 
     async def list_attachments(
-        self, password_name: str, key_derivation: str
+        self, password_name: str, key: VaultKey
     ) -> list[AttachmentResponse]:
-        password = await self._get_active_password(password_name)
+        entry, _ = await find_entry(self.session, key, password_name)
         models = (
             await self.session.execute(
-                select(PasswordAttachmentModel)
-                .where(PasswordAttachmentModel.password_id == password.id)
-                .order_by(PasswordAttachmentModel.created)
+                select(AttachmentModel)
+                .where(AttachmentModel.entry_id == entry.id)
+                .order_by(AttachmentModel.created, AttachmentModel.id)
             )
         ).scalars()
-        return [self._to_response(m, key_derivation) for m in models]
+        return [
+            self._to_response(m, open_attachment_metadata(key, m, entry.uid))
+            for m in models
+        ]
 
     async def add_attachment(
         self,
@@ -80,70 +68,54 @@ class AttachmentCRUD(BaseCRUD):
         filename: str,
         content_type: str | None,
         data: bytes,
-        key_derivation: str,
+        key: VaultKey,
     ) -> AttachmentResponse:
         if not data:
             raise InvalidRequest("Attachment is empty.")
-        if len(data) > _MAX_ATTACHMENT_BYTES:
+        if len(data) > MAX_ATTACHMENT_BYTES:
             raise InvalidRequest("Attachment too large. Maximum size is 5 MB.")
 
-        password = await self._get_active_password(password_name)
+        entry, _ = await find_entry(self.session, key, password_name)
+        await self.check_capacity(entry, len(data))
 
-        count = (
-            await self.session.execute(
-                select(func.count())
-                .select_from(PasswordAttachmentModel)
-                .where(PasswordAttachmentModel.password_id == password.id)
-            )
-        ).scalar() or 0
-        if count >= _MAX_ATTACHMENTS_PER_ENTRY:
-            raise InvalidRequest(
-                f"This entry already has the maximum of "
-                f"{_MAX_ATTACHMENTS_PER_ENTRY} attachments."
-            )
+        model = AttachmentModel(entry_id=entry.id)
+        metadata = AttachmentMetadata(filename=filename, content_type=content_type)
+        seal_attachment(key, model, entry.uid, metadata, data)
+        self.session.add(model)
+        await self.session.flush()
+        return self._to_response(model, metadata)
 
-        used = (
+    async def check_capacity(self, entry: EntryModel, size: int) -> None:
+        count, used = (
             await self.session.execute(
                 select(
-                    func.coalesce(func.sum(PasswordAttachmentModel.size_bytes), 0)
-                ).where(PasswordAttachmentModel.password_id == password.id)
+                    func.count(), func.coalesce(func.sum(AttachmentModel.size_bytes), 0)
+                ).where(AttachmentModel.entry_id == entry.id)
             )
-        ).scalar() or 0
-        if used + len(data) > _MAX_TOTAL_BYTES:
+        ).one()
+        if count >= MAX_ATTACHMENTS_PER_ENTRY:
+            raise InvalidRequest(
+                f"This entry already has the maximum of "
+                f"{MAX_ATTACHMENTS_PER_ENTRY} attachments."
+            )
+        if used + size > MAX_TOTAL_BYTES:
             raise InvalidRequest(
                 "Attachments for this entry would exceed the 25 MB total limit."
             )
 
-        model = PasswordAttachmentModel(
-            password_id=password.id,
-            filename=encrypt(key_derivation, filename.encode()),
-            content=encrypt(key_derivation, data),
-            content_type=encrypt_optional(key_derivation, content_type),
-            size_bytes=len(data),
-        )
-        self.session.add(model)
-        await self.session.flush()
-        return self._to_response(model, key_derivation)
-
     async def get_attachment_data(
-        self, password_name: str, attachment_id: int, key_derivation: str
+        self, password_name: str, attachment_id: int, key: VaultKey
     ) -> tuple[str, str | None, bytes]:
-        password = await self._get_active_password(password_name)
-        model = await self._get_attachment(password.id, attachment_id)
+        entry, _ = await find_entry(self.session, key, password_name)
+        model = await self._get_attachment(entry.id, attachment_id)
+        metadata = open_attachment_metadata(key, model, entry.uid)
+        data = open_attachment_content(key, model, entry.uid)
+        return metadata.filename, metadata.content_type, data
 
-        filename = decrypt(key_derivation, model.filename)
-        data = decrypt_bytes(key_derivation, model.content)
-        if filename is None or data is None:
-            raise InvalidRequest("Invalid key for attachment.")
-        content_type = (
-            decrypt(key_derivation, model.content_type)
-            if model.content_type is not None
-            else None
-        )
-        return filename, content_type, data
-
-    async def delete_attachment(self, password_name: str, attachment_id: int) -> None:
-        password = await self._get_active_password(password_name)
-        model = await self._get_attachment(password.id, attachment_id)
+    async def delete_attachment(
+        self, password_name: str, attachment_id: int, key: VaultKey
+    ) -> None:
+        entry, _ = await find_entry(self.session, key, password_name)
+        model = await self._get_attachment(entry.id, attachment_id)
         await self.session.delete(model)
         await self.session.flush()

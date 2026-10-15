@@ -1,21 +1,27 @@
 import asyncio
+import hashlib
 import io
 from collections.abc import Awaitable, Callable
 
 import httpx
 import pytest
 
+import crud.master_password
 from crud.password import PasswordCRUD
-from helpers import create_encrypted_zip
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,
     Headers,
+    active_rows_named,
     auth,
+    backup_entry,
+    backup_file,
     create_vault,
     db_execute,
     db_snapshot,
     entry,
+    legacy_backup_zip,
+    name_index,
     unlock,
     wait_for_queued_requests,
     write_lock_held,
@@ -36,6 +42,26 @@ ROTATE = {
 }
 
 Write = Callable[[httpx.AsyncClient, Headers], Awaitable[httpx.Response]]
+
+COMPLETE_BACKUP = backup_file(
+    [
+        backup_entry("alpha", "z"),
+        backup_entry(
+            "with-file",
+            attachments=[
+                {
+                    "filename": "f.bin",
+                    "content_type": None,
+                    "size": 3,
+                    "sha256": hashlib.sha256(b"\x01\x02\x03").hexdigest(),
+                    "created": "2026-01-02T03:04:05+00:00",
+                }
+            ],
+        ),
+        backup_entry("old", deleted="2026-02-02T00:00:00+00:00"),
+    ],
+    contents=[b"\x01\x02\x03"],
+)
 
 
 def _upload(name: str, data: bytes = b"attached") -> dict:
@@ -67,13 +93,19 @@ WRITES: dict[str, Write] = {
         files={
             "file": (
                 "b.zip",
-                create_encrypted_zip(
+                legacy_backup_zip(
                     [{"name": "alpha", "value": "z"}, {"name": "zip", "value": "z"}],
                     MASTER_PASSWORD,
                 ),
                 "application/zip",
             )
         },
+        headers=h,
+    ),
+    "import-backup": lambda c, h: c.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD, "on_conflict": "overwrite"},
+        files={"file": ("b.cmbackup", COMPLETE_BACKUP, "application/octet-stream")},
         headers=h,
     ),
     "import-csv": lambda c, h: c.post(
@@ -152,7 +184,7 @@ async def test_vault_creation_rolls_back_if_its_commit_fails(
     )
     assert resp.status_code == 500
     assert "key_derivation" not in resp.text
-    assert await db_execute("SELECT id FROM master_password") == []
+    assert await db_execute("SELECT id FROM vault") == []
 
 
 async def test_an_import_failing_halfway_writes_nothing(
@@ -193,25 +225,22 @@ async def test_a_rotation_failing_halfway_leaves_the_old_vault(
     for i in range(20):
         await client.post("/passwords/create", json=entry(f"e{i:02d}"), headers=headers)
     before = await db_snapshot()
-    from crud.master_password import MasterPasswordCRUD
-
-    original = MasterPasswordCRUD._reencrypt_binary
+    original = crud.master_password.seal_entry
     calls = 0
 
     def reencrypt_then_fail(*args, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 2:
+        if calls == 10:
             raise RuntimeError("simulated failure during rotation")
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(
-        MasterPasswordCRUD, "_reencrypt_binary", staticmethod(reencrypt_then_fail)
-    )
+    monkeypatch.setattr(crud.master_password, "seal_entry", reencrypt_then_fail)
     resp = await client.patch("/master_password/update", json=ROTATE, headers=headers)
     monkeypatch.undo()
 
     assert resp.status_code == 500
+    assert calls == 10
     assert await db_snapshot() == before
     assert (await client.get("/passwords", headers=headers)).status_code == 200
     assert (
@@ -243,7 +272,7 @@ async def test_concurrent_uploads_cannot_exceed_the_attachment_cap(
     responses = await uploads
 
     assert sorted(r.status_code for r in responses) == [200, 400, 400, 400, 400, 400]
-    rows = await db_execute("SELECT count(*) FROM password_attachments")
+    rows = await db_execute("SELECT count(*) FROM attachments")
     assert rows == [(20,)]
 
 
@@ -275,7 +304,7 @@ async def test_concurrent_uploads_cannot_exceed_the_size_cap(
     responses = await uploads
 
     assert sorted(r.status_code for r in responses) == [200, 400, 400]
-    [(total,)] = await db_execute("SELECT sum(size_bytes) FROM password_attachments")
+    [(total,)] = await db_execute("SELECT sum(size_bytes) FROM attachments")
     assert total <= 25 * 1024 * 1024
 
 
@@ -322,11 +351,7 @@ async def test_restore_racing_a_create_of_the_same_name_never_fails_with_500(
     restore, create = await racing
 
     assert sorted([restore.status_code, create.status_code]) == [200, 400]
-    rows = await db_execute(
-        "SELECT count(*) FROM passwords WHERE password_name = 'trashed' "
-        "AND deleted IS NULL"
-    )
-    assert rows == [(1,)]
+    assert await active_rows_named("trashed") == 1
 
 
 async def test_import_racing_a_create_of_the_same_name_never_fails_with_500(
@@ -351,11 +376,7 @@ async def test_import_racing_a_create_of_the_same_name_never_fails_with_500(
     assert created.status_code in (200, 400), created.text
     if created.status_code == 400:
         assert "already exists" in created.json()["detail"]
-    rows = await db_execute(
-        "SELECT count(*) FROM passwords WHERE password_name = 'late' "
-        "AND deleted IS NULL"
-    )
-    assert rows == [(1,)]
+    assert await active_rows_named("late") == 1
 
 
 async def test_backup_of_a_vault_with_an_undecryptable_entry_fails_without_side_effects(
@@ -363,8 +384,9 @@ async def test_backup_of_a_vault_with_an_undecryptable_entry_fails_without_side_
 ) -> None:
     headers = await _populated_vault(client)
     await db_execute(
-        "UPDATE passwords SET password_value = :v WHERE password_name = 'alpha'",
-        v=b"gAAAAA-not-a-token",
+        "UPDATE entries SET document = :v WHERE name_index = :index",
+        v=b"\x02not-a-sealed-value-but-long-enough-to-look-like-one",
+        index=await name_index("alpha"),
     )
     before = await db_snapshot()
 
@@ -372,6 +394,7 @@ async def test_backup_of_a_vault_with_an_undecryptable_entry_fails_without_side_
         "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
     )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 500
+    assert resp.json()["code"] == "vault_damaged"
     assert await db_snapshot() == before
-    assert io.BytesIO(resp.content).read(2) != b"PK"
+    assert io.BytesIO(resp.content).read(8) != b"CMBACKUP"

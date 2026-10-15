@@ -127,15 +127,13 @@ def _content(database: Path) -> tuple:
     (and their WAL) are never touched."""
     with closing(_private_copy(database)) as connection:
         names = connection.execute(
-            "SELECT password_name, deleted IS NOT NULL FROM passwords ORDER BY id"
+            "SELECT uid, deleted IS NOT NULL FROM entries ORDER BY id"
         ).fetchall()
         hidden = connection.execute("SELECT hidden_ms FROM settings").fetchone()
         attachments = connection.execute(
-            "SELECT count(*), sum(size_bytes) FROM password_attachments"
+            "SELECT count(*), sum(size_bytes) FROM attachments"
         ).fetchone()
-        key_check = connection.execute(
-            "SELECT key_check FROM master_password"
-        ).fetchone()
+        key_check = connection.execute("SELECT key_check FROM vault").fetchone()
     return tuple(names), hidden, attachments, key_check
 
 
@@ -292,7 +290,7 @@ async def test_a_restore_refuses_while_another_connection_has_the_vault_open(
     folder, snap = await _scenario(tmp_path)
     before = _raw(folder)
     with closing(sqlite3.connect(folder / VAULT_FILE)) as reader:
-        reader.execute("SELECT count(*) FROM passwords").fetchone()
+        reader.execute("SELECT count(*) FROM entries").fetchone()
         with pytest.raises(StorageError, match="open in another program"):
             storage.restore(folder, snap)
         assert _raw(folder) == before
@@ -401,9 +399,9 @@ async def test_a_restored_vault_restarts_and_unlocks_with_everything_intact(
         before = {
             table: connection.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
             for table in (
-                "master_password",
-                "passwords",
-                "password_attachments",
+                "vault",
+                "entries",
+                "attachments",
                 "settings",
             )
         }

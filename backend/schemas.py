@@ -356,6 +356,9 @@ class PasswordImportResult(BaseModel):
     ignored_rows: list[ImportRowReport] = Field(default_factory=list)
     renamed: int = 0
     renamed_rows: list[ImportRowReport] = Field(default_factory=list)
+    trashed: int = 0
+    attachments: int = 0
+    settings_restored: bool = False
 
 
 class HealthResponse(BaseModel):

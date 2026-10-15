@@ -1,20 +1,25 @@
 import io
 import json
+import sqlite3
 import zipfile
+from contextlib import closing
+from pathlib import Path
 
 import httpx
 import pytest
 import pyzipper
 
-from helpers import create_encrypted_zip
+from storage import VAULT_FILE
 from tests.support import (
     MASTER_PASSWORD,
     Headers,
+    api_server,
     auth,
     create_vault,
     db_execute,
     db_snapshot,
     entry,
+    legacy_backup_zip,
 )
 
 MIB = 1024 * 1024
@@ -61,7 +66,7 @@ def _auth_code_offset(archive: bytes) -> int:
     return data_start + info.compress_size - 5
 
 
-GOOD = create_encrypted_zip([{"name": "restored", "value": "v-1"}], MASTER_PASSWORD)
+GOOD = legacy_backup_zip([{"name": "restored", "value": "v-1"}], MASTER_PASSWORD)
 MEMBER = "ciphermoth_backup.json"
 
 
@@ -76,7 +81,7 @@ HOSTILE_BACKUPS = {
     "truncated-tail": GOOD[:-22],
     "flipped-ciphertext": _flip(GOOD, len(GOOD) // 2),
     "flipped-auth-code": _flip(GOOD, _auth_code_offset(GOOD)),
-    "other-password": create_encrypted_zip(
+    "other-password": legacy_backup_zip(
         [{"name": "x", "value": "y"}], "A-Different-Password-1"
     ),
     "unencrypted": _plain_zip(
@@ -111,24 +116,26 @@ async def test_hostile_backup_files_are_refused_cleanly(
 
     if name == "unencrypted":
         assert resp.status_code in (200, 400), resp.text
+    elif name == "other-password":
+        assert resp.status_code == 403, resp.text
+        assert await db_snapshot() == before
     else:
         assert resp.status_code == 400, resp.text
         assert await db_snapshot() == before
     assert (await client.get("/passwords", headers=vault)).status_code == 200
 
 
-async def test_backup_import_requires_the_vault_master_password(
+async def test_a_legacy_zip_opens_with_its_own_password_not_the_vaults(
     client: httpx.AsyncClient, vault: Headers
 ) -> None:
-    before = await db_snapshot()
     resp = await client.post(
         "/passwords/import",
         data={"master_password": "A-Different-Password-1"},
         files={"file": ("b.zip", HOSTILE_BACKUPS["other-password"], "application/zip")},
         headers=vault,
     )
-    assert resp.status_code == 403
-    assert await db_snapshot() == before
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["imported"] == 1
 
 
 async def _upload(
@@ -253,7 +260,7 @@ async def test_attachments_of_trashed_entries_are_hidden_kept_and_purged(
     assert resp.status_code == 404
     resp = await _upload(client, vault, "into-trash.bin")
     assert resp.status_code == 404
-    assert await db_execute("SELECT count(*) FROM password_attachments") == [(1,)]
+    assert await db_execute("SELECT count(*) FROM attachments") == [(1,)]
 
     assert (await client.post("/passwords/box/restore", headers=vault)).is_success
     resp = await client.get(
@@ -263,7 +270,7 @@ async def test_attachments_of_trashed_entries_are_hidden_kept_and_purged(
 
     await client.delete("/passwords/box", headers=vault)
     await client.delete("/passwords/box/purge", headers=vault)
-    assert await db_execute("SELECT count(*) FROM password_attachments") == [(0,)]
+    assert await db_execute("SELECT count(*) FROM attachments") == [(0,)]
 
 
 async def test_renaming_onto_an_existing_name_is_refused(
@@ -292,3 +299,32 @@ async def test_names_differing_only_in_case_or_surrounding_space_are_distinct_or
     ]
     assert names.count("box") == 1 and "BOX" in names
     assert json.dumps(names)
+
+
+def test_a_value_sqlite_cannot_decode_never_wedges_the_vault(tmp_path: Path) -> None:
+    folder = tmp_path / "data"
+    with api_server(tmp_path / "server.log", folder) as server:
+        api = server.base_url
+        created = httpx.post(
+            f"{api}/master_password/create", json={"master_password": MASTER_PASSWORD}
+        )
+        headers = {"x-ciphermoth-session": created.json()["session_token"]}
+        resp = httpx.post(f"{api}/passwords/create", json=entry("one"), headers=headers)
+        assert resp.status_code == 200
+        with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
+            connection.execute("UPDATE entries SET document = x'02' || randomblob(60)")
+            connection.commit()
+        for _ in range(3):
+            resp = httpx.get(f"{api}/passwords", headers=headers)
+            assert resp.status_code == 500
+        with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
+            connection.execute("DELETE FROM entries")
+            connection.commit()
+
+        for index in range(12):
+            resp = httpx.post(
+                f"{api}/passwords/create",
+                json=entry(f"after-{index}"),
+                headers=headers,
+            )
+            assert resp.status_code == 200, resp.text

@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.path_guard import entry_name
 from crud.attachment import AttachmentCRUD
+from crud.backup import BackupCRUD
 from crud.engine import Database
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
 from crud.settings import SettingsCRUD
 from crud.vault_access import SessionToken, VaultAccess
 from errors import Forbidden, InvalidRequest, SessionRequired
+from helpers import VaultKey
 from vault_sessions import VaultSessions
 
 SESSION_HEADER = "x-ciphermoth-session"
@@ -77,6 +79,12 @@ async def get_attachment_crud(session: SessionDep) -> AttachmentCRUD:
     return AttachmentCRUD(session)
 
 
+async def get_backup_crud(
+    session: SessionDep, vault_sessions: VaultSessionsDep
+) -> BackupCRUD:
+    return BackupCRUD(session, vault_sessions)
+
+
 async def get_vault_access(
     session: SessionDep, vault_sessions: VaultSessionsDep
 ) -> VaultAccess:
@@ -87,6 +95,7 @@ MasterPasswordCRUDDep = Annotated[MasterPasswordCRUD, Depends(get_master_passwor
 PasswordCRUDDep = Annotated[PasswordCRUD, Depends(get_password_crud)]
 SettingsCRUDDep = Annotated[SettingsCRUD, Depends(get_settings_crud)]
 AttachmentCRUDDep = Annotated[AttachmentCRUD, Depends(get_attachment_crud)]
+BackupCRUDDep = Annotated[BackupCRUD, Depends(get_backup_crud)]
 VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
 SessionTokenHeader = Annotated[str | None, Depends(_session_header)]
 
@@ -110,17 +119,17 @@ async def get_credential(
 CredentialDep = Annotated[SessionToken, Depends(get_credential)]
 
 
-async def get_vault_key(access: VaultAccessDep, credential: CredentialDep) -> str:
+async def get_vault_key(access: VaultAccessDep, credential: CredentialDep) -> VaultKey:
     return await access.authorize(credential)
 
 
 async def get_vault_key_quietly(
     access: VaultAccessDep, credential: CredentialDep
-) -> str:
+) -> VaultKey:
     return await access.authorize(credential, refresh=False)
 
 
-VaultKeyDep = Annotated[str, Depends(get_vault_key)]
+VaultKeyDep = Annotated[VaultKey, Depends(get_vault_key)]
 _PATH_CHANGED = (
     "The entry name in the request path was changed before it reached "
     "CipherMoth, so nothing was done. A reverse proxy in front of the API is "

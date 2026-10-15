@@ -7,6 +7,7 @@ from crud.engine import after_commit, after_rollback
 from crud.master_password import MasterPasswordCRUD
 from crud.settings import SettingsCRUD
 from errors import InvalidKey, SessionRequired
+from helpers import VaultKey
 from schemas import (
     MasterPasswordCreate,
     MasterPasswordUpdate,
@@ -42,7 +43,7 @@ class VaultAccess(BaseCRUD):
         ).inactivity_ms()
         self.vault_sessions.set_idle_timeout(inactivity_ms)
 
-    def _open(self, key: str) -> str:
+    def _open(self, key: VaultKey) -> str:
         token = self.vault_sessions.open(key)
         after_rollback(self.session, lambda: self.vault_sessions.revoke(token))
         return token
@@ -68,7 +69,9 @@ class VaultAccess(BaseCRUD):
             idle_timeout_ms=self.vault_sessions.idle_timeout_ms,
         )
 
-    async def authorize(self, credential: SessionToken, *, refresh: bool = True) -> str:
+    async def authorize(
+        self, credential: SessionToken, *, refresh: bool = True
+    ) -> VaultKey:
         key = self.vault_sessions.resolve(credential.token, refresh=refresh)
         try:
             return await self.master_password.verify_vault_key(key)
