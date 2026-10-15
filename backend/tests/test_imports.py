@@ -798,3 +798,48 @@ async def test_backup_tags_that_are_not_strings_restore_as_text(
     assert resp.status_code == 200, resp.text
     got = (await client.get("/passwords/tagged", headers=vault)).json()
     assert got["tags"] == ["1", "a", "2.5"]
+
+
+@pytest.mark.parametrize("source", ["legacy-zip", "csv"])
+async def test_an_overwriting_import_moves_the_replaced_entry_to_the_trash(
+    client: httpx.AsyncClient, vault: Headers, source: str
+) -> None:
+    current = entry("existing", "first-Pass-1", username="me", description="keep me")
+    await client.patch(
+        "/passwords/update",
+        json={
+            "password": {"password_name": "existing"},
+            "new_password": {**current, "password_value": "current-Pass-2"},
+        },
+        headers=vault,
+    )
+    await client.post(
+        "/passwords/existing/attachments",
+        files={"file": ("a.bin", b"attached", "x/y")},
+        headers=vault,
+    )
+    if source == "csv":
+        resp = await _import_csv(
+            client,
+            vault,
+            _csv([["name", "password"], ["existing", "imported-Pass-3"]]),
+            on_conflict="overwrite",
+        )
+    else:
+        resp = await _import_zip(
+            client,
+            vault,
+            [{"name": "existing", "value": "imported-Pass-3"}],
+            on_conflict="overwrite",
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overwritten"] == 1
+
+    active = (await client.get("/passwords/existing", headers=vault)).json()
+    assert active["password_value"] == "imported-Pass-3"
+    [replaced] = (await client.get("/passwords/trash", headers=vault)).json()
+    assert replaced["password_value"] == "current-Pass-2"
+    assert replaced["username"] == "me"
+    assert replaced["description"] == "keep me"
+    assert [h["value"] for h in replaced["password_history"]] == ["existing-Pass-1"]
+    assert replaced["attachment_count"] == 1

@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,9 +19,9 @@ from crud.records import (
     open_entry,
     seal_entry,
 )
-from errors import InvalidRequest
+from errors import InvalidRequest, VaultDamaged
 from helpers import VaultKey
-from models import AttachmentModel, EntryModel
+from models import AttachmentModel, EntryModel, utc_now
 from schemas import (
     ImportRowReport,
     OnConflict,
@@ -35,6 +36,8 @@ from schemas import (
 from validators import normalize_totp_secret, normalize_totp_secret_leniently
 
 Imported = Password | RestoredPassword
+
+logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT = 10
 _CSV_FIELD_SIZE_LIMIT = 16 * 1024 * 1024
@@ -176,9 +179,14 @@ class PasswordCRUD(BaseCRUD):
             stmt = stmt.where(EntryModel.deleted.is_(None))
         models = list((await self.session.execute(stmt)).scalars())
         counts = await self._attachment_counts([m.id for m in models])
-        responses = [
-            self.to_response(m, open_entry(key, m), counts.get(m.id, 0)) for m in models
-        ]
+        responses = []
+        for model in models:
+            try:
+                document = open_entry(key, model)
+            except VaultDamaged:
+                logger.warning("Entry #%s is damaged; not listed.", model.id)
+                continue
+            responses.append(self.to_response(model, document, counts.get(model.id, 0)))
         if not deleted:
             responses.sort(key=lambda response: response.password_name)
         return responses
@@ -275,20 +283,25 @@ class PasswordCRUD(BaseCRUD):
         on_conflict: OnConflict,
         password: Imported,
     ) -> str:
+        """
+        Add one imported entry. An entry it overwrites is moved to the trash,
+        with its history and attachments, and the imported one takes its name,
+        so an import never destroys anything.
+        """
         index = key.name_index(password.password_name)
         current = existing.get(index)
-        if current is None:
-            model = EntryModel()
-            seal_entry(key, model, document_from(password))
-            self.session.add(model)
-            existing[index] = model
-            return "imported"
-        if on_conflict == OnConflict.skip:
-            return "skipped"
-        history = open_entry(key, current).history
-        seal_entry(key, current, document_from(password, history))
-        current.backed_up = False
-        return "overwritten"
+        outcome = "imported"
+        if current is not None:
+            if on_conflict == OnConflict.skip:
+                return "skipped"
+            current.deleted = utc_now()
+            await self.session.flush()
+            outcome = "overwritten"
+        model = EntryModel()
+        seal_entry(key, model, document_from(password))
+        self.session.add(model)
+        existing[index] = model
+        return outcome
 
     async def load_active(self) -> dict[bytes, EntryModel]:
         return {

@@ -175,7 +175,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               {isCsv
                 ? "Upload a CSV exported from Chrome, Bitwarden, KeePass, Proton Pass and similar. Columns are matched automatically."
-                : "Restore a CipherMoth backup (.cmbackup), or a backup ZIP from CipherMoth 2.0 or earlier. Entries already in the vault are never lost: an overwritten entry moves to the trash."}
+                : "Restore a CipherMoth backup (.cmbackup), or a backup ZIP from CipherMoth 2.0 or earlier."}
             </Typography>
 
             <Button
@@ -233,7 +233,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
                 <FormControlLabel
                   value="overwrite"
                   control={<Radio size="small" />}
-                  label="Overwrite with imported value"
+                  label="Replace it (the current one moves to the trash)"
                 />
               </RadioGroup>
             </FormControl>
