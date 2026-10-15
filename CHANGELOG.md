@@ -23,6 +23,7 @@ This release changes how the vault is encrypted (vault format 2) and replaces th
 - `ciphermoth-admin set-aside`: moves a vault this release cannot open (or any vault) with its write-ahead log into `snapshots/set-aside-<time>/`, so the next start creates a new one. Refuses while CipherMoth runs.
 - Restoring a complete backup into a vault that already has entries merges: new entries are added, an entry with the same name is kept ("skip") or moved to the trash and replaced ("overwrite"), trashed entries already present are not added twice. Settings are restored only into an empty vault. The import report also counts restored trash entries, attachments and settings.
 - A backup can be restored with the password it was made with, also after the master password changed or into another vault.
+- **Damaged entries no longer block the vault.** An entry or attachment that fails its integrity check is left out of the listings and reported: a warning with a **Remove** button in the web UI, `ciphermoth damaged [--remove]`, `GET /api/vault/damaged` and `DELETE /api/vault/damaged/{entries|attachments}/{id}` (removes a row only if it really cannot be read). Backups and master password changes wait until damaged rows are removed or a snapshot is restored.
 
 ### Changed
 
@@ -30,6 +31,10 @@ This release changes how the vault is encrypted (vault format 2) and replaces th
 - Backups download as `ciphermoth_backup_<time>.cmbackup`. The backup import accepts files up to 1 GB; encrypted backups larger than 16 MB may be buffered in a temporary file by the server, which holds only ciphertext (CSV imports and attachments still stay in memory).
 - The import dialog and `ciphermoth import` ask for the **backup password** (the master password at the time of the backup) instead of the current master password.
 - A master password change no longer touches entries' `updated` time.
+- **Overwriting imports keep the replaced entry.** CSV imports and backup restores with "overwrite" move the existing entry to the trash, with its history and attachments, instead of overwriting it in place.
+- The backup import reads its upload only after checking the session (one file, no database transaction while it arrives); the backup writer refuses to produce a file this release could not restore.
+- The backend refuses to start when a write-ahead log or journal sits next to a missing or empty vault file, instead of letting SQLite discard it, and never creates a vault over entries that have no key record.
+- Backup ZIPs from 2.0 must be encrypted; attachment download names lose every control character.
 
 ### Removed
 

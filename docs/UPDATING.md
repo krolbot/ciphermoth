@@ -94,9 +94,14 @@ The backend checks the vault before serving anything, through a read-only connec
 - **"was created by CipherMoth 2.0 or earlier (vault format 1)"**: the vault uses the old format, see [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1). Nothing was changed.
 - **"was written by a newer CipherMoth"** (a newer schema or vault format): you went back to an older release. Update again, or restore a snapshot taken by this release.
 - **"is not a CipherMoth vault"**: the volume holds some other file as `vault.db`.
+- **"... exists but vault.db is missing or empty"**: a write-ahead log or journal was left without its vault, for example by an interrupted `set-aside`. Run `ciphermoth-admin set-aside` again (it moves the journal next to the vault it belongs to) or put that vault file back.
 - **"Another CipherMoth process is using /data"**: two backends share one volume. Run one.
 - **"CipherMoth cannot write its vault in ..."**: the data folder belongs to another user. The backend runs as uid 1000; a host folder mounted instead of the volume must belong to it (`sudo chown -R 1000:1000 <folder>`). The message names the owner it found.
 - **"no longer uses PostgreSQL"** (exit code 78): the container was started from a compose file of a PostgreSQL release; see the next section.
+
+## When entries cannot be read
+
+If part of the vault file is damaged (a failing disk) or was altered, the affected entries and attachments are left out of the vault and the web UI shows a warning (`cip damaged` lists them). Everything else keeps working, but backups and master password changes wait. Either restore a snapshot from before the damage (keeps everything), or remove the damaged items: the **Remove** button in the warning, or `cip damaged --remove`. Nothing readable is ever removed this way.
 
 ## Moving from CipherMoth 2.0 (vault format 1)
 
@@ -117,6 +122,13 @@ To move your entries:
 
    `set-aside` asks for confirmation, then moves `vault.db` and its write-ahead log, unchanged, into `/data/snapshots/set-aside-<time>/`. Nothing is deleted.
 4. Open the web UI, create a master password (a new vault), and import the ZIP from step 1 with its password (Import, "CipherMoth backup"). Then make a new backup: it is complete and much stronger than the old ZIP. Delete the old ZIP once you no longer need it; its entry names and the weak ZIP encryption stay readable to anyone who has it and the password.
+5. Once you have used the new vault for a while and no longer want to go back, delete the old vault and the snapshots taken by 2.0 from the volume: they keep entry names, usernames and descriptions in plaintext.
+
+   ```shell
+   docker compose -f docker-compose.prod.yml exec backend sh -c 'rm -r /data/snapshots/set-aside-<time>'
+   ```
+
+   (and any `/data/snapshots/vault-<time>.db` or `replaced-<time>` folder from before the update).
 
 To go back to 2.0, move the new vault aside as well, put the old files back, and start 2.0:
 

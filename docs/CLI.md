@@ -58,13 +58,14 @@ ciphermoth password purge <name> [--yes]     Permanently delete a trashed entry
 ciphermoth backup [--out <dir>]              Save a complete encrypted backup (.cmbackup)
 ciphermoth import <file> [--on-conflict]     Restore a .cmbackup, or a backup ZIP from 2.0 or earlier (skip|overwrite)
 ciphermoth import-csv <file> [--on-conflict] Import a CSV from another manager (skip|overwrite)
+ciphermoth damaged [--remove] [--yes]        List (or remove) entries and attachments the vault cannot read
 ```
 
 Every command that touches encrypted data prompts for the master password. Use `--help` on any command for details.
 
 On `update`, leave a prompt blank to keep the current value: you can fix a URL without retyping the password, and the password history only records a genuine change.
 
-`import` and `import-csv` are all-or-nothing: if a row is invalid nothing is imported, and the error names the row and column. Records that simply aren't importable (cards, identities, rows without a password) are listed after the summary with their row and reason, and so are rows imported under a new name because the file had another entry with the same name (`name (2)`). Bitwarden and Proton Pass secure notes import as secure notes.
+`import` and `import-csv` are all-or-nothing: if a row is invalid nothing is imported, and the error names the row and column. Records that simply aren't importable (cards, identities, rows without a password) are listed after the summary with their row and reason, and so are rows imported under a new name because the file had another entry with the same name (`name (2)`). Bitwarden and Proton Pass secure notes import as secure notes. With `--on-conflict overwrite`, an entry that is replaced moves to the trash with its history and attachments.
 
 ## Examples
 

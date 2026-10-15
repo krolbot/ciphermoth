@@ -119,6 +119,8 @@ A note keeps its body in `value`. Readers refuse unknown or missing keys and wro
 - Which entries share a name (equal `name_index`), in practice an entry and its trashed copies; nothing else about names. Values change completely after a master password change.
 - Each entry document's length rounded up to 64 bytes, each attachment's exact size.
 - The settings row (timeouts in milliseconds, update check on or off).
+- When the master password last changed (the `vault` row's `updated` time) and how many entries and attachments were ever created, purged ones included (SQLite's id counter).
+- Across two copies of the file (two snapshots, or a snapshot and the live vault): which entries changed, were renamed (their name index changed) or were trashed in between.
 
 This is field-level encryption inside an ordinary SQLite file, not whole-file encryption: table names, the schema and the items above are visible to anyone who opens the file.
 
@@ -166,7 +168,7 @@ Frame 0 is the manifest (UTF-8 JSON, at most 64 MiB); frames 1 to N hold the att
 
 Wrong password, tampering, truncation, reordering, a frame from another backup and a malformed manifest all fail cleanly with nothing written. Memory use is bounded by the manifest plus one attachment; the uploaded backup itself is ciphertext and may be spooled to a temporary file by the server.
 
-**Restoring into a vault.** Entries are added with their timestamps and history; an active entry whose name already exists is skipped or, with "overwrite", the existing one is moved to the Trash and the backup's version takes its place, so nothing is lost. A trashed entry is skipped if the vault already has a trashed entry with the same name and deletion time (restoring one backup twice adds nothing). Settings are restored only into a vault that has no entries yet. Restored entries count as backed up.
+**Restoring into a vault.** Entries are added with their timestamps and history; an active entry whose name already exists is skipped or, with "overwrite", the existing one is moved to the Trash (with its history and attachments) and the backup's version takes its place, so nothing is lost. CSV imports and 2.0 backup ZIPs overwrite the same way. A trashed entry is skipped if the vault already has a trashed entry with the same name and deletion time (restoring one backup twice adds nothing). Settings are restored only into a vault that has no entries yet. Restored entries count as backed up.
 
 ## 6. Versioning
 
@@ -176,7 +178,11 @@ Three independent numbers, each refused when newer than the code understands:
 - `vault.format_version`: the cryptographic layout. 2.
 - The backup header `version`: 2. (Version 1 was the WinZip-AES ZIP of CipherMoth up to 2.0.x; it can still be imported, see below.)
 
-A file with another schema or a newer format is refused at startup, before anything is written; the message says what to do. An empty file gets the schema in one transaction; until a master password is set, the vault is reported as not set up.
+A file with another schema or a newer format is refused at startup, before anything is written; the message says what to do. So is a write-ahead log or rollback journal next to a missing or empty vault file (it belongs to a vault that was moved away, and SQLite would discard it). An empty file gets the schema in one transaction; until a master password is set, the vault is reported as not set up, and a vault is never created over entries that have no key record.
+
+## 6a. Damaged rows
+
+A value that fails authentication or its format check is never shown and never overwritten. Listings leave that entry or attachment out (and log its row id); `GET /api/vault/damaged` lists such rows, and `DELETE /api/vault/damaged/{entries|attachments}/{id}` removes one only after checking, under the write lock, that it really cannot be read (removing an entry removes its attachments). Backups and master password changes refuse to run while damaged rows remain, because they would have to drop or carry them. The web UI shows a banner and the CLI has `ciphermoth damaged [--remove]`. Restoring a snapshot from before the damage is the alternative that keeps everything.
 
 ## 7. What changes do not erase
 
