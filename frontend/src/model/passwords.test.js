@@ -169,3 +169,26 @@ describe("entry names in URLs", () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe("damaged rows", () => {
+  it("loads the damaged rows and removes each one, then reloads", async () => {
+    const actions = build({
+      "GET /vault/damaged": [200, { entries: [7], attachments: [3] }],
+      "DELETE /vault/damaged/entries/7": [200, { deleted: true, detail: "x" }],
+      "DELETE /vault/damaged/attachments/3": [200, { deleted: true, detail: "x" }],
+    });
+    await actions.getDamaged();
+    await actions.removeDamaged({ entries: [7], attachments: [3] });
+    const calls = seen.map((request) => `${request.method.toUpperCase()} ${request.url}`);
+    expect(calls).toContain("DELETE /vault/damaged/entries/7");
+    expect(calls).toContain("DELETE /vault/damaged/attachments/3");
+    expect(calls.filter((call) => call === "GET /vault/damaged")).toHaveLength(2);
+  });
+
+  it("treats a failed damage check as nothing to report", async () => {
+    const store = createStore({ passwords: Passwords });
+    apiClient.defaults.adapter = routes({ "GET /vault/damaged": [500, {}] }, []);
+    await store.getActions().passwords.getDamaged();
+    expect(store.getState().passwords.damaged).toEqual({ entries: [], attachments: [] });
+  });
+});

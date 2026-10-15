@@ -138,11 +138,16 @@ async def test_write_burst_racing_a_rotation_never_corrupts_or_deadlocks(
     assert len((await read_current_vault(NEW_MASTER_PASSWORD)).entries) == created
 
 
-async def test_a_row_sealed_with_another_key_stops_reads_and_changes_nothing(
+async def test_a_damaged_row_is_isolated_reported_and_removable(
     client: httpx.AsyncClient,
 ) -> None:
     headers = auth(await create_vault(client))
     await client.post("/passwords/create", json=entry("good"), headers=headers)
+    await client.post(
+        "/passwords/good/attachments",
+        files={"file": ("a.bin", b"kept", "x/y")},
+        headers=headers,
+    )
     planted = await plant_entry("planted", master_password=MASTER_PASSWORD)
     await db_execute(
         "UPDATE entries SET document = :document WHERE id = :id",
@@ -150,10 +155,11 @@ async def test_a_row_sealed_with_another_key_stops_reads_and_changes_nothing(
         id=planted,
     )
     listing = await client.get("/passwords", headers=headers)
-    assert listing.status_code == 500
-    assert listing.json()["code"] == "vault_damaged"
-    assert f"Entry #{planted}" in listing.json()["detail"]
-    assert "planted" not in listing.text
+    assert listing.status_code == 200
+    assert [p["password_name"] for p in listing.json()] == ["good"]
+    damaged = await client.get("/vault/damaged", headers=headers)
+    assert damaged.json() == {"entries": [planted], "attachments": []}
+
     before = await db_snapshot()
     for request in (
         client.patch("/master_password/update", json=ROTATE, headers=headers),
@@ -166,9 +172,57 @@ async def test_a_row_sealed_with_another_key_stops_reads_and_changes_nothing(
         resp = await request
         assert resp.status_code == 500
         assert resp.json()["code"] == "vault_damaged"
+        assert f"Entry #{planted}" in resp.json()["detail"]
+        assert "ciphermoth damaged" in resp.json()["detail"]
+    [(good_id,)] = await db_execute(
+        "SELECT id FROM entries WHERE id <> :id", id=planted
+    )
+    for kind, row_id, status in (
+        ("entries", good_id, 400),
+        ("attachments", 1, 400),
+        ("entries", 999, 404),
+    ):
+        resp = await client.delete(f"/vault/damaged/{kind}/{row_id}", headers=headers)
+        assert resp.status_code == status, resp.text
     assert await db_snapshot() == before
-    resp = await client.get("/passwords/good", headers=headers)
+
+    resp = await client.delete(f"/vault/damaged/entries/{planted}", headers=headers)
     assert resp.status_code == 200
+    assert (await client.get("/vault/damaged", headers=headers)).json() == {
+        "entries": [],
+        "attachments": [],
+    }
+    resp = await client.patch("/master_password/update", json=ROTATE, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+
+async def test_a_damaged_attachment_is_isolated_and_removable(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    await client.post("/passwords/create", json=entry("box"), headers=headers)
+    for name in ("good.bin", "bad.bin"):
+        await client.post(
+            "/passwords/box/attachments",
+            files={"file": (name, b"bytes of " + name.encode(), "x/y")},
+            headers=headers,
+        )
+    await db_execute("UPDATE attachments SET size_bytes = 3 WHERE id = 2")
+    listed = (await client.get("/passwords/box/attachments", headers=headers)).json()
+    assert [a["filename"] for a in listed] == ["good.bin", "bad.bin"]
+    resp = await client.get("/passwords/box/attachments/2", headers=headers)
+    assert resp.status_code == 500
+    await db_execute("UPDATE attachments SET meta = content WHERE id = 2")
+    listed = (await client.get("/passwords/box/attachments", headers=headers)).json()
+    assert [a["filename"] for a in listed] == ["good.bin"]
+    damaged = (await client.get("/vault/damaged", headers=headers)).json()
+    assert damaged == {"entries": [], "attachments": [2]}
+    resp = await client.delete("/vault/damaged/attachments/2", headers=headers)
+    assert resp.status_code == 200
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert backup.status_code == 200
 
 
 async def test_unauthenticated_bodies_are_bounded(client: httpx.AsyncClient) -> None:

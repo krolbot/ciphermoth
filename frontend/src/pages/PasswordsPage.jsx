@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -57,8 +58,10 @@ const PasswordsPage = () => {
     getTrash,
     restore,
     purge,
+    getDamaged,
+    removeDamaged,
   } = useStoreActions((actions) => actions.ciphermothModels.passwords);
-  const { error, loading, passwords, trash } = useStoreState(
+  const { error, loading, passwords, trash, damaged } = useStoreState(
     (state) => state.ciphermothModels.passwords
   );
 
@@ -70,13 +73,17 @@ const PasswordsPage = () => {
   const [importOpen, setImportOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [removeDamagedOpen, setRemoveDamagedOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
 
   useEffect(() => {
     get();
     getTrash();
-  }, [get, getTrash]);
+    getDamaged();
+  }, [get, getTrash, getDamaged]);
+
+  const damagedCount = damaged.entries.length + damaged.attachments.length;
 
   useEffect(() => {
     if (error) enqueueSnackbar(error, { variant: "error" });
@@ -150,6 +157,16 @@ const PasswordsPage = () => {
     try {
       await restore(name);
       enqueueSnackbar("Restored from trash.", { variant: "success" });
+    } catch (err) {
+      enqueueSnackbar(err.message, { variant: "error" });
+    }
+  };
+
+  const handleRemoveDamaged = async () => {
+    setRemoveDamagedOpen(false);
+    try {
+      await removeDamaged(damaged);
+      enqueueSnackbar("Damaged rows removed.", { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
@@ -309,6 +326,23 @@ const PasswordsPage = () => {
         </Stack>
       )}
 
+      {damagedCount > 0 && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => setRemoveDamagedOpen(true)}>
+              Remove
+            </Button>
+          }
+        >
+          {damagedCount} {damagedCount === 1 ? "item" : "items"} in the vault file cannot be read
+          (damaged or altered), so {damagedCount === 1 ? "it is" : "they are"} not shown. Backups
+          and master password changes wait until you restore a snapshot or remove{" "}
+          {damagedCount === 1 ? "it" : "them"}.
+        </Alert>
+      )}
+
       {loading && (
         <Box sx={{ display: "flex", justifyContent: "center", mt: 8 }}>
           <CircularProgress />
@@ -408,6 +442,18 @@ const PasswordsPage = () => {
         onConfirm={handleDelete}
       >
         Move <strong>{deleteTarget}</strong> to Trash? You can restore it later from the Trash.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={removeDamagedOpen}
+        title="Remove damaged items"
+        confirmText="Remove"
+        confirmColor="error"
+        onClose={() => setRemoveDamagedOpen(false)}
+        onConfirm={handleRemoveDamaged}
+      >
+        Permanently remove {damagedCount} unreadable {damagedCount === 1 ? "item" : "items"}? A
+        removed entry takes its attachments with it. If you have a snapshot from before the damage,
+        restoring it keeps them instead.
       </ConfirmDialog>
       <TrashDialog
         open={trashOpen}

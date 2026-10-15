@@ -546,6 +546,50 @@ def cmd_backup(
     _ok(f"Backup saved to [cyan]{escape(str(dest))}[/cyan]")
 
 
+@app.command(
+    "damaged",
+    help=(
+        "List entries and attachments the vault file holds but cannot read (damaged "
+        "or altered), and optionally remove them. Backups and master password "
+        "changes refuse to run while any remain."
+    ),
+)
+def cmd_damaged(
+    remove: Annotated[
+        bool, typer.Option("--remove", help="Remove every damaged row.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Skip confirmation.")
+    ] = False,
+) -> None:
+    with _vault() as vault:
+        resp = vault.send("GET", "/vault/damaged")
+        _check(resp)
+        rows = [
+            (kind, row_id)
+            for kind in ("entries", "attachments")
+            for row_id in resp.json()[kind]
+        ]
+        if not rows:
+            _ok("Nothing is damaged.")
+            return
+        for kind, row_id in rows:
+            label = "entry" if kind == "entries" else "attachment"
+            _err.print(f"[yellow]![/yellow]  {label} #{row_id} cannot be read")
+        if not remove:
+            _out.print(
+                "Restore a snapshot (docs/UPDATING.md), or run "
+                "'ciphermoth damaged --remove'. Removing an entry also removes its "
+                "attachments."
+            )
+            return
+        if not yes:
+            typer.confirm(f"Permanently remove {len(rows)} damaged row(s)?", abort=True)
+        for kind, row_id in rows:
+            _check(vault.send("DELETE", f"/vault/damaged/{kind}/{row_id}"))
+    _ok(f"Removed {len(rows)} damaged row(s)")
+
+
 def _report_import(payload: dict) -> None:
     _ok(
         f"Import complete - "

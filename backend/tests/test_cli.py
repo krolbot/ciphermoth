@@ -187,7 +187,9 @@ async def test_live_server_logs_do_not_contain_secrets(
     assert '"GET /api/passwords/{password_name} HTTP/1.1" 200' in log
 
 
-async def test_cli_explains_a_damaged_vault_without_a_traceback(api: str) -> None:
+async def test_cli_reports_and_removes_damaged_rows_without_a_traceback(
+    api: str, tmp_path: Path
+) -> None:
     ok(
         cli(
             api,
@@ -197,18 +199,25 @@ async def test_cli_explains_a_damaged_vault_without_a_traceback(api: str) -> Non
             answers=["good-Pass-1", "good-Pass-1", "", "", "", "", ""],
         )
     )
+    assert "Nothing is damaged" in ok(cli(api, "damaged"))
     planted = await plant_entry("planted")
     await db_execute(
         "UPDATE entries SET document = :document WHERE id = :id",
         document=b"\x02" + os.urandom(60),
         id=planted,
     )
-    listing = cli(api, "password", "list")
-    assert listing.exit_code == 1
-    assert f"Entry #{planted}" in listing.output
-    assert "restore a snapshot" in listing.output
-    assert "Traceback" not in listing.output
-    assert "good-Pass-1" in ok(cli(api, "password", "get", "good"))
+    listing = ok(cli(api, "password", "list"))
+    assert "good" in listing and "planted" not in listing
+    backup = cli(api, "backup", "--out", str(tmp_path))
+    assert backup.exit_code == 1
+    assert f"Entry #{planted}" in backup.output
+    assert "Traceback" not in backup.output
+    report = ok(cli(api, "damaged"))
+    assert f"entry #{planted} cannot be read" in report
+    assert cli(api, "damaged", "--remove", answers=["n"]).exit_code == 1
+    assert "Removed 1 damaged row" in ok(cli(api, "damaged", "--remove", "--yes"))
+    assert "Nothing is damaged" in ok(cli(api, "damaged"))
+    ok(cli(api, "backup", "--out", str(tmp_path)))
 
     missing = cli(api, "password", "delete", "never-existed", "--yes")
     assert missing.exit_code == 1

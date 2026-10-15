@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import func, select
 
 from crud.base import BaseCRUD
@@ -8,10 +10,12 @@ from crud.records import (
     open_attachment_metadata,
     seal_attachment,
 )
-from errors import InvalidRequest, NotFound
+from errors import InvalidRequest, NotFound, VaultDamaged
 from helpers import VaultKey
 from models import AttachmentModel, EntryModel
 from schemas import AttachmentResponse
+
+logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_ATTACHMENTS_PER_ENTRY = 20
@@ -57,10 +61,17 @@ class AttachmentCRUD(BaseCRUD):
                 .order_by(AttachmentModel.created, AttachmentModel.id)
             )
         ).scalars()
-        return [
-            self._to_response(m, open_attachment_metadata(key, m, entry.uid))
-            for m in models
-        ]
+        listed = []
+        for model in models:
+            try:
+                metadata = open_attachment_metadata(key, model, entry.uid)
+            except VaultDamaged:
+                logger.warning(
+                    "Attachment #%s failed its integrity check; skipped.", model.id
+                )
+                continue
+            listed.append(self._to_response(model, metadata))
+        return listed
 
     async def add_attachment(
         self,

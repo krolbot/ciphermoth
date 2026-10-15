@@ -21,6 +21,7 @@ const Passwords = {
   loading: false,
   passwords: [],
   trash: [],
+  damaged: { entries: [], attachments: [] },
 
   setError: action((state, error) => {
     state.error = error;
@@ -33,6 +34,34 @@ const Passwords = {
   }),
   setTrash: action((state, trash) => {
     state.trash = trash;
+  }),
+  setDamaged: action((state, damaged) => {
+    state.damaged = damaged;
+  }),
+
+  getDamaged: thunk(async (actions) => {
+    try {
+      const { data } = await apiClient.get("/vault/damaged");
+      actions.setDamaged(data);
+    } catch {
+      actions.setDamaged({ entries: [], attachments: [] });
+    }
+  }),
+
+  removeDamaged: thunk(async (actions, damaged) => {
+    try {
+      for (const kind of ["entries", "attachments"]) {
+        for (const rowId of damaged[kind]) {
+          await apiClient.delete(`/vault/damaged/${kind}/${rowId}`);
+        }
+      }
+    } catch (err) {
+      throw new Error(await errorDetail(err, "Failed to remove the damaged rows."));
+    } finally {
+      await actions.get();
+      await actions.getTrash();
+      await actions.getDamaged();
+    }
   }),
 
   get: thunk(async (actions) => {

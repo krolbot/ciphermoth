@@ -365,3 +365,8 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     schema_state: str = Field(serialization_alias="schema")
+
+
+class DamagedRows(BaseModel):
+    entries: list[int]
+    attachments: list[int]

@@ -120,6 +120,10 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
     ("PATCH", "/api/settings"): lambda c, h, x: c.patch(
         "/settings", json=SETTINGS_BODY, headers=h
     ),
+    ("GET", "/api/vault/damaged"): lambda c, h, x: c.get("/vault/damaged", headers=h),
+    ("DELETE", "/api/vault/damaged/{kind}/{row_id}"): lambda c, h, x: c.delete(
+        "/vault/damaged/entries/1", headers=h
+    ),
     ("PATCH", "/api/master_password/update"): lambda c, h, x: c.patch(
         "/master_password/update",
         json={
@@ -131,6 +135,7 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
 }
 
 ROUTE_IDS = [f"{method} {path}" for method, path in PROTECTED_ROUTES]
+REACHED = {("DELETE", "/api/vault/damaged/{kind}/{row_id}"): 400}
 
 
 async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
@@ -216,7 +221,7 @@ async def test_forged_session_tokens_are_rejected(
     )
 
     resp = await spec(client, auth(token), ctx)
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == REACHED.get(route, 200), resp.text
 
 
 @pytest.mark.parametrize("route", list(PROTECTED_ROUTES), ids=ROUTE_IDS)
@@ -241,7 +246,7 @@ async def test_the_vault_key_is_never_accepted_as_a_credential(
     await _assert_rejected_without_side_effects(client, spec, ctx, credentials)
 
     resp = await spec(client, auth(token), ctx)
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == REACHED.get(route, 200), resp.text
 
 
 @pytest.mark.parametrize("route", list(PROTECTED_ROUTES), ids=ROUTE_IDS)
