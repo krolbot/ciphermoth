@@ -18,6 +18,9 @@ from helpers import (
 )
 
 MAX_FRAMES = 1_000_001
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_BACKUP_BYTES = 1024 * 1024 * 1024
+FRAME_OVERHEAD = 4 + NONCE_BYTES + TAG_BYTES
 _FRAME_PREFIX = struct.Struct(">I")
 _INCOMPLETE = "The backup file is incomplete or damaged."
 

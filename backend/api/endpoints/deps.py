@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.path_guard import entry_name
 from crud.attachment import AttachmentCRUD
 from crud.backup import BackupCRUD
+from crud.damage import DamageCRUD
 from crud.engine import Database
 from crud.master_password import MasterPasswordCRUD
 from crud.password import PasswordCRUD
@@ -85,6 +86,10 @@ async def get_backup_crud(
     return BackupCRUD(session, vault_sessions)
 
 
+async def get_damage_crud(session: SessionDep) -> DamageCRUD:
+    return DamageCRUD(session)
+
+
 async def get_vault_access(
     session: SessionDep, vault_sessions: VaultSessionsDep
 ) -> VaultAccess:
@@ -96,6 +101,7 @@ PasswordCRUDDep = Annotated[PasswordCRUD, Depends(get_password_crud)]
 SettingsCRUDDep = Annotated[SettingsCRUD, Depends(get_settings_crud)]
 AttachmentCRUDDep = Annotated[AttachmentCRUD, Depends(get_attachment_crud)]
 BackupCRUDDep = Annotated[BackupCRUD, Depends(get_backup_crud)]
+DamageCRUDDep = Annotated[DamageCRUD, Depends(get_damage_crud)]
 VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
 SessionTokenHeader = Annotated[str | None, Depends(_session_header)]
 
@@ -130,6 +136,22 @@ async def get_vault_key_quietly(
 
 
 VaultKeyDep = Annotated[VaultKey, Depends(get_vault_key)]
+
+
+async def get_session_key(
+    credential: CredentialDep, vault_sessions: VaultSessionsDep
+) -> VaultKey:
+    """
+    The session's key, from memory only. For a route that must read a large
+    body before it touches the database: the session is checked before the
+    body is read, and no transaction (so no write lock) is open while it
+    arrives. The route's CRUD method must still check the key against the
+    vault (``MasterPasswordCRUD.verify_vault_key``) before it reads or writes.
+    """
+    return vault_sessions.resolve(credential.token)
+
+
+SessionKeyDep = Annotated[VaultKey, Depends(get_session_key)]
 _PATH_CHANGED = (
     "The entry name in the request path was changed before it reached "
     "CipherMoth, so nothing was done. A reverse proxy in front of the API is "

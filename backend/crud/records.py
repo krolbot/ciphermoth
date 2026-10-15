@@ -3,7 +3,13 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +19,20 @@ from models import AttachmentModel, EntryModel
 
 _DAMAGED = (
     "{what} in the vault file failed its integrity check, so it was not read. The "
-    "file was damaged or altered; restore a snapshot (docs/UPDATING.md)."
+    "file was damaged or altered: restore a snapshot (docs/UPDATING.md), or "
+    "remove the damaged rows (GET /api/vault/damaged, `ciphermoth damaged`)."
 )
+
+
+_TIMESTAMP = TypeAdapter(datetime)
+
+
+def history_timestamp(value: str) -> str:
+    """A history time the API's response model can read back: validated with
+    the same parser (``PasswordHistoryEntry.changed_at``), so a value Python's
+    ``fromisoformat`` accepts but pydantic does not can never be stored."""
+    _TIMESTAMP.validate_python(value)
+    return value
 
 
 def damaged(what: str) -> VaultDamaged:
@@ -38,8 +56,7 @@ class HistoryItem(_Strict):
     @field_validator("changed_at")
     @classmethod
     def _timestamp(cls, value: str) -> str:
-        datetime.fromisoformat(value)
-        return value
+        return history_timestamp(value)
 
 
 class EntryDocument(_Strict):

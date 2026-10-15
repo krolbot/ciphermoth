@@ -436,6 +436,8 @@ def read_legacy_backup(data: bytes, password: str, max_bytes: int) -> bytes:
         with pyzipper.AESZipFile(io.BytesIO(data), "r") as archive:
             if LEGACY_BACKUP_MEMBER not in archive.namelist():
                 raise BackupFormatError("The ZIP file is not a CipherMoth backup.")
+            if not archive.getinfo(LEGACY_BACKUP_MEMBER).flag_bits & 0x1:
+                raise BackupFormatError("The ZIP file is not encrypted.")
             archive.setpassword(password.encode())
             with archive.open(LEGACY_BACKUP_MEMBER) as member:
                 content = member.read(max_bytes + 1)

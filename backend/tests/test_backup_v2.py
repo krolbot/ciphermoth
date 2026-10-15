@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import json
@@ -258,6 +259,30 @@ MALFORMED: dict[str, tuple[list[dict], list[bytes], dict]] = {
     "bad timestamp": ([backup_entry("a", created="yesterday")], [], {}),
     "bad history time": (
         [backup_entry("a", history=[{"value": "x", "changed_at": "soon"}])],
+        [],
+        {},
+    ),
+    "week-date history time": (
+        [
+            backup_entry(
+                "a", history=[{"value": "x", "changed_at": "2026-W01-1T00:00:00"}]
+            )
+        ],
+        [],
+        {},
+    ),
+    "compact history time": (
+        [backup_entry("a", history=[{"value": "x", "changed_at": "20260105T000000"}])],
+        [],
+        {},
+    ),
+    "time beyond year 9999 in UTC": (
+        [backup_entry("a", created="9999-12-31T23:00:00-05:00")],
+        [],
+        {},
+    ),
+    "time before year 1 in UTC": (
+        [backup_entry("a", deleted="0001-01-01T00:30:00+01:00")],
         [],
         {},
     ),
@@ -654,3 +679,110 @@ async def test_any_vault_survives_a_backup_round_trip(
     assert_same_vault(
         original, await read_current_vault(), compare=[*PLAINTEXT, "created", "updated"]
     )
+
+
+def _multipart(
+    chunks: list[bytes], boundary: str = "cmbound", gate: asyncio.Event | None = None
+):
+    sent: list[int] = []
+
+    async def body():
+        yield (
+            f"--{boundary}\r\nContent-Disposition: form-data; "
+            f'name="master_password"\r\n\r\n{MASTER_PASSWORD}\r\n'
+            f"--{boundary}\r\nContent-Disposition: form-data; "
+            f'name="file"; filename="b.cmbackup"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        for index, chunk in enumerate(chunks):
+            if gate is not None and index == 1:
+                await gate.wait()
+            sent.append(len(chunk))
+            yield chunk
+        yield f"\r\n--{boundary}--\r\n".encode()
+
+    return body(), sent, f"multipart/form-data; boundary={boundary}"
+
+
+async def test_an_upload_without_a_session_is_refused_before_its_body_is_read(
+    client: httpx.AsyncClient,
+) -> None:
+    await create_vault(client)
+    body, sent, content_type = _multipart([b"x" * MIB] * 64)
+    resp = await client.post(
+        "/passwords/import", content=body, headers={"content-type": content_type}
+    )
+    assert resp.status_code == 401
+    assert sum(sent) <= MIB
+
+
+async def test_a_backup_upload_takes_one_file_and_holds_no_lock_while_it_arrives(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    resp = await client.post(
+        "/passwords/import",
+        data={"master_password": MASTER_PASSWORD},
+        files=[
+            ("file", ("a.cmbackup", FROZEN, "x/y")),
+            ("file", ("b.cmbackup", FROZEN, "x/y")),
+        ],
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+    gate = asyncio.Event()
+    data = backup_file([backup_entry("slow")])
+    body, _, content_type = _multipart([data[:10], data[10:]], gate=gate)
+    upload = asyncio.create_task(
+        client.post(
+            "/passwords/import",
+            content=body,
+            headers=[*headers, (b"content-type", content_type.encode())],
+        )
+    )
+    await asyncio.sleep(0.3)
+    during = await asyncio.wait_for(
+        client.post("/passwords/create", json=entry("during"), headers=headers),
+        timeout=5,
+    )
+    gate.set()
+    assert during.status_code == 200, during.text
+    assert (await upload).json()["imported"] == 1
+
+
+@pytest.mark.parametrize(
+    ("limit", "value"), [("MAX_MANIFEST_BYTES", 2048), ("MAX_BACKUP_BYTES", 4096)]
+)
+async def test_a_backup_the_reader_would_refuse_is_never_written(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    limit: str,
+    value: int,
+) -> None:
+    import crud.backup
+
+    headers = auth(await create_vault(client))
+    await client.post(
+        "/passwords/create", json=entry("big", "v" * 1500), headers=headers
+    )
+    await client.post(
+        "/passwords/big/attachments",
+        files={"file": ("a.bin", os.urandom(3000), "x/y")},
+        headers=headers,
+    )
+    before = await db_snapshot()
+    monkeypatch.setattr(crud.backup, limit, value)
+
+    resp = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "too large for one backup" in resp.json()["detail"]
+    assert await db_snapshot() == before
+    monkeypatch.undo()
+    resp = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert resp.status_code == 200

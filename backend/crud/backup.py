@@ -16,7 +16,13 @@ from pydantic import (
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backup_format import BackupReader, BackupWriter
+from backup_format import (
+    FRAME_OVERHEAD,
+    MAX_BACKUP_BYTES,
+    MAX_MANIFEST_BYTES,
+    BackupReader,
+    BackupWriter,
+)
 from crud.attachment import (
     MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS_PER_ENTRY,
@@ -35,6 +41,7 @@ from crud.records import (
     AttachmentMetadata,
     EntryDocument,
     HistoryItem,
+    history_timestamp,
     open_attachment_content,
     open_attachment_metadata,
     open_entry,
@@ -44,6 +51,7 @@ from crud.records import (
 from crud.settings import SettingsCRUD
 from errors import Forbidden, InvalidRequest
 from helpers import (
+    BACKUP_HEADER_BYTES,
     DEFAULT_KDF,
     BackupFormatError,
     BackupHeader,
@@ -65,7 +73,6 @@ from settings import get_api_settings
 from validators import require_unicode_text
 from vault_sessions import VaultSessions
 
-MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 MAX_LEGACY_FILE_BYTES = 10 * 1024 * 1024
 MAX_LEGACY_JSON_BYTES = 50 * 1024 * 1024
 _SPOOL_BYTES = 16 * 1024 * 1024
@@ -79,9 +86,14 @@ _DAMAGED = "The backup file is damaged or incomplete. Nothing was imported."
 
 
 def _utc(value: datetime) -> datetime:
-    if value.tzinfo is not None:
-        value = value.astimezone(UTC).replace(tzinfo=None)
-    return value
+    """Naive UTC, as the vault stores times. A time whose offset pushes it out
+    of the representable range is refused as invalid input."""
+    if value.tzinfo is None:
+        return value
+    try:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    except OverflowError:
+        raise ValueError("is out of range once converted to UTC") from None
 
 
 def _stamp(value: datetime) -> str:
@@ -104,6 +116,11 @@ class BackupAttachment(_Strict):
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
     created: datetime
 
+    @field_validator("created")
+    @classmethod
+    def _in_utc(cls, value: datetime) -> datetime:
+        return _utc(value)
+
 
 class BackupHistoryItem(_Strict):
     value: str
@@ -112,8 +129,7 @@ class BackupHistoryItem(_Strict):
     @field_validator("changed_at")
     @classmethod
     def _timestamp(cls, value: str) -> str:
-        datetime.fromisoformat(value)
-        return value
+        return history_timestamp(value)
 
 
 class BackupField(_Strict):
@@ -138,6 +154,12 @@ class BackupEntry(_Strict):
     created: datetime
     updated: datetime
     deleted: datetime | None
+
+    @field_validator("created", "updated", "deleted")
+    @classmethod
+    def _in_utc(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _utc(value)
+
     attachments: list[BackupAttachment] = Field(max_length=MAX_ATTACHMENTS_PER_ENTRY)
 
     @field_validator("tags")
@@ -160,6 +182,12 @@ class BackupManifest(_Strict):
     format: Literal["ciphermoth-backup"]
     version: Literal[2]
     exported_at: datetime
+
+    @field_validator("exported_at")
+    @classmethod
+    def _in_utc(cls, value: datetime) -> datetime:
+        return _utc(value)
+
     app_version: str
     settings: BackupSettings
     entries: list[BackupEntry]
@@ -259,6 +287,8 @@ class BackupCRUD(PasswordCRUD):
             "entries": manifest_entries,
         }
 
+        encoded = json.dumps(manifest, ensure_ascii=False).encode()
+        self._check_restorable(encoded, [described.size for _, _, described in frames])
         header = BackupHeader(
             params=DEFAULT_KDF,
             salt=salt,
@@ -268,7 +298,7 @@ class BackupCRUD(PasswordCRUD):
         target = tempfile.SpooledTemporaryFile(max_size=_SPOOL_BYTES)
         try:
             writer = BackupWriter(target, backup_key, header)
-            writer.write(json.dumps(manifest, ensure_ascii=False).encode())
+            writer.write(encoded)
             for entry, attachment_id, described in frames:
                 content, _, _ = await self._attachment(key, entry, attachment_id)
                 if hashlib.sha256(content).hexdigest() != described.sha256:
@@ -286,6 +316,24 @@ class BackupCRUD(PasswordCRUD):
         )
         target.seek(0)
         return target
+
+    @staticmethod
+    def _check_restorable(manifest: bytes, attachment_sizes: list[int]) -> None:
+        """Refuse to write a backup this release could not restore, instead of
+        reporting success for a file every import would reject."""
+        if len(manifest) > MAX_MANIFEST_BYTES:
+            raise InvalidRequest(
+                "The vault's entries are too large for one backup (over 64 MB of "
+                "text, history included). Nothing was written."
+            )
+        total = BACKUP_HEADER_BYTES + sum(
+            FRAME_OVERHEAD + size for size in [len(manifest), *attachment_sizes]
+        )
+        if total > MAX_BACKUP_BYTES:
+            raise InvalidRequest(
+                "The vault is too large for one backup (over 1 GB with its "
+                "attachments). Nothing was written."
+            )
 
     async def import_backup(
         self,
@@ -450,7 +498,7 @@ class BackupCRUD(PasswordCRUD):
                 if target is None:
                     continue
                 attachment = AttachmentModel(
-                    entry_id=target.id, created=_utc(described.created)
+                    entry_id=target.id, created=described.created
                 )
                 seal_attachment(
                     key,
@@ -499,7 +547,7 @@ class BackupCRUD(PasswordCRUD):
         counts: dict[str, int],
     ) -> EntryModel | None:
         index = key.name_index(document.name)
-        deleted = _utc(entry.deleted) if entry.deleted else None
+        deleted = entry.deleted
         if deleted is not None:
             if (index, deleted) in trashed:
                 counts["skipped"] += 1
@@ -518,8 +566,8 @@ class BackupCRUD(PasswordCRUD):
             else:
                 counts["imported"] += 1
         model = EntryModel(
-            created=_utc(entry.created),
-            updated=_utc(entry.updated),
+            created=entry.created,
+            updated=entry.updated,
             deleted=deleted,
             backed_up=True,
         )

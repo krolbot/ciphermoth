@@ -12,6 +12,7 @@ from fastapi import (
 )
 from pydantic import ValidationError
 from starlette.background import BackgroundTask
+from starlette.datastructures import UploadFile as StarletteUpload
 from starlette.responses import StreamingResponse
 
 from api.endpoints.deps import (
@@ -19,11 +20,13 @@ from api.endpoints.deps import (
     BackupCRUDDep,
     EntryName,
     PasswordCRUDDep,
+    SessionKeyDep,
     VaultKeyDep,
     require_master_password,
 )
 from api.rate_limit import limiter, rate
 from api.responses import inject_responses
+from backup_format import MAX_BACKUP_BYTES
 from errors import InvalidRequest
 from schemas import (
     AttachmentResponse,
@@ -44,7 +47,6 @@ router = APIRouter(tags=["passwords"])
 
 _MAX_CSV_FILE_BYTES = 10 * 1024 * 1024
 _MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
-_MAX_BACKUP_FILE_BYTES = 1024 * 1024 * 1024
 _BACKUP_CHUNK_BYTES = 1024 * 1024
 
 
@@ -65,7 +67,11 @@ def _backup_password(submitted: str) -> str:
 
 
 def _safe_content_disposition(filename: str) -> str:
-    cleaned = filename.replace("\r", "").replace("\n", "").replace('"', "")
+    cleaned = "".join(
+        character
+        for character in filename
+        if character.isprintable() and character not in '"\\'
+    )
     cleaned = cleaned.strip() or "attachment"
     ascii_name = cleaned.encode("ascii", "replace").decode("ascii").replace("?", "_")
     quoted = quote(cleaned, safe="")
@@ -350,11 +356,29 @@ async def delete_attachment(
     return PasswordDelete(deleted=True, detail="Attachment deleted.")
 
 
+_IMPORT_FORM = {
+    "content": {
+        "multipart/form-data": {
+            "schema": {
+                "type": "object",
+                "required": ["file", "master_password"],
+                "properties": {
+                    "file": {"type": "string", "format": "binary"},
+                    "master_password": {"type": "string"},
+                    "on_conflict": {"type": "string", "enum": ["skip", "overwrite"]},
+                },
+            }
+        }
+    },
+    "required": True,
+}
+
+
 @router.post(
     "/import",
     name="passwords:import",
     response_model=PasswordImportResult,
-    dependencies=[Depends(require_master_password)],
+    openapi_extra={"requestBody": _IMPORT_FORM},
     responses=inject_responses(
         {
             status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
@@ -367,20 +391,33 @@ async def delete_attachment(
 @limiter.limit(rate("5/hour"))
 async def import_passwords(
     request: Request,
-    file: UploadFile,
     crud: BackupCRUDDep,
-    key: VaultKeyDep,
-    master_password: str = Form(..., min_length=1, max_length=1024),
-    on_conflict: OnConflict = Form(OnConflict.skip),
+    key: SessionKeyDep,
 ) -> PasswordImportResult:
-    if file.size is not None and file.size > _MAX_BACKUP_FILE_BYTES:
-        raise InvalidRequest("File too large. Maximum allowed size is 1 GB.")
-    return await crud.import_backup(
-        upload=file.file,
-        password=_backup_password(master_password),
-        key=key,
-        on_conflict=on_conflict,
-    )
+    """
+    The body is read only after the session check (no form parameters, so
+    FastAPI does not parse it first), with one file part and no database
+    transaction open while it arrives; the CRUD method checks the key
+    against the vault once the slow work is done.
+    """
+    async with request.form(max_files=1, max_fields=2) as form:
+        file = form.get("file")
+        master_password = form.get("master_password")
+        on_conflict = form.get("on_conflict") or OnConflict.skip.value
+        if not isinstance(file, StarletteUpload) or not isinstance(
+            master_password, str
+        ):
+            raise InvalidRequest("Send the backup file and its password.")
+        if on_conflict not in (OnConflict.skip.value, OnConflict.overwrite.value):
+            raise InvalidRequest("on_conflict must be 'skip' or 'overwrite'.")
+        if file.size is not None and file.size > MAX_BACKUP_BYTES:
+            raise InvalidRequest("File too large. Maximum allowed size is 1 GB.")
+        return await crud.import_backup(
+            upload=file.file,
+            password=_backup_password(master_password),
+            key=key,
+            on_conflict=OnConflict(on_conflict),
+        )
 
 
 @router.post(
