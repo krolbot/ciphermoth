@@ -428,13 +428,18 @@ def fresh_install(
         cli("password", "purge", "cli-entry", "--yes")
         cli("backup", "--out", "/tmp")
         backups = stack.dc(
-            "exec", "-T", "backend", "sh", "-c", "ls /tmp/ciphermoth_backup_*.zip"
+            "exec", "-T", "backend", "sh", "-c", "ls /tmp/ciphermoth_backup_*.cmbackup"
         ).stdout.split()
         if len(backups) != 1:
             fail(f"ciphermoth backup wrote {backups}")
+        restored = cli("import", backups[0], answers=("",))
+        if "0 added" not in restored or "4 skipped" not in restored:
+            fail(f"ciphermoth import of its own backup: {restored}")
         for command in (("ciphermoth", "--help"), ("ciphermoth-admin", "--help")):
             stack.dc("exec", "-T", "backend", *command)
-        ok("CLI get, trash, create, delete, purge and backup, admin help")
+        ok(
+            "CLI get, trash, create, delete, purge, complete backup and restore, admin help"
+        )
 
         short = stack.unlock()
         stack.json(
@@ -576,6 +581,9 @@ def fresh_install(
             {"password_name": "in-wal", "password_value": "v"},
             rotated,
         )
+        rows_at_kill = len(stack.json("GET", "/passwords", token=rotated)) + len(
+            stack.json("GET", "/passwords/trash", token=rotated)
+        )
         stack.dc("kill", "-s", "SIGKILL", "backend")
         container = stack.dc("ps", "-a", "-q", "backend").stdout.strip()
         time.sleep(2)
@@ -596,9 +604,9 @@ def fresh_install(
             "scratch = pathlib.Path(tempfile.mkdtemp())\n"
             "for f in kept.iterdir(): shutil.copy(f, scratch / f.name)\n"
             "c = sqlite3.connect(scratch / 'vault.db')\n"
-            "print(sorted(r[0] for r in c.execute('SELECT password_name FROM passwords')))"
+            "print(c.execute('SELECT count(*) FROM entries').fetchone()[0])"
         )
-        if "in-wal" not in found:
+        if int(found) != rows_at_kill:
             fail(f"the kept vault lost the commit that was only in the WAL: {found}")
         stack.dc("start", "backend")
         stack.wait_healthy()
@@ -615,7 +623,7 @@ def fresh_install(
         stack.dc("stop", "backend")
         stack.python(
             "import sqlite3; c = sqlite3.connect('/data/vault.db');"
-            "c.execute('PRAGMA user_version=2'); c.commit()"
+            "c.execute('PRAGMA user_version=3'); c.commit()"
         )
         before = stack.vault_sha256()
         stack.dc("start", "backend")
@@ -635,7 +643,7 @@ def fresh_install(
             "import sqlite3; from contextlib import closing\n"
             "with closing(sqlite3.connect('file:/data/vault.db?mode=ro', uri=True)) as c:\n"
             "    size = c.execute('PRAGMA page_size').fetchone()[0]\n"
-            "    root = c.execute(\"SELECT rootpage FROM sqlite_schema WHERE name = 'uq_passwords_name_active'\").fetchone()[0]\n"
+            "    root = c.execute(\"SELECT rootpage FROM sqlite_schema WHERE name = 'uq_entries_name_active'\").fetchone()[0]\n"
             "data = bytearray(open('/data/vault.db', 'rb').read())\n"
             "data[(root - 1) * size:(root - 1) * size + 8] = b'\\xff' * 8\n"
             "open('/data/vault.db', 'wb').write(bytes(data))\n"
@@ -652,6 +660,33 @@ def fresh_install(
         if state(stack, stack.unlock()) != EXPECTED:
             fail("snapshot recovery of a damaged vault")
         ok("a damaged vault is refused untouched and the snapshot recovers it")
+
+        stack.dc("stop", "backend")
+        stack.python(
+            "import sqlite3; c = sqlite3.connect('/data/vault.db');"
+            "c.execute('PRAGMA user_version=1'); c.commit()"
+        )
+        before = stack.vault_sha256()
+        stack.dc("start", "backend")
+        stack.backend_exited_with("CipherMoth 2.0 or earlier")
+        stack.dc("stop", "backend")
+        if stack.vault_sha256() != before:
+            fail("a vault of format 1 was changed")
+        moved = stack.admin("set-aside", "--yes", running=False).stdout
+        kept_vault = moved.split("moved to ")[-1].split()[0]
+        kept_sha = stack.python(
+            "import hashlib, pathlib;"
+            "print(':'.join(hashlib.sha256(p.read_bytes()).hexdigest()"
+            f" for p in sorted(pathlib.Path('{kept_vault}').glob('vault.db*'))"
+            " if not p.name.endswith('-shm') and p.stat().st_size))"
+        )
+        if kept_sha != before:
+            fail("set-aside changed the vault it moved")
+        stack.dc("start", "backend")
+        stack.wait_healthy()
+        if stack.json("GET", "/master_password/status")["initialized"]:
+            fail("a new vault was not empty after set-aside")
+        ok("a format 1 vault is refused untouched and set-aside moves it byte for byte")
 
         logs = stack.dc("logs", "--no-color").stdout
         backend_logs = stack.dc("logs", "--no-color", "backend").stdout
