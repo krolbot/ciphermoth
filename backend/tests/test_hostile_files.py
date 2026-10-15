@@ -114,9 +114,7 @@ async def test_hostile_backup_files_are_refused_cleanly(
         headers=vault,
     )
 
-    if name == "unencrypted":
-        assert resp.status_code in (200, 400), resp.text
-    elif name == "other-password":
+    if name == "other-password":
         assert resp.status_code == 403, resp.text
         assert await db_snapshot() == before
     else:
@@ -173,6 +171,7 @@ async def _upload(
         "Preț ✓ 🦋 名前.pdf",
         "x" * 1000 + ".bin",
         ".hidden",
+        "esc\x1b[31mred\x07bell\ttab\x7f.txt",
     ],
 )
 async def test_unusual_attachment_filenames_round_trip_safely(
@@ -192,6 +191,7 @@ async def test_unusual_attachment_filenames_round_trip_safely(
     assert disposition.startswith("attachment; ")
     assert "\r" not in disposition and "\n" not in disposition
     assert disposition.count('"') == 2
+    assert all(c.isprintable() for c in disposition)
 
 
 @pytest.mark.parametrize(
@@ -316,7 +316,19 @@ def test_a_value_sqlite_cannot_decode_never_wedges_the_vault(tmp_path: Path) -> 
             connection.commit()
         for _ in range(3):
             resp = httpx.get(f"{api}/passwords", headers=headers)
+            assert resp.status_code == 200
+            assert resp.json() == []
+            resp = httpx.get(f"{api}/vault/damaged", headers=headers)
+            assert resp.json()["entries"] == [1]
+        for _ in range(3):
+            resp = httpx.delete(f"{api}/passwords/one", headers=headers)
             assert resp.status_code == 500
+            assert resp.json()["code"] == "vault_damaged"
+            with closing(
+                sqlite3.connect(folder / VAULT_FILE, timeout=0.5, isolation_level=None)
+            ) as other_writer:
+                other_writer.execute("BEGIN IMMEDIATE")
+                other_writer.execute("ROLLBACK")
         with closing(sqlite3.connect(folder / VAULT_FILE)) as connection:
             connection.execute("DELETE FROM entries")
             connection.commit()

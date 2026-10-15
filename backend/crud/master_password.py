@@ -131,6 +131,12 @@ class MasterPasswordCRUD(BaseCRUD):
     async def create_master_password(self, master_password: str) -> VaultKey:
         if await self.is_initialized():
             raise Forbidden("Master password already exists.")
+        if await self.session.scalar(select(EntryModel.id).limit(1)) is not None:
+            raise InvalidRequest(
+                "The vault file holds entries but no key record, so it is damaged. "
+                "Restore a snapshot, or move it aside with 'ciphermoth-admin "
+                "set-aside' to start a new vault (docs/UPDATING.md)."
+            )
         await self.session.commit()
         material, key = await create_key_material(master_password)
 

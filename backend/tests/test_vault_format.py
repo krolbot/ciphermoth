@@ -648,13 +648,16 @@ async def test_the_api_refuses_a_document_whose_name_does_not_match_its_index(
     before = await db_snapshot()
     for request in (
         client.get("/passwords/alpha", headers=headers),
-        client.get("/passwords", headers=headers),
         client.delete("/passwords/alpha", headers=headers),
     ):
         resp = await request
         assert resp.status_code == 500, resp.text
         assert resp.json()["code"] == "vault_damaged"
         assert "beta-v" not in resp.text
+    listing = (await client.get("/passwords", headers=headers)).json()
+    assert [p["password_value"] for p in listing] == ["beta-v"]
+    damaged = (await client.get("/vault/damaged", headers=headers)).json()
+    assert damaged["entries"] == [alpha_id]
     assert await db_snapshot() == before
     assert (await client.get("/passwords/beta", headers=headers)).status_code == 200
 
@@ -692,6 +695,53 @@ async def test_the_api_refuses_documents_this_release_did_not_write(
         d=key.seal_entry(bytes(uid), json.dumps(document).encode()),
         id=entry_id,
     )
-    resp = await client.get("/passwords", headers=headers)
+    resp = await client.get("/passwords/alpha", headers=headers)
     assert resp.status_code == 500, resp.text
     assert resp.json()["code"] == "vault_damaged"
+    assert (await client.get("/passwords", headers=headers)).json() == []
+    damaged = (await client.get("/vault/damaged", headers=headers)).json()
+    assert damaged["entries"] == [entry_id]
+
+
+@pytest.mark.parametrize("vault_state", ["missing", "empty"])
+async def test_a_journal_without_its_vault_is_never_discarded(
+    tmp_path: Path, vault_state: str
+) -> None:
+    folder = tmp_path / "data"
+    folder.mkdir()
+    _format_1_vault(folder / VAULT_FILE)
+    wal = (folder / f"{VAULT_FILE}-wal").read_bytes()
+    assert wal
+    original = (folder / VAULT_FILE).read_bytes()
+    (folder / VAULT_FILE).unlink()
+    if vault_state == "empty":
+        (folder / VAULT_FILE).write_bytes(b"")
+
+    database = Database(folder)
+    with pytest.raises(StorageError, match="journal belongs to a vault"):
+        await database.prepare()
+    await database.dispose()
+    assert (folder / f"{VAULT_FILE}-wal").read_bytes() == wal
+
+    kept = set_aside(folder)
+    assert kept is not None and (kept / f"{VAULT_FILE}-wal").read_bytes() == wal
+    async with client_for_data_dir(folder) as client:
+        assert (await client.get("/master_password/status")).json() == {
+            "initialized": False
+        }
+    assert original
+
+
+async def test_a_new_vault_is_never_created_over_entries_without_a_key_record(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    await client.post("/passwords/create", json=entry("orphan"), headers=headers)
+    await db_execute("DELETE FROM vault")
+    before = await db_snapshot()
+    resp = await client.post(
+        "/master_password/create", json={"master_password": NEW_MASTER_PASSWORD}
+    )
+    assert resp.status_code == 400
+    assert "damaged" in resp.json()["detail"]
+    assert await db_snapshot() == before

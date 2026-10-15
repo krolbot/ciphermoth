@@ -71,6 +71,7 @@ def prepare_data_dir(data_dir: Path) -> Path:
     except OSError as error:
         raise StorageError(_unwritable(data_dir, error)) from error
     path = vault_file(data_dir)
+    refuse_orphaned_journals(path)
     refuse_unusable_file(path)
     try:
         with contextlib.suppress(FileExistsError):
@@ -80,6 +81,24 @@ def prepare_data_dir(data_dir: Path) -> Path:
     except OSError as error:
         raise StorageError(_unwritable(data_dir, error)) from error
     return path
+
+
+def refuse_orphaned_journals(path: Path) -> None:
+    """A write-ahead log or rollback journal next to a missing or empty vault
+    file belongs to a vault that was moved away (an interrupted set-aside, a
+    copy gone wrong). Creating a new vault there would make SQLite discard it,
+    and with it commits that exist nowhere else."""
+    if path.is_file() and path.stat().st_size > 0:
+        return
+    for suffix in ("-wal", "-journal"):
+        journal = path.with_name(path.name + suffix)
+        if journal.is_file() and journal.stat().st_size > 0:
+            raise StorageError(
+                f"{journal.name} exists but {path.name} is missing or empty, so the "
+                "journal belongs to a vault that is not there. Nothing was changed. "
+                "Run 'ciphermoth-admin set-aside' again to move it next to the vault "
+                "it belongs to, or put that vault file back (docs/UPDATING.md)."
+            )
 
 
 def _unwritable(data_dir: Path, error: OSError) -> str:

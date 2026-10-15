@@ -32,8 +32,21 @@ _BUSY_CODES = frozenset({5, 6})
 _BUSY_DETAIL = "The vault is busy with another change. Try again in a moment."
 
 
-def _connect(dbapi_connection: object, _record: object) -> None:
+def _tolerant_text(data: bytes) -> str:
+    return data.decode("utf-8", "surrogateescape")
+
+
+def _connect(dbapi_connection: Any, _record: object) -> None:
+    """
+    Every vault connection: the SQLite settings, and a text decoder that
+    cannot fail. Python's sqlite3 raises while fetching a TEXT value that is
+    not UTF-8 and leaves that statement un-reset, holding its snapshot (and
+    in a write, the write lock) until the garbage collector frees it. With
+    surrogate escapes the fetch completes, and the strict readers refuse the
+    value as damage instead.
+    """
     configure_connection(dbapi_connection)
+    dbapi_connection._connection.text_factory = _tolerant_text
 
 
 def _begin(connection: Connection) -> None:
@@ -86,10 +99,10 @@ class Database:
 
     Read transactions are deferred and see one consistent WAL snapshot next to
     a running writer. A connection that raised a database error is discarded
-    instead of returned to the pool: Python's sqlite3 module leaves a statement
-    that failed while fetching (a value it cannot decode, for example) un-
-    reset, and that statement would keep its old snapshot open, so every later
-    write on the connection would fail as busy. Write transactions start with
+    instead of returned to the pool, so a statement left un-reset by a failed
+    fetch can never keep its old snapshot open on a pooled connection (the
+    text decoder set in ``_connect`` removes the known cause). Write
+    transactions start with
     BEGIN IMMEDIATE, which takes SQLite's single write lock before their first
     read, so every write request checks its session key, reads and writes as
     one serialized unit, and a master password change can never interleave with
