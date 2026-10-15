@@ -101,7 +101,7 @@ The backend checks the vault before serving anything, through a read-only connec
 
 ## When entries cannot be read
 
-If part of the vault file is damaged (a failing disk) or was altered, the affected entries and attachments are left out of the vault and the web UI shows a warning (`cip damaged` lists them). Everything else keeps working, but backups and master password changes wait. Either restore a snapshot from before the damage (keeps everything), or remove the damaged items: the **Remove** button in the warning, or `cip damaged --remove`. Nothing readable is ever removed this way.
+If part of the vault file is damaged (a failing disk) or was altered, the affected entries and attachments are left out of the vault and the web UI shows a warning (`cip damaged` lists them). Everything else keeps working, but backups and master password changes wait. Either restore a snapshot from before the damage (keeps everything), or intentionally remove the damaged items: the **Remove** button in the warning, or `cip damaged --remove`. Removing a damaged entry also permanently removes its attachments, including any that are still readable. Each requested row is checked again before removal; a readable entry cannot be removed through this recovery action.
 
 ## Moving from CipherMoth 2.0 (vault format 1)
 

@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 import storage
-from crud.engine import Database, create_engine, is_busy
+from crud.engine import Database, after_commit, after_rollback, create_engine, is_busy
 from main import get_application
 from models import SETTINGS_DEFAULTS
 from storage import (
@@ -151,6 +151,59 @@ async def test_an_interrupted_first_start_is_completed_on_the_next(
         )
     await (await _prepared(tmp_path)).dispose()
     assert check_file(tmp_path / VAULT_FILE) == []
+
+
+async def test_cancelling_a_writer_rolls_back_and_releases_its_connection(
+    tmp_path: Path,
+) -> None:
+    database = await _prepared(tmp_path)
+    entered = asyncio.Event()
+    hooks: list[str] = []
+
+    async def write_until_cancelled() -> None:
+        async with database.transaction() as session:
+            after_commit(session, lambda: hooks.append("commit"))
+            after_rollback(session, lambda: hooks.append("rollback"))
+            await session.execute(text("UPDATE settings SET hidden_ms = 1"))
+            entered.set()
+            await asyncio.Event().wait()
+
+    try:
+        task = asyncio.create_task(write_until_cancelled())
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert hooks == ["rollback"]
+        # A synchronous second connection proves rollback has released SQLite's
+        # writer lock, independently of SQLAlchemy's pool bookkeeping.
+        with closing(sqlite3.connect(database.path, timeout=0)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            assert connection.execute("SELECT hidden_ms FROM settings").fetchone() == (
+                SETTINGS_DEFAULTS["hidden_ms"],
+            )
+            connection.execute("ROLLBACK")
+        async with database.transaction() as session:
+            await session.execute(text("UPDATE settings SET hidden_ms = 2"))
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.parametrize("marker", ["invalid", b"invalid", 2.5])
+async def test_an_invalid_sqlite_format_value_is_refused_without_modification(
+    tmp_path: Path, marker: object
+) -> None:
+    async with client_for_data_dir(tmp_path) as client:
+        await create_vault(client)
+    path = tmp_path / VAULT_FILE
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("UPDATE vault SET format_version = ?", (marker,))
+        connection.commit()
+    before = path.read_bytes()
+    with pytest.raises(StorageError, match="invalid vault format marker"):
+        storage.prepare_data_dir(tmp_path)
+    assert check_file(path) == ["the file has an invalid vault format marker"]
+    assert path.read_bytes() == before
 
 
 def _foreign_database(path: Path) -> None:

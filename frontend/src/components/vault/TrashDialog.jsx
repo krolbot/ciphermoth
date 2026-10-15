@@ -60,13 +60,15 @@ const buildColumns = ({ onRestore, onPurge }) => [
           <IconButton
             size="small"
             color="primary"
-            onClick={() => onRestore(params.row.password_name)}
+            onClick={() =>
+              onRestore({ passwordName: params.row.password_name, entryId: params.row.id })
+            }
           >
             <RestoreFromTrashIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title="Delete forever">
-          <IconButton size="small" color="error" onClick={() => onPurge(params.row.password_name)}>
+          <IconButton size="small" color="error" onClick={() => onPurge(params.row)}>
             <DeleteForeverIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -81,7 +83,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
   const columns = buildColumns({ onRestore, onPurge: setPurgeTarget });
 
   const handlePurge = async () => {
-    await onPurge(purgeTarget);
+    await onPurge({ passwordName: purgeTarget.password_name, entryId: purgeTarget.id });
     setPurgeTarget(null);
   };
 
@@ -97,7 +99,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
           <DataGrid
             rows={trash}
             columns={columns}
-            getRowId={(row) => row.password_name}
+            getRowId={(row) => row.id}
             disableRowSelectionOnClick
             density="compact"
             rowHeight={44}
@@ -121,7 +123,8 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
         onClose={() => setPurgeTarget(null)}
         onConfirm={handlePurge}
       >
-        Permanently delete <strong>{purgeTarget}</strong>? This cannot be undone.
+        Permanently delete <strong>{purgeTarget?.password_name}</strong> (deleted{" "}
+        {formatDeleted(purgeTarget?.deleted)})? This cannot be undone.
       </ConfirmDialog>
     </Dialog>
   );

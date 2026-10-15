@@ -147,26 +147,33 @@ frame × frames (nothing may follow the last one)
 
 `B` = Argon2id(password, salt, parameters), `K_frame` = HKDF(B, `"ciphermoth/backup/v2/frame-encryption"`). The password is the vault's master password at the time of the backup (verified before the backup is written); the salt is new for every backup, independent of the vault's. `last` is 1 for the final frame and 0 otherwise.
 
-Frame 0 is the manifest (UTF-8 JSON, at most 64 MiB); frames 1 to N hold the attachments' bytes (each at most 5 MiB) in the order the manifest lists them:
+Frame 0 is a small UTF-8 JSON envelope (at most 64 MiB):
 
 ```json
-{"format": "ciphermoth-backup", "version": 2, "exported_at": "ISO-8601", "app_version": "x.y.z",
+{"format": "ciphermoth-backup", "version": 2, "exported_at": "ISO-8601", "app_version": "x.y.z", "entries_count": 2,
  "settings": {"inactivity_ms": 120000, "warn_before_ms": 60000, "hidden_ms": 60000, "debounce_ms": 1000,
-              "clipboard_clear_ms": 30000, "update_check_enabled": true},
- "entries": [{"name": "...", "kind": "login", "username": null, "value": "...", "url": null, "totp_secret": null,
-              "description": null, "tags": [], "custom_fields": [], "folder": null, "favorite": false,
-              "history": [], "created": "...", "updated": "...", "deleted": null,
-              "attachments": [{"filename": "...", "content_type": null, "size": 1, "sha256": "hex", "created": "..."}]}]}
+              "clipboard_clear_ms": 30000, "update_check_enabled": true}}
 ```
 
-**Reading** (all checks run before anything is written, and the write is one transaction):
+The next `entries_count` frames are entry documents (one JSON object each, at most 64 MiB). Each is followed immediately by the frames for its attachments (raw bytes, at most 5 MiB each), in the order listed in that entry:
+
+```json
+{"name": "...", "kind": "login", "username": null, "value": "...", "url": null, "totp_secret": null,
+ "description": null, "tags": [], "custom_fields": [], "folder": null, "favorite": false,
+ "history": [], "created": "...", "updated": "...", "deleted": null,
+ "attachments": [{"filename": "...", "content_type": null, "size": 1, "sha256": "hex", "created": "..."}]}
+```
+
+This layout keeps many-entry vaults from accumulating into one large JSON allocation. The maximum is 1,000,000 frames and 1 GiB for the complete `.cmbackup` file. A vault entry's encoded document is limited to 64 MiB minus 32 KiB of framing/metadata allowance; each attachment's encoded metadata is limited to 2 KiB. Before each write commits, the vault checks `sum(length(entry document)) + 32 KiB per entry + sum(length(attachment metadata) + length(attachment content)) + 256 bytes per attachment + 4 KiB fixed overhead` against the 1 GiB cap, and enforces the frame-count limit. Supported operations therefore stop before the data can outgrow the complete-backup capacity. Restore rejects a frame over its limit before allocating it.
+
+**Reading** (frame authentication is sequential; database writes are in one transaction and any later failure rolls them all back):
 
 1. Parse the header; refuse a wrong magic or version, unknown KDF, parameters outside the accepted range, a frame count above the limit.
 2. Run Argon2id, compare the commitment in constant time: a mismatch is "wrong password".
-3. Decrypt frame 0 with its index and `last` flag; parse the manifest strictly (unknown keys, wrong types, two active entries with one name, timestamps that do not parse, more frames than attachments or fewer: refused).
-4. Inside the import's write transaction, decrypt each attachment frame in order, check its length and SHA-256 against the manifest, re-encrypt it under the vault key and store it. A frame that fails authentication, a missing frame (truncation), a frame after the last one or trailing bytes abort the transaction: the vault is left exactly as it was.
+3. Decrypt frame 0 with its index and `last` flag; parse the envelope strictly. Then parse each entry frame strictly, checking types, timestamps, attachment counts and active-name uniqueness.
+4. For each entry, decrypt its attachment frames in order, check their length and SHA-256 against that entry's metadata, re-encrypt them under the vault key and store them. A frame that fails authentication, a missing frame (truncation), a frame after the last one or trailing bytes aborts the transaction: the vault is left exactly as it was.
 
-Wrong password, tampering, truncation, reordering, a frame from another backup and a malformed manifest all fail cleanly with nothing written. Memory use is bounded by the manifest plus one attachment; the uploaded backup itself is ciphertext and may be spooled to a temporary file by the server.
+Wrong password, tampering, truncation, reordering, a frame from another backup and a malformed envelope or entry all fail cleanly with nothing committed. Memory use is bounded by one entry frame and one attachment, plus bounded row identifiers and lookup indexes; the uploaded backup itself is ciphertext and may be spooled to a temporary file by the server.
 
 **Restoring into a vault.** Entries are added with their timestamps and history; an active entry whose name already exists is skipped or, with "overwrite", the existing one is moved to the Trash (with its history and attachments) and the backup's version takes its place, so nothing is lost. CSV imports and 2.0 backup ZIPs overwrite the same way. A trashed entry is skipped if the vault already has a trashed entry with the same name and deletion time (restoring one backup twice adds nothing). Settings are restored only into a vault that has no entries yet. Restored entries count as backed up.
 

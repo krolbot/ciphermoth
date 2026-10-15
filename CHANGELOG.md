@@ -28,7 +28,11 @@ This release changes how the vault is encrypted (vault format 2) and replaces th
 ### Changed
 
 - SQLite schema 2 (tables `vault`, `entries`, `attachments`). The schema version and the vault's cryptographic format version are checked separately; a newer one of either is refused at startup without changes.
-- Backups download as `ciphermoth_backup_<time>.cmbackup`. The backup import accepts files up to 1 GB; encrypted backups larger than 16 MB may be buffered in a temporary file by the server, which holds only ciphertext (CSV imports and attachments still stay in memory).
+- Backups download as `ciphermoth_backup_<time>.cmbackup`. Large backups are staged as encrypted files; CSV imports and attachment uploads still stay in memory. Backup size bounds follow the backup format instead of the old HTTP upload cap.
+- The CLI streams backup downloads and imports. Downloads are written privately to a unique `.partial` file and published only after a complete, flushed transfer, without overwriting an existing backup.
+- Removed the misleading per-entry "backed up" indicators. Generating or requesting a download cannot establish that the browser saved it; the UI asks you to check the saved file.
+- A failed damage scan now warns that the visible list may be incomplete and retains earlier damage findings. Import reports include restored Trash and settings even when no active entries were present.
+- Trash restore and permanent deletion select the exact row clicked, even when multiple trashed entries share a name. The CLI lists row IDs and accepts `password restore/purge <name> --id <row-id>`.
 - The import dialog and `ciphermoth import` ask for the **backup password** (the master password at the time of the backup) instead of the current master password.
 - A master password change no longer touches entries' `updated` time.
 - **Overwriting imports keep the replaced entry.** CSV imports and backup restores with "overwrite" move the existing entry to the trash, with its history and attachments, instead of overwriting it in place.

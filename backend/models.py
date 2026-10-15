@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     TIMESTAMP,
@@ -13,7 +14,9 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from helpers import new_uid
 
@@ -33,6 +36,31 @@ def utc_now() -> datetime:
 
 class BaseModel(DeclarativeBase):
     pass
+
+
+class RecordTimestamp(TypeDecorator[datetime]):
+    """Keep corrupt SQLite values available to the record integrity checks.
+
+    SQLite permits arbitrary values in a TIMESTAMP column. The dialect's
+    ordinary decoder raises while fetching the whole result set, preventing
+    even healthy rows from being listed or damaged rows from being removed.
+    Preserve invalid values for the strict readers instead of guessing a time.
+    The stored SQL type and the normal datetime writer remain unchanged.
+    """
+
+    impl = TIMESTAMP
+    cache_ok = True
+
+    def result_processor(self, dialect: Dialect, coltype: object):
+        process = super().result_processor(dialect, coltype)
+
+        def read(value: Any) -> Any:
+            try:
+                return process(value) if process is not None else value
+            except (ValueError, TypeError):
+                return value
+
+        return read
 
 
 class VaultModel(BaseModel):
@@ -87,15 +115,15 @@ class EntryModel(BaseModel):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uid: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
     created: Mapped[datetime] = mapped_column(
-        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+        RecordTimestamp, default=utc_now, server_default=func.current_timestamp()
     )
     updated: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
+        RecordTimestamp,
         default=utc_now,
         onupdate=utc_now,
         server_default=func.current_timestamp(),
     )
-    deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
+    deleted: Mapped[datetime | None] = mapped_column(RecordTimestamp, default=None)
 
     name_index: Mapped[bytes] = mapped_column(LargeBinary)
     document: Mapped[bytes] = mapped_column(LargeBinary)
@@ -119,7 +147,7 @@ class AttachmentModel(BaseModel):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uid: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
     created: Mapped[datetime] = mapped_column(
-        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+        RecordTimestamp, default=utc_now, server_default=func.current_timestamp()
     )
     entry_id: Mapped[int] = mapped_column(
         Integer,

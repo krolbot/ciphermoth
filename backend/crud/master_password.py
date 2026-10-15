@@ -6,6 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from crud.base import BaseCRUD
 from crud.records import (
+    damaged,
     open_attachment_content,
     open_attachment_metadata,
     open_entry,
@@ -47,12 +48,22 @@ async def fetch_vault(session: AsyncSession) -> VaultModel | None:
 
 
 def key_material(model: VaultModel) -> KeyMaterial:
+    # SQLite affinity is not a type check. In particular bytes(integer) allocates
+    # that many zeroes; never coerce hostile scalar values from the file.
+    for value, length in (
+        (model.kdf_salt, 16),
+        (model.password_check, 32),
+        (model.wrapped_key, 61),
+        (model.key_check, 32),
+    ):
+        if not isinstance(value, bytes) or len(value) != length:
+            raise InvalidRequest(_DAMAGED)
     return KeyMaterial(
         params=KdfParams(model.kdf_memory_kib, model.kdf_iterations, model.kdf_lanes),
-        salt=bytes(model.kdf_salt),
-        password_check=bytes(model.password_check),
-        wrapped_key=bytes(model.wrapped_key),
-        key_check=bytes(model.key_check),
+        salt=model.kdf_salt,
+        password_check=model.password_check,
+        wrapped_key=model.wrapped_key,
+        key_check=model.key_check,
     )
 
 
@@ -131,9 +142,13 @@ class MasterPasswordCRUD(BaseCRUD):
     async def create_master_password(self, master_password: str) -> VaultKey:
         if await self.is_initialized():
             raise Forbidden("Master password already exists.")
-        if await self.session.scalar(select(EntryModel.id).limit(1)) is not None:
+        if (
+            await self.session.scalar(select(EntryModel.id).limit(1)) is not None
+            or await self.session.scalar(select(AttachmentModel.id).limit(1))
+            is not None
+        ):
             raise InvalidRequest(
-                "The vault file holds entries but no key record, so it is damaged. "
+                "The vault file holds records but no key record, so it is damaged. "
                 "Restore a snapshot, or move it aside with 'ciphermoth-admin "
                 "set-aside' to start a new vault (docs/UPDATING.md)."
             )
@@ -222,11 +237,13 @@ async def _reencrypt_attachments(
     rows = (
         await session.execute(
             select(AttachmentModel.id, EntryModel.uid)
-            .join(EntryModel, AttachmentModel.entry_id == EntryModel.id)
+            .outerjoin(EntryModel, AttachmentModel.entry_id == EntryModel.id)
             .order_by(AttachmentModel.id)
         )
     ).all()
     for attachment_id, entry_uid in rows:
+        if entry_uid is None:
+            raise damaged(f"Attachment #{attachment_id}")
         attachment = await session.get_one(AttachmentModel, attachment_id)
         metadata = open_attachment_metadata(old_key, attachment, entry_uid)
         content = open_attachment_content(old_key, attachment, entry_uid)

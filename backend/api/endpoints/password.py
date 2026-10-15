@@ -6,14 +6,15 @@ from fastapi import (
     APIRouter,
     Depends,
     Form,
+    Query,
     Request,
     UploadFile,
     status,
 )
 from pydantic import ValidationError
-from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUpload
 from starlette.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from api.endpoints.deps import (
     AttachmentCRUDDep,
@@ -48,6 +49,31 @@ router = APIRouter(tags=["passwords"])
 _MAX_CSV_FILE_BYTES = 10 * 1024 * 1024
 _MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 _BACKUP_CHUNK_BYTES = 1024 * 1024
+
+
+class BackupResponse(StreamingResponse):
+    """Own the ciphertext file across success, disconnect and send failure.
+    BackgroundTask alone is not guaranteed to run when response delivery raises.
+    """
+
+    def __init__(self, backup, filename: str) -> None:
+        self.backup = backup
+        size = backup.seek(0, 2)
+        backup.seek(0)
+        super().__init__(
+            iter(lambda: backup.read(_BACKUP_CHUNK_BYTES), b""),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(size),
+            },
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.backup.close()
 
 
 async def _read_capped(file: UploadFile, max_bytes: int, message: str) -> bytes:
@@ -229,8 +255,9 @@ async def restore_password(
     password_name: EntryName,
     crud: PasswordCRUDDep,
     key: VaultKeyDep,
+    entry_id: int | None = Query(default=None, gt=0),
 ) -> PasswordUpdate:
-    return await crud.restore_password(password_name, key)
+    return await crud.restore_password(password_name, key, entry_id=entry_id)
 
 
 @router.delete(
@@ -249,8 +276,9 @@ async def purge_password(
     password_name: EntryName,
     crud: PasswordCRUDDep,
     key: VaultKeyDep,
+    entry_id: int | None = Query(default=None, gt=0),
 ) -> PasswordDelete:
-    return await crud.purge_password(password_name, key)
+    return await crud.purge_password(password_name, key, entry_id=entry_id)
 
 
 @router.get(
@@ -411,7 +439,7 @@ async def import_passwords(
         if on_conflict not in (OnConflict.skip.value, OnConflict.overwrite.value):
             raise InvalidRequest("on_conflict must be 'skip' or 'overwrite'.")
         if file.size is not None and file.size > MAX_BACKUP_BYTES:
-            raise InvalidRequest("File too large. Maximum allowed size is 1 GB.")
+            raise InvalidRequest("File exceeds the backup format's maximum size.")
         return await crud.import_backup(
             upload=file.file,
             password=_backup_password(master_password),
@@ -473,9 +501,4 @@ async def backup_passwords(
     backup = await crud.create_backup(body.master_password, key)
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     filename = f"ciphermoth_backup_{stamp}.cmbackup"
-    return StreamingResponse(
-        iter(lambda: backup.read(_BACKUP_CHUNK_BYTES), b""),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        background=BackgroundTask(backup.close),
-    )
+    return BackupResponse(backup, filename)

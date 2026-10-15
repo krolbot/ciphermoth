@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import URL, Connection, event
+from sqlalchemy import URL, Connection, event, text
 from sqlalchemy.exc import DatabaseError, DBAPIError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import (
@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from errors import VaultBusy
+from backup_format import MAX_BACKUP_BYTES, MAX_FRAMES
+from errors import InvalidRequest, VaultBusy
 from settings import get_storage_settings
 from storage import (
     StorageError,
@@ -30,6 +31,47 @@ _AFTER_ROLLBACK = "ciphermoth_after_rollback"
 _BEGIN = "ciphermoth_begin"
 _BUSY_CODES = frozenset({5, 6})
 _BUSY_DETAIL = "The vault is busy with another change. Try again in a moment."
+_ENTRY_BACKUP_OVERHEAD = 32 * 1024
+_ATTACHMENT_BACKUP_OVERHEAD = 256
+_BACKUP_FIXED_OVERHEAD = 4096
+
+
+async def _enforce_backup_capacity(session: AsyncSession) -> None:
+    """Keep every committed vault within the documented complete-backup cap.
+
+    Stored ciphertext lengths plus conservative per-record JSON/framing budgets
+    bound the largest portable backup without decrypting data on each write.
+    """
+    entry_bytes, entry_count = (
+        await session.execute(
+            text("SELECT coalesce(sum(length(document)), 0), count(*) FROM entries")
+        )
+    ).one()
+    attachment_bytes, attachment_count = (
+        await session.execute(
+            text(
+                "SELECT coalesce(sum(length(meta) + length(content)), 0), count(*) "
+                "FROM attachments"
+            )
+        )
+    ).one()
+    if 1 + int(entry_count) + int(attachment_count) > MAX_FRAMES:
+        raise InvalidRequest(
+            "This change would exceed the vault's complete-backup frame limit. "
+            "Nothing was saved."
+        )
+    estimated = (
+        int(entry_bytes)
+        + int(entry_count) * _ENTRY_BACKUP_OVERHEAD
+        + int(attachment_bytes)
+        + int(attachment_count) * _ATTACHMENT_BACKUP_OVERHEAD
+        + _BACKUP_FIXED_OVERHEAD
+    )
+    if estimated > MAX_BACKUP_BYTES:
+        raise InvalidRequest(
+            "This change would exceed the vault's 1 GiB complete-backup capacity. "
+            "Nothing was saved."
+        )
 
 
 def _tolerant_text(data: bytes) -> str:
@@ -147,6 +189,8 @@ class Database:
         async with self.sessions(write=write)() as session:
             try:
                 yield session
+                if write:
+                    await _enforce_backup_capacity(session)
                 await session.commit()
             except BaseException as error:
                 try:

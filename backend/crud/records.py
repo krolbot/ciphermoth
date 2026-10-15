@@ -13,7 +13,8 @@ from pydantic import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from errors import NotFound, VaultDamaged
+from backup_format import MAX_ENTRY_STORED_BYTES
+from errors import InvalidRequest, NotFound, VaultDamaged
 from helpers import DecryptionFailed, VaultKey
 from models import AttachmentModel, EntryModel
 
@@ -99,6 +100,12 @@ def open_entry(key: VaultKey, entry: EntryModel) -> EntryDocument:
     """Decrypt and check one entry. Its name must hash to the row's name index,
     so a document copied into another row, or an index pointed at another
     entry, is refused."""
+    if not (
+        isinstance(entry.created, datetime)
+        and isinstance(entry.updated, datetime)
+        and (entry.deleted is None or isinstance(entry.deleted, datetime))
+    ):
+        raise damaged(f"Entry #{entry.id}")
     try:
         document = _decode(EntryDocument, key.open_entry(entry.uid, entry.document))
     except (DecryptionFailed, ValidationError, ValueError) as error:
@@ -112,13 +119,22 @@ def open_entry(key: VaultKey, entry: EntryModel) -> EntryDocument:
 
 
 def seal_entry(key: VaultKey, entry: EntryModel, document: EntryDocument) -> None:
+    encoded = document.encode()
+    if len(encoded) > MAX_ENTRY_STORED_BYTES:
+        raise InvalidRequest("This entry exceeds the 64 MiB per-entry backup capacity.")
     entry.name_index = key.name_index(document.name)
-    entry.document = key.seal_entry(entry.uid, document.encode())
+    entry.document = key.seal_entry(entry.uid, encoded)
 
 
 def open_attachment_metadata(
     key: VaultKey, attachment: AttachmentModel, entry_uid: bytes
 ) -> AttachmentMetadata:
+    if not (
+        isinstance(attachment.created, datetime)
+        and type(attachment.size_bytes) is int
+        and attachment.size_bytes > 0
+    ):
+        raise damaged(f"Attachment #{attachment.id}")
     try:
         return _decode(
             AttachmentMetadata,
@@ -151,6 +167,8 @@ def seal_attachment(
     metadata: AttachmentMetadata,
     content: bytes,
 ) -> None:
+    if len(metadata.encode()) > 2048:
+        raise InvalidRequest("Attachment metadata exceeds the 2 KiB limit.")
     attachment.size_bytes = len(content)
     attachment.meta = key.seal_attachment_metadata(
         attachment.uid, entry_uid, metadata.encode()
@@ -159,7 +177,12 @@ def seal_attachment(
 
 
 async def find_entry(
-    session: AsyncSession, key: VaultKey, name: str, *, deleted: bool = False
+    session: AsyncSession,
+    key: VaultKey,
+    name: str,
+    *,
+    deleted: bool = False,
+    entry_id: int | None = None,
 ) -> tuple[EntryModel, EntryDocument]:
     """
     The active entry named ``name`` (or, with ``deleted``, the most recently
@@ -170,10 +193,13 @@ async def find_entry(
     )
     model = None
     if "\x00" not in name:
+        identity = [] if entry_id is None else [EntryModel.id == entry_id]
         model = (
             await session.execute(
                 select(EntryModel)
-                .where(EntryModel.name_index == key.name_index(name), trashed)
+                .where(
+                    EntryModel.name_index == key.name_index(name), trashed, *identity
+                )
                 .order_by(EntryModel.deleted.desc(), EntryModel.id.desc())
                 .limit(1)
             )

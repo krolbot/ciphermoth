@@ -36,10 +36,7 @@ const buildSubtitle = (loading, passwords) => {
   const n = passwords.length;
   if (n === 0) return "Nothing here yet. Your secrets are waiting for the dark.";
   const word = n === 1 ? "secret" : "secrets";
-  if (passwords.every((p) => p.backed_up))
-    return `${n} ${word} in the dark · backed up and locked tight.`;
-  if (passwords.some((p) => p.backed_up)) return `${n} ${word} in the dark · backup is outdated.`;
-  return `${n} ${word} in the dark · no backup yet.`;
+  return `${n} ${word} in the dark.`;
 };
 
 const PasswordsPage = () => {
@@ -61,7 +58,7 @@ const PasswordsPage = () => {
     getDamaged,
     removeDamaged,
   } = useStoreActions((actions) => actions.ciphermothModels.passwords);
-  const { error, loading, passwords, trash, damaged } = useStoreState(
+  const { error, loading, passwords, trash, damaged, damageCheckError } = useStoreState(
     (state) => state.ciphermothModels.passwords
   );
 
@@ -183,7 +180,9 @@ const PasswordsPage = () => {
 
   const handleBackup = async (masterPassword) => {
     await backup(masterPassword);
-    enqueueSnackbar("Backup created: keep this file safe.", { variant: "success" });
+    enqueueSnackbar("Download requested. Check that the backup file was saved and keep it safe.", {
+      variant: "info",
+    });
   };
 
   const columns = useMemo(
@@ -324,6 +323,20 @@ const PasswordsPage = () => {
             </TextField>
           )}
         </Stack>
+      )}
+
+      {damageCheckError && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => getDamaged()}>
+              Retry
+            </Button>
+          }
+        >
+          {damageCheckError}
+        </Alert>
       )}
 
       {damagedCount > 0 && (

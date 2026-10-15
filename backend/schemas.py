@@ -248,6 +248,7 @@ class RestoredPassword(BaseModel):
 
 
 class PasswordResponse(BaseModel):
+    id: int
     password_name: str
     kind: str = "login"
     username: str | None = None

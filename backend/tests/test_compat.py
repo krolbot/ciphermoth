@@ -132,7 +132,7 @@ async def test_entries_notes_totp_history_and_favorites(
     assert resp.status_code == 200
     login = await _get(client, key, "GitHub")
     assert login["favorite"] is False
-    assert login["backed_up"] is True
+    assert login["backed_up"] is False
 
 
 async def test_trash_restore_and_purge(client: httpx.AsyncClient) -> None:

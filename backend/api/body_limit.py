@@ -5,12 +5,14 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from backup_format import MAX_BACKUP_BYTES
+
 _MIB = 1024 * 1024
 
 DEFAULT_MAX_BODY_BYTES = 16 * _MIB
 ATTACHMENT_MAX_BODY_BYTES = 6 * _MIB
 CSV_IMPORT_MAX_BODY_BYTES = 11 * _MIB
-BACKUP_IMPORT_MAX_BODY_BYTES = 1025 * _MIB
+BACKUP_IMPORT_MAX_BODY_BYTES = MAX_BACKUP_BYTES + _MIB
 
 _PLAINTEXT_ROUTE_LIMITS = (
     ("POST", re.compile(r"/passwords/[^/]+/attachments$"), ATTACHMENT_MAX_BODY_BYTES),

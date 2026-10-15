@@ -81,7 +81,11 @@ class KdfParams:
         file cannot make the process allocate gigabytes or spin for minutes.
         """
         if not (
-            self.MIN_MEMORY_KIB <= self.memory_kib <= self.MAX_MEMORY_KIB
+            all(
+                type(value) is int
+                for value in (self.memory_kib, self.iterations, self.lanes)
+            )
+            and self.MIN_MEMORY_KIB <= self.memory_kib <= self.MAX_MEMORY_KIB
             and 1 <= self.iterations <= self.MAX_ITERATIONS
             and 1 <= self.lanes <= self.MAX_LANES
             and self.memory_kib >= 8 * self.lanes
@@ -188,8 +192,8 @@ class VaultKey:
         return "VaultKey(...)"
 
     def matches(self, key_check: bytes | None) -> bool:
-        return key_check is not None and hmac.compare_digest(
-            self.check, bytes(key_check)
+        return isinstance(key_check, bytes) and hmac.compare_digest(
+            self.check, key_check
         )
 
     def name_index(self, name: str) -> bytes:

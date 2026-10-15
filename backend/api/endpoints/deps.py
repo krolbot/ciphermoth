@@ -40,7 +40,7 @@ VaultSessionsDep = Annotated[VaultSessions, Depends(get_vault_sessions)]
 
 _READ_ONLY_METHODS = frozenset({"GET", "HEAD"})
 _READ_ONLY_ROUTES = frozenset(
-    {"master-password:unlock", "master-password:session-activity"}
+    {"master-password:unlock", "master-password:session-activity", "passwords:backup"}
 )
 
 

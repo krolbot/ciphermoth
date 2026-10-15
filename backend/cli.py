@@ -1,7 +1,7 @@
 import binascii
 import contextlib
 import os
-import stat
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -178,6 +178,21 @@ class _Vault:
             )
         return resp
 
+    @contextmanager
+    def stream(self, method: str, url: str, **kwargs: Any) -> Iterator[httpx.Response]:
+        for attempt in range(2):
+            with self.client.stream(
+                method, url, headers=self.headers(), **kwargs
+            ) as resp:
+                if resp.status_code == 401 and self._auth and attempt == 0:
+                    resp.read()
+                else:
+                    if not resp.is_success:
+                        resp.read()
+                    yield resp
+                    return
+            self._authenticate()
+
     def entry_path(self, name: str, suffix: str = "") -> str:
         if "/" in name and _SLASH_NAMES not in self.features:
             _die(
@@ -307,13 +322,11 @@ def pw_list() -> None:
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0))
     table.add_column("Name", style="cyan")
     table.add_column("Description", style="dim")
-    table.add_column("Backed up", justify="center")
 
     for item in items:
         table.add_row(
             escape(item["password_name"]),
             escape(item.get("description") or "-"),
-            "[green]✓[/green]" if item["backed_up"] else "[dim]–[/dim]",
         )
 
     _out.print(table)
@@ -470,12 +483,14 @@ def pw_trash() -> None:
         return
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0))
+    table.add_column("ID", style="dim")
     table.add_column("Name", style="cyan")
     table.add_column("Description", style="dim")
     table.add_column("Deleted", style="dim")
 
     for item in items:
         table.add_row(
+            str(item.get("id", "-")),
             escape(item["password_name"]),
             escape(item.get("description") or "-"),
             (item.get("deleted") or "-")[:19].replace("T", " "),
@@ -485,11 +500,20 @@ def pw_trash() -> None:
 
 
 @pw_app.command(
-    "restore", help="Move an entry out of the trash and back into the vault."
+    "restore",
+    help="Restore the newest trashed entry of this name, or select one with --id.",
 )
-def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None:
+def pw_restore(
+    name: Annotated[str, typer.Argument(help="Entry name.")],
+    entry_id: Annotated[
+        int | None, typer.Option("--id", min=1, help="Row ID from 'password trash'.")
+    ] = None,
+) -> None:
     with _vault() as vault:
-        resp = vault.send("POST", vault.entry_path(name, "/restore"), name=name)
+        params = _trash_params(vault, name, entry_id)
+        resp = vault.send(
+            "POST", vault.entry_path(name, "/restore"), name=name, params=params
+        )
 
     _check(resp)
 
@@ -497,23 +521,52 @@ def pw_restore(name: Annotated[str, typer.Argument(help="Entry name.")]) -> None
 
 
 @pw_app.command(
-    "purge", help="Permanently delete a trashed entry. This cannot be undone."
+    "purge",
+    help=(
+        "Permanently delete the newest trashed entry of this name, or select one "
+        "with --id. This cannot be undone."
+    ),
 )
 def pw_purge(
     name: Annotated[str, typer.Argument(help="Entry name.")],
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip confirmation.")
     ] = False,
+    entry_id: Annotated[
+        int | None, typer.Option("--id", min=1, help="Row ID from 'password trash'.")
+    ] = None,
 ) -> None:
     if not yes:
-        typer.confirm(f"Permanently delete '{name}' from trash?", abort=True)
+        selected = f" (row #{entry_id})" if entry_id is not None else " (newest)"
+        typer.confirm(f"Permanently delete '{name}'{selected} from trash?", abort=True)
 
     with _vault() as vault:
-        resp = vault.send("DELETE", vault.entry_path(name, "/purge"), name=name)
+        params = _trash_params(vault, name, entry_id)
+        resp = vault.send(
+            "DELETE", vault.entry_path(name, "/purge"), name=name, params=params
+        )
 
     _check(resp)
 
     _ok(f"Permanently deleted [cyan]{escape(name)}[/cyan]")
+
+
+def _trash_params(vault: _Vault, name: str, entry_id: int | None) -> dict[str, int]:
+    if entry_id is None:
+        return {}
+    response = vault.send("GET", "/passwords/trash")
+    _check(response)
+    # Older servers ignore an unknown query parameter; refuse before sending a
+    # mutation unless this server supplies selectable row IDs in its Trash list.
+    if not any(
+        row.get("id") == entry_id and row.get("password_name") == name
+        for row in response.json()
+    ):
+        _die(
+            "No matching Trash row ID. Refresh 'password trash' and use this "
+            "release's server."
+        )
+    return {"entry_id": entry_id}
 
 
 @app.command(
@@ -528,20 +581,35 @@ def cmd_backup(
         Path, typer.Option("--out", "-o", help="Directory to save the backup file.")
     ] = Path("."),
 ) -> None:
-    with _vault(timeout=_TRANSFER_TIMEOUT) as vault:
-        resp = vault.send(
-            "POST", "/passwords/backup", json={"master_password": vault.master}
-        )
-
-    _check(resp)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    filename = f"ciphermoth_backup_{stamp}.cmbackup"
-    dest = out_dir / filename
-    dest.touch(mode=stat.S_IRUSR | stat.S_IWUSR)
-    dest.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    dest.write_bytes(resp.content)
+    staged: Path | None = None
+    try:
+        with _vault(timeout=_TRANSFER_TIMEOUT) as vault:
+            with vault.stream(
+                "POST", "/passwords/backup", json={"master_password": vault.master}
+            ) as resp:
+                _check(resp)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+                with tempfile.NamedTemporaryFile(
+                    prefix=f"ciphermoth_backup_{stamp}_",
+                    suffix=".cmbackup.partial",
+                    dir=out_dir,
+                    delete=False,
+                ) as output:
+                    staged = Path(output.name)
+                    for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                        output.write(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
+                dest = staged.with_suffix("")
+                # Publish only a completed transfer; never replace an existing
+                # backup (or follow a pre-existing destination symlink).
+                os.link(staged, dest)
+    except (httpx.HTTPError, OSError):
+        _die("Backup could not be saved. Check the connection and destination space.")
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
     _ok(f"Backup saved to [cyan]{escape(str(dest))}[/cyan]")
 
@@ -626,14 +694,12 @@ def _report_import(payload: dict) -> None:
             _err.print(f"   and {count - len(rows)} more")
 
 
-def _read_import_file(file: Path, on_conflict: str) -> bytes:
-    if not file.exists():
+def _validate_import_file(file: Path, on_conflict: str) -> None:
+    if not file.is_file():
         _die(f"File not found: {file}")
 
     if on_conflict not in _CONFLICTS:
         _die("--on-conflict must be 'skip' or 'overwrite'.")
-
-    return file.read_bytes()
 
 
 @app.command(
@@ -657,9 +723,9 @@ def cmd_import(
         ),
     ] = "skip",
 ) -> None:
-    file_bytes = _read_import_file(file, on_conflict)
+    _validate_import_file(file, on_conflict)
 
-    with _vault(timeout=_TRANSFER_TIMEOUT) as vault:
+    with _vault(timeout=_TRANSFER_TIMEOUT) as vault, file.open("rb") as upload:
         backup_password = typer.prompt(
             "Backup password (Enter if it is the current master password)",
             hide_input=True,
@@ -673,7 +739,7 @@ def cmd_import(
                 "master_password": backup_password or vault.master,
                 "on_conflict": on_conflict,
             },
-            files={"file": (file.name, file_bytes, "application/octet-stream")},
+            files={"file": (file.name, upload, "application/octet-stream")},
         )
 
     _check(resp)
@@ -696,14 +762,14 @@ def cmd_import_csv(
         ),
     ] = "skip",
 ) -> None:
-    file_bytes = _read_import_file(file, on_conflict)
+    _validate_import_file(file, on_conflict)
 
-    with _vault(timeout=60) as vault:
+    with _vault(timeout=60) as vault, file.open("rb") as upload:
         resp = vault.send(
             "POST",
             "/passwords/import/csv",
             data={"on_conflict": on_conflict},
-            files={"file": (file.name, file_bytes, "text/csv")},
+            files={"file": (file.name, upload, "text/csv")},
         )
 
     _check(resp)

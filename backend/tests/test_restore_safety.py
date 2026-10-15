@@ -563,3 +563,58 @@ async def test_a_copy_that_fails_its_own_check_is_never_kept_or_restored(
     assert _raw(folder) == before
     assert _kept(folder) == []
     assert not list(folder.glob(f"{VAULT_FILE}{RESTORING_SUFFIX}*"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process kill")
+async def test_a_set_aside_killed_at_every_step_reunites_the_original_files(
+    tmp_path: Path,
+) -> None:
+    template, _ = await _scenario(tmp_path)
+    original = _raw(template)
+    expected = _content(template / VAULT_FILE)
+    script = CRASH_SCRIPT.replace(
+        "storage.restore(Path(sys.argv[1]), Path(sys.argv[2]))",
+        "storage.set_aside(Path(sys.argv[1]))",
+    )
+    count = tmp_path / "count"
+    shutil.copytree(template, count)
+    result = _run(script, count, "unused", 0)
+    assert result.returncode == 0, result.stderr
+    steps = int(result.stdout.strip())
+    assert steps >= 8
+
+    for step in range(1, steps + 1):
+        work = tmp_path / f"set-aside-crash-{step}"
+        shutil.copytree(template, work)
+        result = _run(script, work, "unused", step)
+        assert result.returncode == 9, (step, result.stderr)
+
+        pending = work / "snapshots" / storage.SET_ASIDE_PENDING
+        if pending.exists():
+            with pytest.raises(StorageError, match="set-aside was interrupted"):
+                storage.prepare_data_dir(work)
+        storage.set_aside(work)
+        kept = list((work / "snapshots").glob("set-aside-*"))
+        assert len(kept) == 1, step
+        assert _raw(kept[0]) == original, step
+        assert _content(kept[0] / VAULT_FILE) == expected, step
+        assert not list(work.glob(f"{VAULT_FILE}*")), step
+        assert not pending.exists(), step
+
+
+async def test_an_interrupted_set_aside_never_overwrites_either_copy(
+    tmp_path: Path,
+) -> None:
+    folder, snap = await _scenario(tmp_path)
+    pending = folder / "snapshots" / storage.SET_ASIDE_PENDING
+    pending.mkdir()
+    copy = pending / VAULT_FILE
+    copy.write_bytes(b"an earlier vault must survive")
+    before = _raw(folder)
+
+    with pytest.raises(StorageError, match="Nothing was overwritten"):
+        storage.set_aside(folder)
+    with pytest.raises(StorageError, match="set-aside was interrupted"):
+        storage.restore(folder, snap)
+    assert _raw(folder) == before
+    assert copy.read_bytes() == b"an earlier vault must survive"

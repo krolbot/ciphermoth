@@ -3,6 +3,7 @@ import os
 import shutil
 import sqlite3
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ JOURNAL_SIZE_LIMIT = 16 * 1024 * 1024
 VAULT_FILE = "vault.db"
 LOCK_FILE = "vault.lock"
 SNAPSHOT_DIR = "snapshots"
+SET_ASIDE_PENDING = "set-aside-in-progress"
 RESTORING_SUFFIX = ".restoring"
 _SIDECARS = ("-wal", "-shm", "-journal")
 _UNREADABLE = (11, 26)
@@ -71,6 +73,7 @@ def prepare_data_dir(data_dir: Path) -> Path:
     except OSError as error:
         raise StorageError(_unwritable(data_dir, error)) from error
     path = vault_file(data_dir)
+    refuse_pending_set_aside(data_dir)
     refuse_orphaned_journals(path)
     refuse_unusable_file(path)
     try:
@@ -81,6 +84,15 @@ def prepare_data_dir(data_dir: Path) -> Path:
     except OSError as error:
         raise StorageError(_unwritable(data_dir, error)) from error
     return path
+
+
+def refuse_pending_set_aside(data_dir: Path) -> None:
+    if (snapshot_dir(data_dir) / SET_ASIDE_PENDING).exists():
+        raise StorageError(
+            "A vault set-aside was interrupted. Nothing was changed. Run "
+            "'ciphermoth-admin set-aside' again to finish moving the vault and "
+            "its journals together before starting or restoring CipherMoth."
+        )
 
 
 def refuse_orphaned_journals(path: Path) -> None:
@@ -162,14 +174,16 @@ def identity_problem(application_id: int, user_version: int) -> str | None:
 _VAULT_FORMATS = "SELECT format_version FROM vault"
 
 
-def format_problem(formats: list[int]) -> str | None:
+def format_problem(formats: Sequence[object]) -> str | None:
     """Whether the vault row (if the vault is set up) has a cryptographic format
     this release reads. Kept apart from the schema version: the same tables
     could one day hold a newer format."""
     if len(formats) > 1:
         return "has more than one vault key row"
+    if formats and not isinstance(formats[0], int):
+        return "has an invalid vault format marker"
     if formats and formats[0] != FORMAT_VERSION:
-        if formats[0] > FORMAT_VERSION:
+        if isinstance(formats[0], int) and formats[0] > FORMAT_VERSION:
             return (
                 f"was written by a newer CipherMoth (vault format {formats[0]}, "
                 f"this release understands {FORMAT_VERSION}); update CipherMoth"
@@ -530,6 +544,7 @@ def restore(data_dir: Path, source: Path) -> Path | None:
     staged = live.with_name(live.name + RESTORING_SUFFIX)
     try:
         with VaultLock(data_dir):
+            refuse_pending_set_aside(data_dir)
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
                 _copy(source, staged, journal_mode="WAL")
@@ -561,22 +576,35 @@ def set_aside(data_dir: Path) -> Path | None:
     require_supported_sqlite()
     live = vault_file(data_dir)
     files = [live.with_name(live.name + suffix) for suffix in ("", *_SIDECARS)]
-    if not any(path.exists() for path in files):
-        return None
     folder = snapshot_dir(data_dir)
+    pending = folder / SET_ASIDE_PENDING
     try:
         with VaultLock(data_dir):
+            if not pending.exists() and not any(path.exists() for path in files):
+                return None
             if live.exists() and live.stat().st_size > 0:
                 connection = _take_exclusively(live)
                 if connection is not None:
                     connection.close()
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-            kept = folder / timestamped("set-aside").removesuffix(".db")
-            kept.mkdir(mode=0o700)
+            pending.mkdir(mode=0o700, exist_ok=True)
+            # Publish a durable recovery marker before moving any vault file.
+            # Its fixed name lets a retry reunite a DB and WAL split by a kill.
+            _fsync_dir(folder)
+            _fsync_dir(data_dir)
             for path in files:
                 if path.exists():
-                    os.replace(path, kept / path.name)
-            _fsync_dir(kept)
+                    target = pending / path.name
+                    if target.exists():
+                        raise StorageError(
+                            f"Both {path} and {target} exist. Nothing was overwritten; "
+                            "keep both copies and resolve the interrupted set-aside."
+                        )
+                    os.replace(path, target)
+            _fsync_dir(pending)
+            _fsync_dir(data_dir)
+            kept = folder / timestamped("set-aside").removesuffix(".db")
+            os.replace(pending, kept)
             _fsync_dir(folder)
             _fsync_dir(data_dir)
     except OSError as error:

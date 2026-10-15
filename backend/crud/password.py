@@ -139,6 +139,7 @@ class PasswordCRUD(BaseCRUD):
         model: EntryModel, document: EntryDocument, attachment_count: int = 0
     ) -> PasswordResponse:
         return PasswordResponse(
+            id=model.id,
             password_name=document.name,
             kind=document.kind,
             username=document.username,
@@ -257,9 +258,11 @@ class PasswordCRUD(BaseCRUD):
         return PasswordDelete(deleted=True, detail="Password moved to trash.")
 
     async def restore_password(
-        self, password_name: str, key: VaultKey
+        self, password_name: str, key: VaultKey, *, entry_id: int | None = None
     ) -> PasswordUpdate:
-        model, _ = await find_entry(self.session, key, password_name, deleted=True)
+        model, _ = await find_entry(
+            self.session, key, password_name, deleted=True, entry_id=entry_id
+        )
         conflict = (
             f"An active password named '{password_name}' already exists. "
             "Rename or delete it before restoring."
@@ -270,8 +273,12 @@ class PasswordCRUD(BaseCRUD):
         await self.flush_or_conflict(conflict)
         return PasswordUpdate(updated=True, detail="Password restored from trash.")
 
-    async def purge_password(self, password_name: str, key: VaultKey) -> PasswordDelete:
-        model, _ = await find_entry(self.session, key, password_name, deleted=True)
+    async def purge_password(
+        self, password_name: str, key: VaultKey, *, entry_id: int | None = None
+    ) -> PasswordDelete:
+        model, _ = await find_entry(
+            self.session, key, password_name, deleted=True, entry_id=entry_id
+        )
         await self.session.delete(model)
         await self.session.flush()
         return PasswordDelete(deleted=True, detail="Password permanently deleted.")
@@ -292,6 +299,7 @@ class PasswordCRUD(BaseCRUD):
         current = existing.get(index)
         outcome = "imported"
         if current is not None:
+            open_entry(key, current)
             if on_conflict == OnConflict.skip:
                 return "skipped"
             current.deleted = utc_now()
@@ -305,7 +313,7 @@ class PasswordCRUD(BaseCRUD):
 
     async def load_active(self) -> dict[bytes, EntryModel]:
         return {
-            bytes(model.name_index): model
+            model.name_index: model
             for model in (
                 await self.session.execute(
                     select(EntryModel).where(EntryModel.deleted.is_(None))

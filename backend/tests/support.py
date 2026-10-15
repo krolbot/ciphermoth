@@ -498,19 +498,32 @@ def backup_file(
         "exported_at": "2026-10-15T00:00:00+00:00",
         "app_version": "test",
         "settings": settings or dict(SETTINGS_DEFAULTS),
-        "entries": entries,
+        "entries_count": len(entries),
     }
+    entries_to_write = document.pop("entries", entries)
+    document.setdefault("entries_count", len(entries_to_write))
     salt = os.urandom(16)
     key = BackupKey(argon2id(password, salt, DEFAULT_KDF))
     header = BackupHeader(
         params=DEFAULT_KDF,
         salt=salt,
-        frames=frames if frames is not None else 1 + len(contents),
+        frames=frames
+        if frames is not None
+        else 1 + len(entries_to_write) + len(contents),
         commitment=key.commitment,
     )
     target = io.BytesIO()
     writer = BackupWriter(target, key, header)
     writer.write(json.dumps(document).encode())
-    for content in contents:
+    content_iter = iter(contents)
+    for entry in entries_to_write:
+        writer.write(json.dumps(entry).encode())
+        for _ in entry.get("attachments", []):
+            try:
+                writer.write(next(content_iter))
+            except StopIteration:
+                break
+    for content in content_iter:
         writer.write(content)
+    writer.finish()
     return target.getvalue()

@@ -417,7 +417,6 @@ def vault_v2_vectors() -> dict:
 
 
 def backup_v2_manifest(content: bytes) -> dict:
-    entry = json.loads(_document())
     return {
         "format": "ciphermoth-backup",
         "version": 2,
@@ -431,38 +430,43 @@ def backup_v2_manifest(content: bytes) -> dict:
             "clipboard_clear_ms": 15000,
             "update_check_enabled": False,
         },
-        "entries": [
-            {
-                **entry,
-                "created": "2026-01-01T00:00:00.000001+00:00",
-                "updated": "2026-02-01T00:00:00.000002+00:00",
-                "deleted": None,
-                "attachments": [
-                    {
-                        "filename": "Preț ünïcode.bin",
-                        "content_type": "x/test",
-                        "size": len(content),
-                        "sha256": hashlib.sha256(content).hexdigest(),
-                        "created": "2026-01-02T00:00:00.000003+00:00",
-                    }
-                ],
-            },
-            {
-                **json.loads(
-                    _document(
-                        name="GitHub",
-                        value="older-Secret",
-                        favorite=False,
-                        history=[],
-                    )
-                ),
-                "created": "2025-06-01T00:00:00+00:00",
-                "updated": "2025-07-01T00:00:00+00:00",
-                "deleted": "2025-12-24T18:00:00.123456+00:00",
-                "attachments": [],
-            },
-        ],
+        "entries_count": 2,
     }
+
+
+def backup_v2_entries(content: bytes) -> list[dict]:
+    entry = json.loads(_document())
+    return [
+        {
+            **entry,
+            "created": "2026-01-01T00:00:00.000001+00:00",
+            "updated": "2026-02-01T00:00:00.000002+00:00",
+            "deleted": None,
+            "attachments": [
+                {
+                    "filename": "Preț ünïcode.bin",
+                    "content_type": "x/test",
+                    "size": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "created": "2026-01-02T00:00:00.000003+00:00",
+                }
+            ],
+        },
+        {
+            **json.loads(
+                _document(
+                    name="GitHub",
+                    value="older-Secret",
+                    favorite=False,
+                    history=[],
+                )
+            ),
+            "created": "2025-06-01T00:00:00+00:00",
+            "updated": "2025-07-01T00:00:00+00:00",
+            "deleted": "2025-12-24T18:00:00.123456+00:00",
+            "attachments": [],
+        },
+    ]
 
 
 def backup_v2_vectors() -> tuple[dict, bytes]:
@@ -470,17 +474,33 @@ def backup_v2_vectors() -> tuple[dict, bytes]:
     salt = fixed(0x33, 16)
     content = bytes(range(256)) * 4 + b"\x00\xff"
     manifest = json.dumps(backup_v2_manifest(content), ensure_ascii=False).encode()
+    entries = backup_v2_entries(content)
+    plaintext_frames = [
+        manifest,
+        json.dumps(entries[0], ensure_ascii=False).encode(),
+        content,
+        json.dumps(entries[1], ensure_ascii=False).encode(),
+    ]
     derived = raw_argon2id(password, salt)
     frame_key = hkdf(derived, "ciphermoth/backup/v2/frame-encryption")
     commitment = hkdf(derived, "ciphermoth/backup/v2/key-commitment")
     header = struct.pack(
-        ">8sHBIII16sI32s", b"CMBACKUP", 2, 1, 65536, 3, 4, salt, 2, commitment
+        ">8sHBIII16sI32s",
+        b"CMBACKUP",
+        2,
+        1,
+        65536,
+        3,
+        4,
+        salt,
+        len(plaintext_frames),
+        commitment,
     )
     out = bytearray(header)
     frames = []
-    for index, plaintext in enumerate((manifest, content)):
+    for index, plaintext in enumerate(plaintext_frames):
         nonce = fixed(0x70 + index, 12)
-        last = index == 1
+        last = index == len(plaintext_frames) - 1
         associated = header + struct.pack(">IB", index, 1 if last else 0)
         ciphertext = AESGCM(frame_key).encrypt(nonce, plaintext, associated)
         out += struct.pack(">I", len(ciphertext)) + nonce + ciphertext
@@ -504,8 +524,9 @@ def backup_v2_vectors() -> tuple[dict, bytes]:
             "|| u16 version 2 || u8 kdf 1 || u32 memory KiB || u32 iterations || "
             "u32 lanes || salt(16) || u32 frames || commitment(32). Each frame = "
             "u32 length || nonce(12) || AES-256-GCM(frame_key, nonce, plaintext, "
-            "header || u32 index || u8 last). Frame 0 is the manifest JSON, then "
-            "one frame per attachment in manifest order.",
+            "header || u32 index || u8 last). Frame 0 contains settings and the "
+            "entry count; each entry has its own JSON frame followed by its "
+            "attachment frames.",
             file="backup-v2.cmbackup",
             file_sha256=hashlib.sha256(data).hexdigest(),
             password=password,
@@ -516,6 +537,7 @@ def backup_v2_vectors() -> tuple[dict, bytes]:
             header_hex=header.hex(),
             frames=frames,
             manifest=json.loads(manifest),
+            entries=entries,
             attachment_hex=content.hex(),
         ),
         data,

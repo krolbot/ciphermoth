@@ -255,7 +255,10 @@ def test_the_frozen_backup_reads_with_the_frame_reader() -> None:
     key = helpers.BackupKey(bytes.fromhex(BACKUP_V2["derived_hex"]))
     assert key.matches(reader.header)
     assert json.loads(reader.read(key, 1 << 20)) == BACKUP_V2["manifest"]
+    first, second = BACKUP_V2["entries"]
+    assert json.loads(reader.read(key, 1 << 20)) == first
     assert reader.read(key, 1 << 20).hex() == BACKUP_V2["attachment_hex"]
+    assert json.loads(reader.read(key, 1 << 20)) == second
     reader.finish()
     derived = helpers.argon2id(BACKUP_V2["password"], reader.header.salt)
     assert derived.hex() == BACKUP_V2["derived_hex"]
@@ -279,7 +282,7 @@ async def test_the_frozen_backup_restores_completely_into_a_new_vault(
     assert resp.json()["attachments"] == 1
     assert resp.json()["settings_restored"] is True
     [active] = (await client.get("/passwords", headers=auth(token))).json()
-    expected = BACKUP_V2["manifest"]["entries"][0]
+    expected = BACKUP_V2["entries"][0]
     assert active["password_value"] == expected["value"]
     assert active["password_history"][0]["value"] == expected["history"][0]["value"]
     assert active["updated"] == expected["updated"].removesuffix("+00:00")

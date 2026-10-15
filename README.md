@@ -126,7 +126,8 @@ How it works (the full specification is [docs/VAULT_FORMAT.md](./docs/VAULT_FORM
   byte for byte, and your settings, encrypted with AES-256-GCM under Argon2id with the backup's own random salt and
   your master password. A wrong password, a damaged or cut-off file changes nothing on restore. A backup is the
   portable copy; a **snapshot** (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md#snapshots))
-  is a raw local copy of the vault file for recovering this installation;
+  is a raw local copy of the vault file for recovering this installation. Check that a browser download actually
+  saved the backup file; the app cannot verify browser saving and does not label entries as safely backed up;
 - the UI and API listen on `127.0.0.1` by default; exposing them to other machines is an explicit setting;
 - the password generator uses `crypto.getRandomValues` with rejection sampling, no `Math.random()`, no shortcuts;
 

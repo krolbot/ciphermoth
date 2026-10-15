@@ -55,7 +55,7 @@ const restoredExtras = (result) =>
 
 const ImportResult = ({ result }) => {
   const extras = restoredExtras(result);
-  if (result.total === 0 && !result.ignored) {
+  if (result.total === 0 && !result.ignored && extras.length === 0) {
     return (
       <Typography variant="body2" sx={{ color: "text.secondary" }}>
         No passwords found in the file.

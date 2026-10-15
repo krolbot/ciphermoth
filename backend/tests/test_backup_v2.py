@@ -3,8 +3,10 @@ import hashlib
 import io
 import json
 import os
+import resource
 import struct
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -27,7 +29,9 @@ from tests.support import (
     create_vault,
     db_execute,
     db_snapshot,
+    engine,
     entry,
+    raw_vault_key,
     read_current_vault,
     reset_vault,
 )
@@ -58,7 +62,7 @@ def _read_all(data: bytes, key: helpers.BackupKey = FROZEN_KEY) -> list[bytes]:
     reader = BackupReader(io.BytesIO(data))
     if not key.matches(reader.header):
         raise helpers.DecryptionFailed
-    frames = [reader.read(key, 8 * MIB) for _ in range(reader.header.frames)]
+    frames = [reader.read(key, 64 * MIB) for _ in range(reader.header.frames)]
     reader.finish()
     return frames
 
@@ -72,8 +76,11 @@ def _refused(data: bytes) -> bool:
 
 
 def test_the_frozen_backup_reads_completely() -> None:
-    manifest, content = _read_all(FROZEN)
+    manifest, active, content, trashed = _read_all(FROZEN)
     assert json.loads(manifest)["version"] == 2
+    assert json.loads(manifest)["entries_count"] == 2
+    assert json.loads(active)["name"] == "GitHub"
+    assert json.loads(trashed)["name"] == "GitHub"
     assert len(content) == 1026
 
 
@@ -102,13 +109,19 @@ def _frames(data: bytes) -> tuple[bytes, list[bytes]]:
 
 
 def test_reordered_repeated_dropped_and_foreign_frames_are_refused() -> None:
-    header, (manifest, content) = _frames(FROZEN)
-    assert not _refused(header + manifest + content)
-    for frames in ([content, manifest], [manifest, manifest], [manifest], [content]):
-        assert _refused(header + b"".join(frames))
+    header, frames = _frames(FROZEN)
+    assert len(frames) == 4
+    assert not _refused(header + b"".join(frames))
+    for altered in (
+        [frames[1], frames[0], *frames[2:]],
+        [frames[0], frames[1], frames[1], *frames[2:]],
+        frames[:-1],
+        [frames[0], frames[2], frames[1], frames[3]],
+    ):
+        assert _refused(header + b"".join(altered))
     two_frames = struct.pack(">I", 1)
     one_frame_header = header[:-36] + two_frames + header[-32:]
-    assert _refused(one_frame_header + manifest)
+    assert _refused(one_frame_header + b"".join(frames))
 
     other_salt = os.urandom(16)
     other = io.BytesIO()
@@ -120,13 +133,17 @@ def test_reordered_repeated_dropped_and_foreign_frames_are_refused() -> None:
     writer.write(b"{}")
     writer.write(b"another backup")
     writer.finish()
-    _, (foreign_manifest, foreign_content) = _frames(other.getvalue())
-    for frames in ([foreign_manifest, content], [manifest, foreign_content]):
-        assert _refused(header + b"".join(frames))
+    _, foreign_frames = _frames(other.getvalue())
+    for altered in (
+        [foreign_frames[0], *frames[1:]],
+        [*frames[:-1], foreign_frames[-1]],
+    ):
+        assert _refused(header + b"".join(altered))
 
 
 def test_a_frame_length_beyond_the_limit_is_refused_before_reading_it() -> None:
-    header, (manifest, _) = _frames(FROZEN)
+    header, frames = _frames(FROZEN)
+    manifest = frames[0]
     huge = header + struct.pack(">I", 0xFFFFFFFF) + manifest[4:]
 
     class NeverReadsMuch(io.BytesIO):
@@ -193,7 +210,9 @@ async def test_wrong_password_tampering_and_truncation_through_the_api(
     headers = auth(await create_vault(client))
     await client.post("/passwords/create", json=entry("kept"), headers=headers)
     before = await db_snapshot()
-    header, (manifest, content) = _frames(FROZEN)
+    header, frames = _frames(FROZEN)
+    manifest = frames[0]
+    content = frames[2]
     tampered_content = bytearray(content)
     tampered_content[-3] ^= 0x80
     cases = {
@@ -208,17 +227,22 @@ async def test_wrong_password_tampering_and_truncation_through_the_api(
             + manifest[:30]
             + bytes([manifest[30] ^ 1])
             + manifest[31:]
-            + content,
+            + b"".join(frames[1:]),
             FROZEN_PASSWORD,
             400,
         ),
         "flipped attachment": (
-            header + manifest + bytes(tampered_content),
+            header
+            + b"".join([frames[0], frames[1], bytes(tampered_content), frames[3]]),
             FROZEN_PASSWORD,
             400,
         ),
         "truncated attachment": (FROZEN[:-1], FROZEN_PASSWORD, 400),
-        "missing attachment": (header + manifest, FROZEN_PASSWORD, 400),
+        "missing attachment": (
+            header + b"".join([frames[0], frames[1], frames[3]]),
+            FROZEN_PASSWORD,
+            400,
+        ),
         "trailing bytes": (FROZEN + b"\x00", FROZEN_PASSWORD, 400),
         "header only": (header, FROZEN_PASSWORD, 400),
         "empty": (b"", FROZEN_PASSWORD, 400),
@@ -352,13 +376,13 @@ async def test_malformed_manifests_are_refused_without_writing(
             "clipboard_clear_ms": 30000,
             "update_check_enabled": True,
         },
-        "entries": entries,
+        "entries_count": len(entries),
     }
     for name, value in overrides.items():
         manifest[name] = (
             {**manifest[name], **value} if isinstance(value, dict) else value
         )
-    data = backup_file([], manifest=manifest, contents=contents)
+    data = backup_file(entries, manifest=manifest, contents=contents)
     before = await db_snapshot()
 
     resp = await _import(client, headers, data)
@@ -427,7 +451,7 @@ async def test_a_complete_backup_restores_everything_byte_for_byte(
     assert backup.status_code == 200
     assert backup.headers["content-type"] == "application/octet-stream"
     assert ".cmbackup" in backup.headers["content-disposition"]
-    assert all(e.backed_up for e in (await read_current_vault()).entries)
+    assert not any(e.backed_up for e in (await read_current_vault()).entries)
 
     await reset_vault()
     headers = auth(await create_vault(client, NEW_MASTER_PASSWORD))
@@ -614,6 +638,238 @@ async def test_large_backups_spool_only_ciphertext_to_disk(
         assert marker[:50] not in handle.read()
 
 
+async def test_backup_round_trips_attachments_above_desktop_ipc_frame_size(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    names = [f"large-files-{index}" for index in range(6)]
+    contents = [os.urandom(5 * MIB) for _ in range(6)]
+    for index, (name, content) in enumerate(zip(names, contents, strict=True)):
+        await client.post("/passwords/create", json=entry(name), headers=headers)
+        response = await client.post(
+            f"/passwords/{name}/attachments",
+            files={"file": (f"{index}.bin", content, "application/octet-stream")},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+
+    backup = await client.post(
+        "/passwords/backup",
+        json={"master_password": MASTER_PASSWORD},
+        headers=headers,
+    )
+    assert backup.status_code == 200, backup.text
+    assert len(backup.content) > 24 * MIB
+
+    await db_execute("DELETE FROM entries")
+    restored = await _import(client, headers, backup.content)
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["attachments"] == len(contents)
+    for name, expected in zip(names, contents, strict=True):
+        [item] = (
+            await client.get(f"/passwords/{name}/attachments", headers=headers)
+        ).json()
+        response = await client.get(
+            f"/passwords/{name}/attachments/{item['id']}", headers=headers
+        )
+        assert response.content == expected
+
+
+@pytest.mark.stress
+async def test_many_entry_metadata_above_old_64_mib_manifest_round_trips(
+    client: httpx.AsyncClient,
+) -> None:
+    from sqlalchemy import text
+
+    from helpers import VaultKey
+
+    headers = auth(await create_vault(client))
+    key = VaultKey(await raw_vault_key())
+    count = 1100
+    value = "v" * (64 * 1024)
+    history = [
+        {"value": f"old-{n}-" + "h" * 512, "changed_at": "2026-01-01T00:00:00"}
+        for n in range(10)
+    ]
+    statement = text(
+        "INSERT INTO entries (uid, name_index, document, backed_up) "
+        "VALUES (:uid, :name_index, :document, 0)"
+    )
+    async with engine.begin() as connection:
+        for start in range(0, count, 100):
+            batch = []
+            for index in range(start, min(start + 100, count)):
+                name = f"large-{index:04d}"
+                document = {
+                    "name": name,
+                    "kind": "note" if index % 2 else "login",
+                    "username": None,
+                    "value": value,
+                    "url": None,
+                    "totp_secret": None,
+                    "description": "representative secure note metadata",
+                    "tags": ["review", "capacity"],
+                    "custom_fields": [
+                        {"label": "field", "value": "x" * 128, "hidden": True}
+                    ],
+                    "folder": "Research",
+                    "favorite": bool(index % 2),
+                    "history": history,
+                }
+                uid = os.urandom(16)
+                batch.append(
+                    {
+                        "uid": uid,
+                        "name_index": key.name_index(name),
+                        "document": key.seal_entry(
+                            uid, json.dumps(document, ensure_ascii=False).encode()
+                        ),
+                    }
+                )
+            await connection.execute(statement, batch)
+
+    attachment_data = b"a" * (5 * MIB)
+    for index in range(3):
+        uploaded = await client.post(
+            f"/passwords/large-{index:04d}/attachments",
+            files={
+                "file": (
+                    f"large-{index}.bin",
+                    attachment_data,
+                    "application/octet-stream",
+                )
+            },
+            headers=headers,
+        )
+        assert uploaded.status_code == 200, uploaded.text
+    total_attachment_bytes = len(attachment_data) * 3
+
+    started = time.perf_counter()
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    generated_seconds = time.perf_counter() - started
+    assert backup.status_code == 200, backup.json()
+    assert len(backup.content) > 64 * MIB
+    backup_size = len(backup.content)
+    reader = BackupReader(io.BytesIO(backup.content))
+    backup_key = await helpers.backup_key_for(MASTER_PASSWORD, reader.header)
+    envelope = reader.read(backup_key, 64 * MIB)
+    metadata_bytes = 0
+    authenticated_attachment_bytes = 0
+    for _ in range(count):
+        entry_doc = json.loads(reader.read(backup_key, 64 * MIB))
+        metadata_bytes += len(json.dumps(entry_doc, ensure_ascii=False).encode())
+        for attachment in entry_doc["attachments"]:
+            content = reader.read(backup_key, 5 * MIB)
+            assert len(content) == attachment["size"]
+            authenticated_attachment_bytes += len(content)
+    reader.finish()
+    assert json.loads(envelope)["entries_count"] == count
+    assert metadata_bytes > 64 * MIB
+    assert authenticated_attachment_bytes == total_attachment_bytes
+
+    await reset_vault()
+    headers = auth(await create_vault(client))
+    started = time.perf_counter()
+    restored = await _import(client, headers, backup.content)
+    restored_seconds = time.perf_counter() - started
+    assert restored.status_code == 200, restored.text[:300]
+    assert restored.json()["imported"] == count
+    assert await db_execute("SELECT count(*) FROM entries") == [(count,)]
+    for name in ("large-0000", f"large-{count - 1:04d}"):
+        item = await client.get(f"/passwords/{name}", headers=headers)
+        assert item.status_code == 200
+        assert len(item.json()["password_value"]) == len(value)
+        assert len(item.json()["password_history"]) == 10
+    attachment_response = await client.get(
+        "/passwords/large-0000/attachments", headers=headers
+    )
+    [attachment] = attachment_response.json()
+    attachment_response = await client.get(
+        f"/passwords/large-0000/attachments/{attachment['id']}", headers=headers
+    )
+    assert attachment_response.content == attachment_data
+    peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    print(
+        f"large-backup entries={count} metadata={metadata_bytes} "
+        f"attachments={total_attachment_bytes} backup={backup_size} "
+        f"generation={generated_seconds:.2f}s restore={restored_seconds:.2f}s "
+        f"peak-rss-platform-units={peak_rss}"
+    )
+
+
+async def test_backup_generation_failure_closes_ciphertext_spool_and_releases_db(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import crud.backup
+
+    headers = auth(await create_vault(client))
+    await client.post("/passwords/create", json=entry("saved"), headers=headers)
+    before = await db_snapshot()
+    handles = []
+    real_spool = tempfile.SpooledTemporaryFile
+
+    def tracked_spool(*args, **kwargs):
+        handle = real_spool(*args, **kwargs)
+        handles.append(handle)
+        return handle
+
+    def fail_write(self, plaintext):
+        raise OSError("synthetic encrypted-spool failure")
+
+    monkeypatch.setattr(crud.backup.tempfile, "SpooledTemporaryFile", tracked_spool)
+    monkeypatch.setattr(crud.backup.BackupWriter, "write", fail_write)
+    response = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 500
+    assert handles and all(handle.closed for handle in handles)
+    assert engine.sync_engine.pool.checkedout() == 0
+    assert await db_snapshot() == before
+    monkeypatch.undo()
+    write = await client.post("/passwords/create", json=entry("after"), headers=headers)
+    assert write.status_code == 200
+
+
+@pytest.mark.parametrize("failure", ["send", "cancel"])
+async def test_backup_response_closes_spool_after_send_failure_or_cancellation(
+    failure: str,
+) -> None:
+    from starlette.requests import ClientDisconnect
+
+    from api.endpoints.password import BackupResponse
+
+    backup = tempfile.SpooledTemporaryFile(max_size=1)
+    backup.write(b"ciphertext")
+    backup.seek(0)
+    response = BackupResponse(backup, "test.cmbackup")
+    body_started = asyncio.Event()
+    allow_send = asyncio.Event()
+
+    async def receive():
+        await asyncio.Future()
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            body_started.set()
+            await allow_send.wait()
+            if failure == "send":
+                raise OSError("synthetic client disconnect")
+
+    scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+    task = asyncio.create_task(response(scope, receive, send))
+    await asyncio.wait_for(body_started.wait(), timeout=2)
+    if failure == "cancel":
+        task.cancel()
+    else:
+        allow_send.set()
+    expected = asyncio.CancelledError if failure == "cancel" else ClientDisconnect
+    with pytest.raises(expected):
+        await task
+    assert backup.closed
+
+
 async def test_an_empty_vault_backs_up_and_restores(client: httpx.AsyncClient) -> None:
     headers = auth(await create_vault(client))
     backup = await client.post(
@@ -623,7 +879,7 @@ async def test_an_empty_vault_backs_up_and_restores(client: httpx.AsyncClient) -
     resp = await _import(client, headers, backup.content)
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
-    assert resp.json()["settings_restored"] is False
+    assert resp.json()["settings_restored"] is True
 
 
 _TEXT = st.text(
@@ -752,7 +1008,8 @@ async def test_a_backup_upload_takes_one_file_and_holds_no_lock_while_it_arrives
 
 
 @pytest.mark.parametrize(
-    ("limit", "value"), [("MAX_MANIFEST_BYTES", 2048), ("MAX_BACKUP_BYTES", 4096)]
+    ("limit", "value"),
+    [("MAX_ENTRY_FRAME_BYTES", 1024), ("MAX_BACKUP_BYTES", 4096)],
 )
 async def test_a_backup_the_reader_would_refuse_is_never_written(
     client: httpx.AsyncClient,
@@ -778,8 +1035,8 @@ async def test_a_backup_the_reader_would_refuse_is_never_written(
         "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
     )
 
-    assert resp.status_code == 400, resp.text
-    assert "too large for one backup" in resp.json()["detail"]
+    assert resp.status_code == 400
+    assert "backup" in resp.json()["detail"].lower()
     assert await db_snapshot() == before
     monkeypatch.undo()
     resp = await client.post(

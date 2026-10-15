@@ -19,8 +19,14 @@ from helpers import (
 
 MAX_FRAMES = 1_000_001
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
-MAX_BACKUP_BYTES = 1024 * 1024 * 1024
+MAX_ATTACHMENT_FRAME_BYTES = 5 * 1024 * 1024
+MAX_ENTRY_FRAME_BYTES = 64 * 1024 * 1024
+MAX_ENTRY_STORED_BYTES = MAX_ENTRY_FRAME_BYTES - 32 * 1024
 FRAME_OVERHEAD = 4 + NONCE_BYTES + TAG_BYTES
+# The format has a practical, enforced total-size ceiling. Entries and their
+# attachments are separate frames, so no aggregate JSON manifest grows with
+# vault size. The file itself remains ciphertext when staged or transported.
+MAX_BACKUP_BYTES = 1024 * 1024 * 1024
 _FRAME_PREFIX = struct.Struct(">I")
 _INCOMPLETE = "The backup file is incomplete or damaged."
 

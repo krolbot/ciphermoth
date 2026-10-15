@@ -3,11 +3,9 @@ import GppBadIcon from "@mui/icons-material/GppBad";
 import GppGoodIcon from "@mui/icons-material/GppGood";
 import GppMaybeIcon from "@mui/icons-material/GppMaybe";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
-import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutlined";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
-import HighlightOffIcon from "@mui/icons-material/HighlightOff";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
@@ -289,7 +287,7 @@ export const createColumns = ({
     align: "center",
     headerAlign: "center",
     renderCell: (params) => {
-      const { password_name, password_value, url, backed_up, kind } = params.row;
+      const { password_name, password_value, url, kind } = params.row;
       return (
         <Stack direction="row" spacing={0} sx={{ alignItems: "center", height: "100%" }}>
           <Box sx={{ visibility: url ? "visible" : "hidden" }}>
@@ -311,15 +309,6 @@ export const createColumns = ({
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1 }} />
           {kind !== "note" && <StrengthIndicator password={password_value} />}
-          <Tooltip title={backed_up ? "Password backed up" : "Password not backed up"}>
-            <Box sx={{ display: "flex", alignItems: "center" }}>
-              {backed_up ? (
-                <CheckCircleOutlineIcon fontSize="small" sx={{ color: "success.main" }} />
-              ) : (
-                <HighlightOffIcon fontSize="small" sx={{ color: "warning.main" }} />
-              )}
-            </Box>
-          </Tooltip>
         </Stack>
       );
     },

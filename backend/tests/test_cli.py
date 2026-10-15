@@ -152,6 +152,23 @@ async def test_cli_backup_import_and_csv(api: str, tmp_path: Path) -> None:
     assert "csv-Pass-2" in ok(cli(api, "password", "get", "mail"))
 
 
+async def test_cli_selects_the_requested_same_name_trash_row(
+    api: str, key: dict[str, str]
+) -> None:
+    for value in ("older", "newer"):
+        _api_create(api, key, {"password_name": "shared", "password_value": value})
+        assert httpx.delete(f"{api}/passwords/shared", headers=key).is_success
+    rows = httpx.get(f"{api}/passwords/trash", headers=key).json()
+    older = next(row for row in rows if row["password_value"] == "older")
+    newer = next(row for row in rows if row["password_value"] == "newer")
+    assert str(older["id"]) in ok(cli(api, "password", "trash"))
+    ok(cli(api, "password", "purge", "shared", "--id", str(older["id"]), "--yes"))
+    remaining = httpx.get(f"{api}/passwords/trash", headers=key).json()
+    assert [row["id"] for row in remaining] == [newer["id"]]
+    ok(cli(api, "password", "restore", "shared", "--id", str(newer["id"])))
+    assert _api_get(api, key, "shared")["password_value"] == "newer"
+
+
 async def test_cli_rejects_a_wrong_master_password(live_server: str) -> None:
     httpx.post(
         f"{live_server}/master_password/create",
@@ -574,6 +591,90 @@ def _answer_unlock(handler: _Recorder, server: str) -> bool:
     else:
         return False
     return True
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_cli_streams_large_backups_and_never_publishes_partial_transfers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool
+) -> None:
+    size = 25 * 1024 * 1024
+    original_read = httpx.Response.read
+
+    def no_buffer(response: httpx.Response) -> bytes:
+        if (
+            response.request.url.path.endswith("/passwords/backup")
+            and response.is_success
+        ):
+            pytest.fail("The CLI buffered the entire backup response")
+        return original_read(response)
+
+    monkeypatch.setattr(httpx.Response, "read", no_buffer)
+
+    def respond(handler: _Recorder) -> None:
+        if _answer_unlock(handler, "sessions"):
+            return
+        handler.send_response(200)
+        handler.send_header("content-length", str(size))
+        handler.end_headers()
+        chunk = b"encrypted-fixture".ljust(1024 * 1024, b"x")
+        for _ in range(2 if interrupted else 25):
+            handler.wfile.write(chunk)
+
+    with _fake_server(respond) as (api, _):
+        result = cli(api, "backup", "--out", str(tmp_path))
+        if interrupted:
+            assert result.exit_code == 1
+            assert "Backup could not be saved" in result.output
+            assert list(tmp_path.iterdir()) == []
+        else:
+            ok(result)
+            [archive] = tmp_path.glob("*.cmbackup")
+            assert archive.stat().st_size == size
+            assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+            assert not list(tmp_path.glob("*.partial"))
+            # Repeating the command cannot replace the earlier backup.
+            ok(cli(api, "backup", "--out", str(tmp_path)))
+            assert len(list(tmp_path.glob("*.cmbackup"))) == 2
+            assert archive.stat().st_size == size
+
+
+def test_cli_import_streams_from_disk_and_rewinds_on_session_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file = tmp_path / "large.cmbackup"
+    file.write_bytes(b"ciphertext" * (3 * 1024 * 1024))
+    attempts = 0
+
+    def no_read_bytes(path: Path) -> bytes:
+        pytest.fail(f"The CLI buffered the entire import: {path.name}")
+
+    monkeypatch.setattr(Path, "read_bytes", no_read_bytes)
+
+    def receive(handler: _Recorder) -> None:
+        body = handler.rfile.read(int(handler.headers.get("content-length") or 0))
+        if handler.path.endswith("/passwords/import"):
+            assert body.count(b"ciphertext") == 3 * 1024 * 1024
+        type(handler).requests.append(
+            (handler.command, handler.path, dict(handler.headers))
+        )
+        type(handler).respond(handler)
+
+    monkeypatch.setattr(_Recorder, "do_POST", receive)
+
+    def respond(handler: _Recorder) -> None:
+        nonlocal attempts
+        if _answer_unlock(handler, "sessions"):
+            return
+        assert int(handler.headers["content-length"]) > file.stat().st_size
+        attempts += 1
+        if attempts == 1:
+            handler.send(401, {"detail": "Your session expired."})
+        else:
+            handler.send(200, {"imported": 1, "overwritten": 0, "skipped": 0})
+
+    with _fake_server(respond) as (api, _):
+        ok(cli(api, "import", str(file), answers=[""]))
+    assert attempts == 2
 
 
 def _lower(headers: dict) -> dict:

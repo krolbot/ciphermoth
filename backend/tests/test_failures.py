@@ -172,7 +172,10 @@ async def test_every_write_is_visible_as_soon_as_it_is_acknowledged(
     resp = await WRITES[name](client, headers)
 
     assert resp.status_code == 200, resp.text
-    assert await db_snapshot() != before
+    if name == "backup":
+        assert await db_snapshot() == before
+    else:
+        assert await db_snapshot() != before
 
 
 async def test_vault_creation_rolls_back_if_its_commit_fails(

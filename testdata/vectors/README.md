@@ -14,7 +14,7 @@ Every JSON file has `format` (`ciphermoth-test-vectors/1`), `name` and `descript
 |---|---|
 | `argon2id.json` | Argon2id with the default parameters, plus `api_input`: which characters the API strips from a master password before it reaches the KDF. The `key` values are base64url of the 32-byte output; format 1 used that string as a Fernet key, format 2 uses the raw bytes |
 | `vault-v2.json` | Vault format 2: key derivation, password commitment, wrapped vault key, derived keys, name index, sealed entries and attachments with their associated data, and sealed values that must be refused |
-| `backup-v2.json` + `backup-v2.cmbackup` | Backup format 2: a real file with fixed salt and nonces, its keys, header, frames and manifest |
+| `backup-v2.json` + `backup-v2.cmbackup` | Backup format 2: a real file with fixed salt and nonces, its keys, header, envelope, entry frames and attachment frame |
 | `totp.json` | RFC 6238 TOTP for stored secrets |
 | `backup_zip.json` + `backup-v1.zip` | Backup format 1 (the ZIP of 2.0 and earlier), still importable: a real archive, its password and its JSON |
 

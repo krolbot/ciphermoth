@@ -22,6 +22,7 @@ const Passwords = {
   passwords: [],
   trash: [],
   damaged: { entries: [], attachments: [] },
+  damageCheckError: null,
 
   setError: action((state, error) => {
     state.error = error;
@@ -38,13 +39,19 @@ const Passwords = {
   setDamaged: action((state, damaged) => {
     state.damaged = damaged;
   }),
+  setDamageCheckError: action((state, error) => {
+    state.damageCheckError = error;
+  }),
 
   getDamaged: thunk(async (actions) => {
     try {
       const { data } = await apiClient.get("/vault/damaged");
       actions.setDamaged(data);
+      actions.setDamageCheckError(null);
     } catch {
-      actions.setDamaged({ entries: [], attachments: [] });
+      actions.setDamageCheckError(
+        "The vault damage check failed. Some entries or attachments may be missing from this view. Retry the check before relying on this list."
+      );
     }
   }),
 
@@ -116,11 +123,13 @@ const Passwords = {
     }
   }),
 
-  restore: thunk(async (actions, passwordName) => {
+  restore: thunk(async (actions, target) => {
+    const { passwordName, entryId } =
+      typeof target === "string" ? { passwordName: target } : target;
     const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/restore");
     try {
-      await apiClient.post(path, null, { headers });
+      await apiClient.post(path, null, { headers, params: { entry_id: entryId } });
       await actions.get();
       await actions.getTrash();
     } catch (err) {
@@ -128,11 +137,13 @@ const Passwords = {
     }
   }),
 
-  purge: thunk(async (actions, passwordName) => {
+  purge: thunk(async (actions, target) => {
+    const { passwordName, entryId } =
+      typeof target === "string" ? { passwordName: target } : target;
     const headers = entryHeaders(passwordName);
     const path = entryPath(passwordName, "/purge");
     try {
-      await apiClient.delete(path, { headers });
+      await apiClient.delete(path, { headers, params: { entry_id: entryId } });
       await actions.getTrash();
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to delete password."));
@@ -225,7 +236,7 @@ const Passwords = {
     }
   }),
 
-  backup: thunk(async (actions, masterPassword) => {
+  backup: thunk(async (_actions, masterPassword) => {
     try {
       const response = await apiClient.post(
         "/passwords/backup",
@@ -234,7 +245,6 @@ const Passwords = {
       );
       const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
       triggerDownload(response.data, `ciphermoth_backup_${stamp}.cmbackup`);
-      await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, "Backup failed."));
     }

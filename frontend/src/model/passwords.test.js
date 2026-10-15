@@ -114,6 +114,20 @@ describe("backup", () => {
 });
 
 describe("entry names in URLs", () => {
+  it("binds Trash actions to the selected row even when names are shared", async () => {
+    const actions = build({
+      "POST /passwords/shared/restore": [200, {}],
+      "DELETE /passwords/shared/purge": [200, {}],
+    });
+    await actions.restore({ passwordName: "shared", entryId: 4 });
+    await actions.purge({ passwordName: "shared", entryId: 9 });
+    const mutations = seen.filter((request) => request.method !== "get");
+    expect(mutations.map((request) => request.params)).toEqual([{ entry_id: 4 }, { entry_id: 9 }]);
+    expect(mutations.every((request) => request.headers["x-ciphermoth-entry"] === "shared")).toBe(
+      true
+    );
+  });
+
   it.each([
     ["notes#2024", "/passwords/notes%232024"],
     ["a/b", "/passwords/a%2Fb"],
@@ -185,10 +199,27 @@ describe("damaged rows", () => {
     expect(calls.filter((call) => call === "GET /vault/damaged")).toHaveLength(2);
   });
 
-  it("treats a failed damage check as nothing to report", async () => {
+  it("keeps known damage and warns when the next check fails, then clears the warning on recovery", async () => {
+    const store = createStore({ passwords: Passwords });
+    const actions = store.getActions().passwords;
+    actions.setDamaged({ entries: [7], attachments: [3] });
+    apiClient.defaults.adapter = routes({ "GET /vault/damaged": [500, {}] }, []);
+    await actions.getDamaged();
+    expect(store.getState().passwords.damaged).toEqual({ entries: [7], attachments: [3] });
+    expect(store.getState().passwords.damageCheckError).toContain("damage check failed");
+    apiClient.defaults.adapter = routes(
+      { "GET /vault/damaged": [200, { entries: [], attachments: [] }] },
+      []
+    );
+    await actions.getDamaged();
+    expect(store.getState().passwords.damaged).toEqual({ entries: [], attachments: [] });
+    expect(store.getState().passwords.damageCheckError).toBeNull();
+  });
+
+  it("warns when the initial damage check fails", async () => {
     const store = createStore({ passwords: Passwords });
     apiClient.defaults.adapter = routes({ "GET /vault/damaged": [500, {}] }, []);
     await store.getActions().passwords.getDamaged();
-    expect(store.getState().passwords.damaged).toEqual({ entries: [], attachments: [] });
+    expect(store.getState().passwords.damageCheckError).toContain("may be missing");
   });
 });

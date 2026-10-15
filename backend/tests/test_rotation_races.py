@@ -4,6 +4,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import crud.backup
 import crud.settings
 import helpers
 from crud.engine import Database, create_engine
@@ -223,6 +224,61 @@ async def test_writes_go_on_while_a_backup_checks_the_master_password(
 
     assert during.status_code == 200, during.text
     assert backed_up.status_code == 200
+
+
+async def test_backup_generation_does_not_block_event_loop_or_hold_writer_lock(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = await create_vault(client)
+    headers = auth(token)
+    for index in range(4):
+        name = f"large-{index}"
+        assert (
+            await client.post("/passwords/create", json=entry(name), headers=headers)
+        ).status_code == 200
+        assert (
+            await client.post(
+                f"/passwords/{name}/attachments",
+                files={"file": ("large.bin", b"x" * (5 * 1024 * 1024), "x/y")},
+                headers=headers,
+            )
+        ).status_code == 200
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = crud.backup._work
+
+    async def gated(function, *args):
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await original(function, *args)
+
+    monkeypatch.setattr(crud.backup, "_work", gated)
+    before = await db_snapshot()
+    backup = asyncio.create_task(
+        client.post(
+            "/passwords/backup",
+            json={"master_password": MASTER_PASSWORD},
+            headers=headers,
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=10)
+        write = await asyncio.wait_for(
+            client.post(
+                "/passwords/create", json=entry("during-backup"), headers=headers
+            ),
+            timeout=5,
+        )
+    finally:
+        release.set()
+    response = await backup
+
+    assert write.status_code == 200, write.text
+    assert response.status_code == 200, response.text
+    assert len(response.content) > 19 * 1024 * 1024
+    assert await db_snapshot() != before
 
 
 async def test_an_import_overtaken_by_a_rotation_writes_nothing(

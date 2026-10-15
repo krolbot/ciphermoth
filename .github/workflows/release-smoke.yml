@@ -20,16 +20,29 @@ jobs:
             slug: amd64
           - runner: ubuntu-24.04-arm
             slug: arm64
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Validate the release version
+        run: '[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Pull the published images
         run: |
           for image in backend frontend; do
-            docker pull "ghcr.io/mr-grj/ciphermoth-$image:${{ inputs.version }}"
-            docker image inspect "ghcr.io/mr-grj/ciphermoth-$image:${{ inputs.version }}" \
+            reference="ghcr.io/mr-grj/ciphermoth-$image:$RELEASE_VERSION"
+            docker pull "$reference"
+            digest="$(docker image inspect "$reference" --format '{{index .RepoDigests 0}}')"
+            cosign verify "$digest" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/v$RELEASE_VERSION"
+            docker image inspect "$reference" \
               --format '{{.Architecture}} {{json .RepoDigests}} {{json .Config.Labels}}'
           done
 
@@ -37,9 +50,9 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin d7bc836aec566d18252baa43ef000d5bdae5a605
           git show d7bc836aec566d18252baa43ef000d5bdae5a605:docker-compose.prod.yml > "$RUNNER_TEMP/compose-v1.6.0.yml"
-          python3 docker/smoke/compose_smoke.py --tag "${{ inputs.version }}" --prefix cm-release \
-            --expect-version "${{ inputs.version }}" \
+          python3 docker/smoke/compose_smoke.py --tag "$RELEASE_VERSION" --prefix cm-release \
+            --expect-version "$RELEASE_VERSION" \
             --legacy-compose "$RUNNER_TEMP/compose-v1.6.0.yml" --installer
 
       - name: Install with the published installer
-        run: sh docker/smoke/published_installer.sh "${{ inputs.version }}"
+        run: sh docker/smoke/published_installer.sh "$RELEASE_VERSION"

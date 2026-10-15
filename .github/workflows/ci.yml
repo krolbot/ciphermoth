@@ -68,8 +68,16 @@ jobs:
         run: uv run pytest
 
   frontend:
-    name: Frontend (ESLint + Prettier + Vitest)
-    runs-on: ubuntu-latest
+    name: Frontend (ESLint + Prettier + Vitest, ${{ matrix.platform.slug }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: ubuntu-latest
+            slug: amd64
+          - runner: ubuntu-24.04-arm
+            slug: arm64
     steps:
       - uses: actions/checkout@v4
 

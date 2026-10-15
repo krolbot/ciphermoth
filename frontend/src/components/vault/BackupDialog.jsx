@@ -51,7 +51,8 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Restore it here with Import, into this vault or a new one. Keep the file somewhere safe:
-            anyone who knows your current master password can open it.
+            anyone who knows the master password used for this backup can open it, even after you
+            change your master password. Check that your browser actually saves the file.
           </Typography>
           <PasswordField
             label="Master Password"
