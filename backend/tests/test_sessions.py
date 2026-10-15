@@ -803,19 +803,33 @@ async def test_requests_after_a_lock_are_refused_while_earlier_ones_finish(
     assert names == ["before"]
 
 
-async def test_unlock_does_not_block_other_requests(client: httpx.AsyncClient) -> None:
+async def test_unlock_does_not_block_other_requests(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     await create_vault(client)
-    started = time.monotonic()
-    unlocking = asyncio.create_task(unlock(client))
-    await asyncio.sleep(0.02)
-    resp = await client.get("/meta")
-    answered = time.monotonic() - started
-    await unlocking
-    unlocked = time.monotonic() - started
+    entered = threading.Event()
+    release = threading.Event()
+    original = helpers.argon2id
 
-    assert resp.status_code == 200
-    assert unlocked > 0.08
-    assert answered < unlocked / 3
+    def paused_argon2id(
+        password: str,
+        salt: bytes,
+        params: helpers.KdfParams = helpers.DEFAULT_KDF,
+    ) -> bytes:
+        entered.set()
+        release.wait(timeout=1)
+        return original(password, salt, params)
+
+    monkeypatch.setattr(helpers, "argon2id", paused_argon2id)
+    unlocking = asyncio.create_task(unlock(client))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        response = await client.get("/meta")
+        assert response.status_code == 200
+        assert not unlocking.done()
+    finally:
+        release.set()
+    await unlocking
 
 
 async def test_unlocks_waiting_for_the_kdf_hold_no_database_connection(
