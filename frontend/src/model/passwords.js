@@ -176,6 +176,7 @@ const Passwords = {
       formData.append("on_conflict", onConflict);
       const { data } = await apiClient.post("/passwords/import", formData);
       await actions.get();
+      await actions.getTrash();
       return data;
     } catch (err) {
       throw new Error(await errorDetail(err, "Import failed."));
@@ -203,7 +204,7 @@ const Passwords = {
         { responseType: "blob" }
       );
       const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-      triggerDownload(response.data, `ciphermoth_backup_${stamp}.zip`);
+      triggerDownload(response.data, `ciphermoth_backup_${stamp}.cmbackup`);
       await actions.get();
     } catch (err) {
       throw new Error(await errorDetail(err, "Backup failed."));

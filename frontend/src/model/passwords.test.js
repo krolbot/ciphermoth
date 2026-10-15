@@ -85,7 +85,7 @@ describe("imports", () => {
 });
 
 describe("backup", () => {
-  it("downloads the archive as a zip file", async () => {
+  it("downloads the backup as a .cmbackup file", async () => {
     const actions = build({ "POST /passwords/backup": [200, new Blob(["zip"])] });
     const link = { click: vi.fn() };
     vi.stubGlobal("document", { createElement: vi.fn(() => link) });
@@ -97,7 +97,9 @@ describe("backup", () => {
     const [request] = seen;
     expect(request.responseType).toBe("blob");
     expect(JSON.parse(request.data)).toEqual({ master_password: "Moth-Test-Vault-2026!" });
-    expect(link.download).toMatch(/^ciphermoth_backup_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.zip$/);
+    expect(link.download).toMatch(
+      /^ciphermoth_backup_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.cmbackup$/
+    );
     expect(link.click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:backup");
     createObjectURL.mockRestore();

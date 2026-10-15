@@ -63,8 +63,9 @@ const UpdateDialog = ({ open, onClose }) => {
 
           <Box>
             <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
-              Update from a terminal in your CipherMoth folder. The first command keeps a snapshot
-              of your encrypted vault, so you can always go back:
+              Update from a terminal in your CipherMoth folder. The first command keeps a raw
+              snapshot of the encrypted vault file, so you can always go back. It opens only with
+              the master password you have today; for a portable copy, use Backup.
             </Typography>
             <Command>{MANUAL_UPDATE_COMMAND}</Command>
           </Box>

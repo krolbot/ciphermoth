@@ -46,7 +46,15 @@ const ReportedRows = ({ rows = [], count, title, color }) => {
   );
 };
 
+const restoredExtras = (result) =>
+  [
+    result.trashed > 0 && `${result.trashed} in the trash`,
+    result.attachments > 0 && `${result.attachments} attachment${plural(result.attachments)}`,
+    result.settings_restored && "your settings",
+  ].filter(Boolean);
+
 const ImportResult = ({ result }) => {
+  const extras = restoredExtras(result);
   if (result.total === 0 && !result.ignored) {
     return (
       <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -65,6 +73,9 @@ const ImportResult = ({ result }) => {
         <Typography variant="body2">
           <strong>{result.overwritten}</strong> item{plural(result.overwritten)} overwritten.
         </Typography>
+      )}
+      {extras.length > 0 && (
+        <Typography variant="body2">Also restored: {extras.join(", ")}.</Typography>
       )}
       {result.skipped > 0 && (
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -126,7 +137,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
       return;
     }
     if (!isCsv && !password.trim()) {
-      setError("Master password is required.");
+      setError("Enter the backup's password.");
       return;
     }
     setLoading(true);
@@ -164,7 +175,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               {isCsv
                 ? "Upload a CSV exported from Chrome, Bitwarden, KeePass, Proton Pass and similar. Columns are matched automatically."
-                : "Upload a CipherMoth backup ZIP and enter your master password to restore passwords."}
+                : "Restore a CipherMoth backup (.cmbackup), or a backup ZIP from CipherMoth 2.0 or earlier. Entries already in the vault are never lost: an overwritten entry moves to the trash."}
             </Typography>
 
             <Button
@@ -174,11 +185,11 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               fullWidth
               sx={{ justifyContent: "flex-start", textTransform: "none" }}
             >
-              {file ? file.name : isCsv ? "Choose CSV file (.csv)" : "Choose backup file (.zip)"}
+              {file ? file.name : isCsv ? "Choose CSV file (.csv)" : "Choose backup file"}
               <input
                 type="file"
                 hidden
-                accept={isCsv ? ".csv" : ".zip"}
+                accept={isCsv ? ".csv" : ".cmbackup,.zip"}
                 onChange={(e) => {
                   setFile(e.target.files[0] ?? null);
                   setError("");
@@ -188,14 +199,14 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
             {!isCsv && (
               <PasswordField
-                label="Master Password"
+                label="Backup Password"
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setError("");
                 }}
                 error={!!error}
-                helperText={error}
+                helperText={error || "The master password the vault had when the backup was made."}
                 required
                 autoFocus
                 autoComplete="current-password"

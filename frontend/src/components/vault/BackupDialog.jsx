@@ -45,8 +45,13 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Your passwords will be exported as an AES-256 encrypted ZIP file. Open it with your
-            master password.
+            A complete, encrypted copy of your vault: every entry, the trash, password history,
+            attachments and settings, in one <strong>.cmbackup</strong> file locked with your master
+            password.
+          </Typography>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            Restore it here with Import, into this vault or a new one. Keep the file somewhere safe:
+            anyone who knows your current master password can open it.
           </Typography>
           <PasswordField
             label="Master Password"
