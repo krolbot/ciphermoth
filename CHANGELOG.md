@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-15
+
 CipherMoth 2.0 keeps the vault in one SQLite file instead of a PostgreSQL server: two containers and one volume, no database credentials, nothing to set up. It requires a fresh installation: 2.0 does not read, convert or delete a PostgreSQL vault.
 
 ### Upgrading
