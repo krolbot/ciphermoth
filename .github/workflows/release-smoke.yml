@@ -1,0 +1,45 @@
+name: Release smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published version to test (X.Y.Z, no leading v)"
+        required: true
+
+jobs:
+  published:
+    name: Published ${{ inputs.version }} (${{ matrix.platform.slug }})
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: ubuntu-latest
+            slug: amd64
+          - runner: ubuntu-24.04-arm
+            slug: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      - name: Pull the published images
+        run: |
+          for image in backend frontend; do
+            docker pull "ghcr.io/mr-grj/ciphermoth-$image:${{ inputs.version }}"
+            docker image inspect "ghcr.io/mr-grj/ciphermoth-$image:${{ inputs.version }}" \
+              --format '{{.Architecture}} {{json .RepoDigests}} {{json .Config.Labels}}'
+          done
+
+      - name: Exercise the published images with Compose
+        run: |
+          git fetch --no-tags --depth=1 origin d7bc836aec566d18252baa43ef000d5bdae5a605
+          git show d7bc836aec566d18252baa43ef000d5bdae5a605:docker-compose.prod.yml > "$RUNNER_TEMP/compose-v1.6.0.yml"
+          python3 docker/smoke/compose_smoke.py --tag "${{ inputs.version }}" --prefix cm-release \
+            --expect-version "${{ inputs.version }}" \
+            --legacy-compose "$RUNNER_TEMP/compose-v1.6.0.yml" --installer
+
+      - name: Install with the published installer
+        run: sh docker/smoke/published_installer.sh "${{ inputs.version }}"

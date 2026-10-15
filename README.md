@@ -41,7 +41,7 @@ you know. One master password unlocks everything. If someone gets the vault file
 ## Get started
 
 CipherMoth runs on your own machine with [Docker](https://docs.docker.com/get-docker/): two containers and one volume, no
-database server, nothing to configure. One command pulls the **signed** images and starts everything:
+database server, nothing to configure. One command pulls the release images (signed with cosign; [docs/UPDATING.md](./docs/UPDATING.md) shows how to verify them) and starts everything:
 
 ```shell
 curl -fsSL https://raw.githubusercontent.com/mr-grj/ciphermoth/master/install.sh | sh

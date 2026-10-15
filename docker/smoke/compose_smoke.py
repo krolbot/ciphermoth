@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -314,7 +315,9 @@ EXPECTED = {
 }
 
 
-def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
+def fresh_install(
+    tag: str, prefix: str, workdir: Path, expect_version: str | None
+) -> None:
     folder = workdir / "fresh"
     folder.mkdir()
     shutil.copy(COMPOSE, folder / "docker-compose.prod.yml")
@@ -379,6 +382,7 @@ def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
         ok("frontend serves with the API in its CSP")
 
         token = seed(stack)
+        tokens = [token]
         if state(stack, token) != EXPECTED:
             fail(f"state after seeding {state(stack, token)}")
         ok(
@@ -397,6 +401,108 @@ def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
         if "github" not in listing or "wifi" not in listing:
             fail(f"CLI listing {listing}")
         ok("bundled ciphermoth CLI lists the vault")
+
+        def cli(*args: str, answers: tuple[str, ...] = ()) -> str:
+            return stack.dc(
+                "exec",
+                "-T",
+                "backend",
+                "ciphermoth",
+                *args,
+                stdin="\n".join((MASTER, *answers)) + "\n",
+            ).stdout
+
+        if "gh-Value-2" not in cli("password", "get", "github"):
+            fail("ciphermoth password get")
+        if "trashed" not in cli("password", "trash"):
+            fail("ciphermoth password trash")
+        cli(
+            "password",
+            "create",
+            "cli-entry",
+            answers=("cli-Value-1", "cli-Value-1", "", "", "", "", ""),
+        )
+        if "cli-Value-1" not in cli("password", "get", "cli-entry"):
+            fail("ciphermoth password create")
+        cli("password", "delete", "cli-entry", "--yes")
+        cli("password", "purge", "cli-entry", "--yes")
+        cli("backup", "--out", "/tmp")
+        backups = stack.dc(
+            "exec", "-T", "backend", "sh", "-c", "ls /tmp/ciphermoth_backup_*.zip"
+        ).stdout.split()
+        if len(backups) != 1:
+            fail(f"ciphermoth backup wrote {backups}")
+        for command in (("ciphermoth", "--help"), ("ciphermoth-admin", "--help")):
+            stack.dc("exec", "-T", "backend", *command)
+        ok("CLI get, trash, create, delete, purge and backup, admin help")
+
+        short = stack.unlock()
+        stack.json(
+            "PATCH",
+            "/settings",
+            {
+                "inactivity_ms": 30_000,
+                "warn_before_ms": 10_000,
+                "hidden_ms": 90_000,
+                "debounce_ms": 500,
+                "clipboard_clear_ms": 15_000,
+                "update_check_enabled": False,
+            },
+            short,
+        )
+        expiring = stack.unlock()
+        if stack.request("GET", "/passwords", token=expiring)[0] != 200:
+            fail("a fresh session was refused")
+        time.sleep(37)
+        status, payload, _ = stack.request("GET", "/passwords", token=expiring)
+        if status != 401 or json.loads(payload).get("code") != "invalid_session":
+            fail(f"an idle session outlived the 30 s timeout: {status} {payload!r}")
+        stack.json(
+            "PATCH",
+            "/settings",
+            {
+                "inactivity_ms": 300_000,
+                "warn_before_ms": 30_000,
+                "hidden_ms": 90_000,
+                "debounce_ms": 500,
+                "clipboard_clear_ms": 15_000,
+                "update_check_enabled": False,
+            },
+            stack.unlock(),
+        )
+        token = stack.unlock()
+        ok("an idle session expires after the configured inactivity timeout")
+
+        for method, path in (
+            ("GET", "/updates/apply/status"),
+            ("POST", "/updates/apply"),
+        ):
+            status = stack.request(
+                method, path, body={"target": "v9.9.9"}, token=token
+            )[0]
+            if status not in (404, 405):
+                fail(f"{method} /api{path} answered {status}")
+        page = (
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{stack.frontend_port}/", timeout=10
+            )
+            .read()
+            .decode()
+        )
+        bundle = ""
+        for src in re.findall(r'src="(/assets/[^"]+\.js)"', page):
+            bundle += (
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{stack.frontend_port}{src}", timeout=10
+                )
+                .read()
+                .decode()
+            )
+        if "updates/apply" in bundle or "ciphermoth-admin snapshot" not in bundle:
+            fail("the web UI still offers one-click updates or lacks the manual steps")
+        ok(
+            "no one-click update anywhere: API routes gone, UI shows the manual snapshot, pull and up"
+        )
 
         out = stack.admin("snapshot").stdout
         snapshot = out.strip().split("Snapshot written: ")[-1]
@@ -435,12 +541,25 @@ def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
         stack.json("DELETE", "/passwords/last-write/purge", token=token)
         ok("an acknowledged write survives SIGKILL")
 
+        other = stack.unlock()
         stack.json(
             "PATCH",
             "/master_password/update",
             {"master_password": MASTER, "new_master_password": ROTATED},
             token,
         )
+        for old in (token, other):
+            if stack.request("GET", "/passwords", token=old)[0] != 401:
+                fail("a session opened before the rotation still works")
+        if stack.json("POST", "/master_password/unlock", {"master_password": MASTER})[
+            "valid"
+        ]:
+            fail("the old master password still unlocks after the rotation")
+        rotated = stack.unlock(ROTATED)
+        if state(stack, rotated) != EXPECTED:
+            fail("data changed across the rotation")
+        ok("rotation re-encrypts the vault and ends every session")
+
         refused = stack.admin("restore", snapshot, "--yes", running=False, check=False)
         if (
             refused.returncode == 0
@@ -450,8 +569,37 @@ def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
                 f"restore while running: {refused.returncode} {refused.stdout} {refused.stderr}"
             )
         ok("restore refuses while the backend runs")
-        stack.dc("stop", "backend")
+
+        stack.json(
+            "POST",
+            "/passwords/create",
+            {"password_name": "in-wal", "password_value": "v"},
+            rotated,
+        )
+        stack.dc("kill", "-s", "SIGKILL", "backend")
+        container = stack.dc("ps", "-a", "-q", "backend").stdout.strip()
+        time.sleep(2)
+        state_after_kill = json.loads(run("docker", "inspect", container).stdout)[0][
+            "State"
+        ]
+        if state_after_kill["Running"]:
+            fail("Docker restarted the killed backend; the WAL check needs it down")
+        wal = stack.python("import os; print(os.path.getsize('/data/vault.db-wal'))")
+        if int(wal) == 0:
+            fail("the killed backend left no committed data in the WAL")
+        tokens.extend([token, other, rotated])
         restored = stack.admin("restore", snapshot, "--yes", running=False).stdout
+        kept = restored.split("kept as ")[-1].split()[0]
+        found = stack.python(
+            "import shutil, sqlite3, tempfile, pathlib\n"
+            f"kept = pathlib.Path('{kept}')\n"
+            "scratch = pathlib.Path(tempfile.mkdtemp())\n"
+            "for f in kept.iterdir(): shutil.copy(f, scratch / f.name)\n"
+            "c = sqlite3.connect(scratch / 'vault.db')\n"
+            "print(sorted(r[0] for r in c.execute('SELECT password_name FROM passwords')))"
+        )
+        if "in-wal" not in found:
+            fail(f"the kept vault lost the commit that was only in the WAL: {found}")
         stack.dc("start", "backend")
         stack.wait_healthy()
         if stack.json("POST", "/master_password/unlock", {"master_password": ROTATED})[
@@ -462,6 +610,7 @@ def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
         if state(stack, token) != EXPECTED:
             fail(f"state after restore {state(stack, token)}")
         ok("offline restore brings back the snapshot", restored.strip().splitlines()[0])
+        ok("the replaced vault is kept with the commit that was only in its WAL", kept)
 
         stack.dc("stop", "backend")
         stack.python(
@@ -503,6 +652,46 @@ def fresh_install(tag: str, prefix: str, workdir: Path) -> None:
         if state(stack, stack.unlock()) != EXPECTED:
             fail("snapshot recovery of a damaged vault")
         ok("a damaged vault is refused untouched and the snapshot recovers it")
+
+        logs = stack.dc("logs", "--no-color").stdout
+        backend_logs = stack.dc("logs", "--no-color", "backend").stdout
+        secrets = [MASTER, ROTATED, "gh-Value-1", "gh-Value-2", "cli-Value-1", *tokens]
+        names = ["github", "wifi", "cli-entry", "in-wal"]
+        leaked = [secret for secret in secrets if secret and secret in logs]
+        leaked += [name for name in names if name in backend_logs]
+        if leaked or "GET /api/passwords/{password_name}" not in logs:
+            lines = [
+                line.replace(secret, "***")
+                for line in logs.splitlines()
+                for secret in leaked
+                if secret in line
+            ]
+            fail("secrets or entry names in the logs:\n" + "\n".join(lines[:20]))
+        ok("no master password, value, entry name or session token in the logs")
+
+        if expect_version:
+            health = stack.json("GET", "/health")
+            if health["version"] != expect_version:
+                fail(f"health reports {health['version']}")
+            for image in ("backend", "frontend"):
+                info = json.loads(
+                    run(
+                        "docker",
+                        "image",
+                        "inspect",
+                        f"ghcr.io/mr-grj/ciphermoth-{image}:{tag}",
+                    ).stdout
+                )[0]
+                labels = info["Config"]["Labels"] or {}
+                if (
+                    labels.get("io.ciphermoth.min-updater-protocol") != "3"
+                    or labels.get("org.opencontainers.image.version") != expect_version
+                ):
+                    fail(f"{image} labels {labels}")
+                ok(
+                    f"published {image} image",
+                    f"{info['RepoDigests']} revision {labels.get('org.opencontainers.image.revision')}",
+                )
     finally:
         stack.down()
 
@@ -732,12 +921,13 @@ def main() -> None:
     parser.add_argument("--legacy-compose", type=Path)
     parser.add_argument("--installer", action="store_true")
     parser.add_argument("--skip-bind", action="store_true")
+    parser.add_argument("--expect-version")
     args = parser.parse_args()
     if not args.prefix.startswith("cm-"):
         fail("the project prefix must start with 'cm-'")
     workdir = Path(tempfile.mkdtemp(prefix="ciphermoth-smoke-"))
     try:
-        fresh_install(args.tag, args.prefix, workdir)
+        fresh_install(args.tag, args.prefix, workdir, args.expect_version)
         if not args.skip_bind:
             bind_mounted(args.tag, args.prefix, workdir)
         if args.legacy_compose:

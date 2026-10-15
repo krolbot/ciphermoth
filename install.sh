@@ -1,6 +1,7 @@
 #!/bin/sh
-# CipherMoth installer: pulls the signed images and starts your vault (one
-# SQLite file in a Docker volume). Safe to read before you run it.
+# CipherMoth installer: pulls the release images and starts your vault (one
+# SQLite file in a Docker volume). Safe to read before you run it. It does not
+# verify the images' signatures; docs/UPDATING.md shows how to.
 #
 #   curl -fsSL https://raw.githubusercontent.com/mr-grj/ciphermoth/master/install.sh | sh
 #
@@ -26,6 +27,17 @@ die() {
 }
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+backup() {
+  _copy="$1.backup-$(date -u +%Y%m%dT%H%M%SZ)"
+  _n=1
+  while [ -e "$_copy" ]; do
+    _n=$((_n + 1))
+    _copy="$1.backup-$(date -u +%Y%m%dT%H%M%SZ)-$_n"
+  done
+  cp -p "$1" "$_copy"
+  info "Kept your previous $1 as $_copy"
+}
 
 start_stack() {
   docker compose -f docker-compose.prod.yml pull &&
@@ -66,7 +78,8 @@ main() {
   say "${BOLD}CipherMoth${NC} -> your secrets stay in the dark."
   ensure_docker
 
-  if docker volume inspect ciphermoth_postgres_data >/dev/null 2>&1; then
+  if docker volume inspect ciphermoth_postgres_data >/dev/null 2>&1 ||
+    grep -qs postgres "$DIR/docker-compose.prod.yml"; then
     warn "Found a vault from an older CipherMoth that used PostgreSQL."
     warn "This release keeps the vault in SQLite and starts a fresh, empty one;"
     warn "the old database volume is left untouched (docs/UPDATING.md)."
@@ -81,8 +94,7 @@ main() {
   curl -fsSL "$BASE/docker-compose.prod.yml" -o docker-compose.prod.yml.new ||
     die "Could not download docker-compose.prod.yml"
   if [ -f docker-compose.prod.yml ] && ! cmp -s docker-compose.prod.yml docker-compose.prod.yml.new; then
-    cp docker-compose.prod.yml docker-compose.prod.yml.previous
-    info "Kept your previous compose file as docker-compose.prod.yml.previous"
+    backup docker-compose.prod.yml
   fi
   mv docker-compose.prod.yml.new docker-compose.prod.yml
 
@@ -97,10 +109,11 @@ main() {
   if [ -f .env ]; then
     info ".env already exists -> keeping your existing settings."
     if grep -Eq '^CIPHERMOTH_VERSION=v?1\.' .env; then
-      cp .env .env.previous
-      sed 's/^CIPHERMOTH_VERSION=.*/CIPHERMOTH_VERSION=latest/' .env.previous >.env
+      backup .env
+      sed 's/^CIPHERMOTH_VERSION=v\{0,1\}1\..*/CIPHERMOTH_VERSION=latest/' .env >.env.tmp
+      mv .env.tmp .env
       warn "Your .env pinned a 1.x release, which needs PostgreSQL; it now says"
-      warn "CIPHERMOTH_VERSION=latest (the old file is .env.previous)."
+      warn "CIPHERMOTH_VERSION=latest."
     fi
   else
     cat >.env <<EOF
@@ -120,7 +133,7 @@ CIPHERMOTH_VERSION=latest
 EOF
   fi
 
-  say "Pulling signed images and starting CipherMoth…"
+  say "Pulling the release images and starting CipherMoth…"
   start_stack || die "Failed to start CipherMoth. Check the output above."
 
   printf '\n'
