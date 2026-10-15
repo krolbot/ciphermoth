@@ -51,7 +51,8 @@ json() {
 
 mkdir -p "$WORK"
 curl -fsSL "https://raw.githubusercontent.com/mr-grj/ciphermoth/${REF}/install.sh" -o "$INSTALLER"
-cmp -s "$INSTALLER" install.sh || fail "the published install.sh differs from the tagged source"
+git show "${REF}:install.sh" >"$WORK/install.tagged.sh"
+cmp -s "$INSTALLER" "$WORK/install.tagged.sh" || fail "the published install.sh differs from the ${REF} source"
 pass "install.sh fetched from the ${REF} release source"
 
 CIPHERMOTH_REF="$REF" CIPHERMOTH_DIR="$DIR" sh "$INSTALLER" </dev/null
@@ -59,7 +60,7 @@ health="$(wait_healthy)"
 [ "$(printf '%s' "$health" | json "['version']")" = "$VERSION" ] ||
   fail "the installed backend reports $health"
 grep -q '^CIPHERMOTH_VERSION=latest$' "$DIR/.env" || fail "the generated .env"
-cmp -s "$DIR/docker-compose.prod.yml" docker-compose.prod.yml || fail "the installed compose file"
+git show "${REF}:docker-compose.prod.yml" | cmp -s "$DIR/docker-compose.prod.yml" - || fail "the installed compose file"
 pass "fresh install through the published installer: $health"
 
 running="$(docker compose -f "$DIR/docker-compose.prod.yml" images -q backend)"

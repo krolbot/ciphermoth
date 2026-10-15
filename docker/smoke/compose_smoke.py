@@ -670,9 +670,18 @@ def fresh_install(
         ok("no master password, value, entry name or session token in the logs")
 
         if expect_version:
-            health = stack.json("GET", "/health")
-            if health["version"] != expect_version:
-                fail(f"health reports {health['version']}")
+            reported = {
+                "backend /api/meta": stack.json("GET", "/meta")["version"],
+                "backend /api/health": stack.json("GET", "/health")["version"],
+                "frontend /version.json": json.loads(
+                    urllib.request.urlopen(
+                        f"http://127.0.0.1:{stack.frontend_port}/version.json",
+                        timeout=10,
+                    ).read()
+                )["version"],
+            }
+            if set(reported.values()) != {expect_version}:
+                fail(f"reported versions {reported}")
             for image in ("backend", "frontend"):
                 info = json.loads(
                     run(
@@ -683,15 +692,13 @@ def fresh_install(
                     ).stdout
                 )[0]
                 labels = info["Config"]["Labels"] or {}
-                if (
-                    labels.get("io.ciphermoth.min-updater-protocol") != "3"
-                    or labels.get("org.opencontainers.image.version") != expect_version
-                ):
+                if labels.get("io.ciphermoth.min-updater-protocol") != "3":
                     fail(f"{image} labels {labels}")
                 ok(
                     f"published {image} image",
-                    f"{info['RepoDigests']} revision {labels.get('org.opencontainers.image.revision')}",
+                    f"{info['Architecture']} {info['RepoDigests']}",
                 )
+            ok("the published images report the expected version", str(reported))
     finally:
         stack.down()
 
