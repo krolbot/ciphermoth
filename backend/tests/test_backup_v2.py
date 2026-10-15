@@ -84,6 +84,35 @@ def test_the_frozen_backup_reads_completely() -> None:
     assert len(content) == 1026
 
 
+async def test_structured_entry_metadata_stays_within_its_backup_overhead_budget(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    payload = entry("dense-tags")
+    payload["tags"] = ["x" * 38 + f"{index:02d}" for index in range(20)]
+    payload["custom_fields"] = [
+        {"label": f"field-{index}", "value": "v" * 4096, "hidden": True}
+        for index in range(30)
+    ]
+    created = await client.post("/passwords/create", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+
+    response = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    reader = BackupReader(io.BytesIO(response.content))
+    key = await helpers.backup_key_for(MASTER_PASSWORD, reader.header)
+    reader.read(key, 64 * MIB)
+    entry_frame = reader.read(key, 64 * MIB)
+    (stored_size,) = (await db_execute("SELECT length(document) FROM entries"))[0]
+
+    restored = json.loads(entry_frame)
+    assert len(restored["tags"]) == 20
+    assert len(restored["custom_fields"]) == 30
+    assert len(entry_frame) <= stored_size + 32 * 1024
+
+
 def test_every_single_bit_flip_anywhere_in_a_backup_is_refused() -> None:
     for position in range(len(FROZEN)):
         flipped = bytearray(FROZEN)

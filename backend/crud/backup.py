@@ -310,7 +310,9 @@ class BackupCRUD(PasswordCRUD):
         }
 
         def encode() -> bytes:
-            encoded = json.dumps(manifest, ensure_ascii=False).encode()
+            encoded = json.dumps(
+                manifest, ensure_ascii=False, separators=(",", ":")
+            ).encode()
             if len(encoded) > MAX_MANIFEST_BYTES:
                 raise InvalidRequest("The backup settings frame is too large.")
             BackupManifest.model_validate_json(encoded, strict=True)
@@ -346,7 +348,9 @@ class BackupCRUD(PasswordCRUD):
                     ],
                 }
                 encoded_entry = await _work(
-                    lambda value: json.dumps(value, ensure_ascii=False).encode(),
+                    lambda value: json.dumps(
+                        value, ensure_ascii=False, separators=(",", ":")
+                    ).encode(),
                     entry_manifest,
                 )
                 if len(encoded_entry) > MAX_ENTRY_FRAME_BYTES:
