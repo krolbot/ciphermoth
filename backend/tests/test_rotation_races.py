@@ -261,6 +261,49 @@ async def test_an_import_overtaken_by_a_rotation_writes_nothing(
     assert await _names(client, NEW_MASTER_PASSWORD) == ["kept"]
 
 
+@pytest.mark.parametrize("held", [1, 2], ids=["password-check", "backup-key"])
+async def test_a_backup_overtaken_by_a_rotation_is_refused(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, held: int
+) -> None:
+    token = await create_vault(client)
+    await client.post("/passwords/create", json=entry("kept"), headers=auth(token))
+    backer = await unlock(client)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = helpers.derive
+    calls = 0
+
+    async def derive(
+        password: str, salt: bytes, params: helpers.KdfParams = helpers.DEFAULT_KDF
+    ) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls == held:
+            entered.set()
+            await asyncio.wait_for(release.wait(), GATE_SECONDS)
+        return await original(password, salt, params)
+
+    monkeypatch.setattr(helpers, "derive", derive)
+    backup = asyncio.create_task(
+        client.post(
+            "/passwords/backup",
+            json={"master_password": MASTER_PASSWORD},
+            headers=auth(backer),
+        )
+    )
+    await entered.wait()
+    rotated = await client.patch(
+        "/master_password/update", json=ROTATE, headers=auth(token)
+    )
+    release.set()
+    resp = await backup
+
+    assert rotated.status_code == 200, rotated.text
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["code"] == "invalid_key"
+    assert not resp.content.startswith(b"CMBACKUP")
+    assert await _decrypts(NEW_MASTER_PASSWORD)
+
+
 async def test_a_session_opened_after_the_rotation_ended_all_sessions_is_refused(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

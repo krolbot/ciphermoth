@@ -1,0 +1,656 @@
+import hashlib
+import io
+import json
+import os
+import struct
+import tempfile
+from pathlib import Path
+from urllib.parse import quote
+
+import httpx
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+
+import helpers
+from backup_format import MAX_FRAMES, BackupReader, BackupWriter
+from tests.integrity import assert_same_vault
+from tests.support import (
+    MASTER_PASSWORD,
+    NEW_MASTER_PASSWORD,
+    WRONG_MASTER_PASSWORD,
+    Headers,
+    auth,
+    backup_entry,
+    backup_file,
+    create_vault,
+    db_execute,
+    db_snapshot,
+    entry,
+    read_current_vault,
+    reset_vault,
+)
+
+VECTORS = Path(__file__).resolve().parents[2] / "testdata" / "vectors"
+FROZEN = (VECTORS / "backup-v2.cmbackup").read_bytes()
+FROZEN_KEY = helpers.BackupKey(
+    bytes.fromhex(json.loads((VECTORS / "backup-v2.json").read_text())["derived_hex"])
+)
+FROZEN_PASSWORD = json.loads((VECTORS / "backup-v2.json").read_text())["password"]
+MIB = 1024 * 1024
+PLAINTEXT = (
+    "kind",
+    "username",
+    "description",
+    "value",
+    "url",
+    "totp_secret",
+    "tags",
+    "custom_fields",
+    "folder",
+    "history",
+    "favorite",
+)
+
+
+def _read_all(data: bytes, key: helpers.BackupKey = FROZEN_KEY) -> list[bytes]:
+    reader = BackupReader(io.BytesIO(data))
+    if not key.matches(reader.header):
+        raise helpers.DecryptionFailed
+    frames = [reader.read(key, 8 * MIB) for _ in range(reader.header.frames)]
+    reader.finish()
+    return frames
+
+
+def _refused(data: bytes) -> bool:
+    try:
+        _read_all(data)
+    except (helpers.BackupFormatError, helpers.DecryptionFailed):
+        return True
+    return False
+
+
+def test_the_frozen_backup_reads_completely() -> None:
+    manifest, content = _read_all(FROZEN)
+    assert json.loads(manifest)["version"] == 2
+    assert len(content) == 1026
+
+
+def test_every_single_bit_flip_anywhere_in_a_backup_is_refused() -> None:
+    for position in range(len(FROZEN)):
+        flipped = bytearray(FROZEN)
+        flipped[position] ^= 0x01
+        assert _refused(bytes(flipped)), position
+
+
+def test_every_truncation_and_any_extension_is_refused() -> None:
+    for length in range(len(FROZEN)):
+        assert _refused(FROZEN[:length]), length
+    for extra in (b"\x00", b"CMBACKUP", FROZEN[-20:]):
+        assert _refused(FROZEN + extra)
+
+
+def _frames(data: bytes) -> tuple[bytes, list[bytes]]:
+    header, rest = data[:75], data[75:]
+    frames = []
+    while rest:
+        (length,) = struct.unpack(">I", rest[:4])
+        frames.append(rest[: 16 + length])
+        rest = rest[16 + length :]
+    return header, frames
+
+
+def test_reordered_repeated_dropped_and_foreign_frames_are_refused() -> None:
+    header, (manifest, content) = _frames(FROZEN)
+    assert not _refused(header + manifest + content)
+    for frames in ([content, manifest], [manifest, manifest], [manifest], [content]):
+        assert _refused(header + b"".join(frames))
+    two_frames = struct.pack(">I", 1)
+    one_frame_header = header[:-36] + two_frames + header[-32:]
+    assert _refused(one_frame_header + manifest)
+
+    other_salt = os.urandom(16)
+    other = io.BytesIO()
+    writer = BackupWriter(
+        other,
+        FROZEN_KEY,
+        helpers.BackupHeader(helpers.DEFAULT_KDF, other_salt, 2, FROZEN_KEY.commitment),
+    )
+    writer.write(b"{}")
+    writer.write(b"another backup")
+    writer.finish()
+    _, (foreign_manifest, foreign_content) = _frames(other.getvalue())
+    for frames in ([foreign_manifest, content], [manifest, foreign_content]):
+        assert _refused(header + b"".join(frames))
+
+
+def test_a_frame_length_beyond_the_limit_is_refused_before_reading_it() -> None:
+    header, (manifest, _) = _frames(FROZEN)
+    huge = header + struct.pack(">I", 0xFFFFFFFF) + manifest[4:]
+
+    class NeverReadsMuch(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            assert size is not None and 0 <= size <= 1 * MIB, size
+            return super().read(size)
+
+    reader = BackupReader(NeverReadsMuch(huge))
+    with pytest.raises(helpers.BackupFormatError):
+        reader.read(FROZEN_KEY, 1 * MIB)
+
+
+@pytest.mark.parametrize(
+    ("field", "offset", "value"),
+    [
+        ("magic", 0, b"CMBACKUQ"),
+        ("version", 8, struct.pack(">H", 3)),
+        ("kdf", 10, b"\x02"),
+        ("memory", 11, struct.pack(">I", 4 * 1024 * 1024)),
+        ("iterations", 15, struct.pack(">I", 1000)),
+        ("lanes", 19, struct.pack(">I", 64)),
+        ("frames", 39, struct.pack(">I", MAX_FRAMES + 1)),
+        ("no frames", 39, struct.pack(">I", 0)),
+    ],
+)
+async def test_header_problems_are_refused_before_deriving_a_key(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    offset: int,
+    value: bytes,
+) -> None:
+    headers = auth(await create_vault(client))
+    data = FROZEN[:offset] + value + FROZEN[offset + len(value) :]
+    before = await db_snapshot()
+
+    def never(*args: object) -> bytes:
+        raise AssertionError("a key was derived for a refused backup")
+
+    monkeypatch.setattr(helpers, "Argon2id", never)
+    resp = await _import(client, headers, data, FROZEN_PASSWORD)
+    assert resp.status_code == 400, (field, resp.text)
+    assert await db_snapshot() == before
+
+
+async def _import(
+    client: httpx.AsyncClient,
+    headers: Headers,
+    data: bytes,
+    password: str = MASTER_PASSWORD,
+    on_conflict: str = "skip",
+) -> httpx.Response:
+    return await client.post(
+        "/passwords/import",
+        data={"master_password": password, "on_conflict": on_conflict},
+        files={"file": ("b.cmbackup", data, "application/octet-stream")},
+        headers=headers,
+    )
+
+
+async def test_wrong_password_tampering_and_truncation_through_the_api(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    await client.post("/passwords/create", json=entry("kept"), headers=headers)
+    before = await db_snapshot()
+    header, (manifest, content) = _frames(FROZEN)
+    tampered_content = bytearray(content)
+    tampered_content[-3] ^= 0x80
+    cases = {
+        "wrong password": (FROZEN, WRONG_MASTER_PASSWORD, 403),
+        "nfd password": (
+            FROZEN,
+            FROZEN_PASSWORD.replace("ö", "ö"),
+            403,
+        ),
+        "flipped manifest": (
+            header
+            + manifest[:30]
+            + bytes([manifest[30] ^ 1])
+            + manifest[31:]
+            + content,
+            FROZEN_PASSWORD,
+            400,
+        ),
+        "flipped attachment": (
+            header + manifest + bytes(tampered_content),
+            FROZEN_PASSWORD,
+            400,
+        ),
+        "truncated attachment": (FROZEN[:-1], FROZEN_PASSWORD, 400),
+        "missing attachment": (header + manifest, FROZEN_PASSWORD, 400),
+        "trailing bytes": (FROZEN + b"\x00", FROZEN_PASSWORD, 400),
+        "header only": (header, FROZEN_PASSWORD, 400),
+        "empty": (b"", FROZEN_PASSWORD, 400),
+        "csv": (b"name,password\nx,y\n", FROZEN_PASSWORD, 400),
+    }
+    for label, (data, password, status) in cases.items():
+        resp = await _import(client, headers, data, password)
+        assert resp.status_code == status, (label, resp.text)
+        assert FROZEN_PASSWORD not in resp.text
+        assert await db_snapshot() == before, label
+
+
+def _attachment(content: bytes, **fields: object) -> dict:
+    return {
+        "filename": "f.bin",
+        "content_type": None,
+        "size": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "created": "2026-01-01T00:00:00+00:00",
+        **fields,
+    }
+
+
+MALFORMED: dict[str, tuple[list[dict], list[bytes], dict]] = {
+    "unknown entry key": ([backup_entry("a", surprise=1)], [], {}),
+    "missing entry key": (
+        [{k: v for k, v in backup_entry("a").items() if k != "folder"}],
+        [],
+        {},
+    ),
+    "wrong type": ([backup_entry("a", favorite="yes")], [], {}),
+    "tag not text": ([backup_entry("a", tags=[1])], [], {}),
+    "unknown kind": ([backup_entry("a", kind="card")], [], {}),
+    "empty name": ([backup_entry("")], [], {}),
+    "empty value": ([backup_entry("a", "")], [], {}),
+    "nul in name": ([backup_entry("a\x00b")], [], {}),
+    "lone surrogate": ([backup_entry("a\ud800")], [], {}),
+    "bad timestamp": ([backup_entry("a", created="yesterday")], [], {}),
+    "bad history time": (
+        [backup_entry("a", history=[{"value": "x", "changed_at": "soon"}])],
+        [],
+        {},
+    ),
+    "two active with one name": (
+        [backup_entry("twin"), backup_entry("twin", "other")],
+        [],
+        {},
+    ),
+    "attachment without frame": (
+        [backup_entry("a", attachments=[_attachment(b"abc")])],
+        [],
+        {},
+    ),
+    "frame without attachment": ([backup_entry("a")], [b"abc"], {}),
+    "wrong size": (
+        [backup_entry("a", attachments=[_attachment(b"abc", size=4)])],
+        [b"abc"],
+        {},
+    ),
+    "wrong digest": (
+        [backup_entry("a", attachments=[_attachment(b"abc", sha256="00" * 32)])],
+        [b"abc"],
+        {},
+    ),
+    "attachment over 5 MB": (
+        [backup_entry("a", attachments=[_attachment(b"x", size=6 * MIB)])],
+        [b"x"],
+        {},
+    ),
+    "21 attachments": (
+        [backup_entry("a", attachments=[_attachment(b"x")] * 21)],
+        [b"x"] * 21,
+        {},
+    ),
+    "over 25 MB on one entry": (
+        [backup_entry("a", attachments=[_attachment(b"x", size=5 * MIB)] * 6)],
+        [b"x"] * 6,
+        {},
+    ),
+    "invalid settings": (
+        [backup_entry("a")],
+        [],
+        {"settings": {"inactivity_ms": 1}},
+    ),
+    "unknown version": ([backup_entry("a")], [], {"version": 3}),
+    "unknown top-level key": ([backup_entry("a")], [], {"extra": True}),
+}
+
+
+@pytest.mark.parametrize("case", sorted(MALFORMED))
+async def test_malformed_manifests_are_refused_without_writing(
+    client: httpx.AsyncClient, case: str
+) -> None:
+    headers = auth(await create_vault(client))
+    await client.post("/passwords/create", json=entry("kept"), headers=headers)
+    entries, contents, overrides = MALFORMED[case]
+    manifest = {
+        "format": "ciphermoth-backup",
+        "version": 2,
+        "exported_at": "2026-10-15T00:00:00+00:00",
+        "app_version": "test",
+        "settings": {
+            "inactivity_ms": 120000,
+            "warn_before_ms": 60000,
+            "hidden_ms": 60000,
+            "debounce_ms": 1000,
+            "clipboard_clear_ms": 30000,
+            "update_check_enabled": True,
+        },
+        "entries": entries,
+    }
+    for name, value in overrides.items():
+        manifest[name] = (
+            {**manifest[name], **value} if isinstance(value, dict) else value
+        )
+    data = backup_file([], manifest=manifest, contents=contents)
+    before = await db_snapshot()
+
+    resp = await _import(client, headers, data)
+
+    assert resp.status_code == 400, resp.text
+    assert "a\x00b" not in resp.text
+    assert await db_snapshot() == before
+
+
+async def test_a_complete_backup_restores_everything_byte_for_byte(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    binary = bytes(range(256)) * 20 + os.urandom(1000)
+    login = entry(
+        "Bank ü/ü",
+        "first",
+        username="me@example.com",
+        url="https://bank.test",
+        totp_secret="JBSWY3DPEHPK3PXP",
+        description="line\nline",
+        tags=["money", "ü"],
+        custom_fields=[{"label": "PIN", "value": "0000", "hidden": True}],
+        folder="Finance",
+        favorite=True,
+    )
+    for item in (
+        {**login},
+        entry("note", "  spaced\n\n", kind="note"),
+        entry("gone", "gone-v", folder="Old"),
+    ):
+        assert (
+            await client.post("/passwords/create", json=item, headers=headers)
+        ).is_success
+    for value in ("second", "third"):
+        resp = await client.patch(
+            "/passwords/update",
+            json={
+                "password": {"password_name": login["password_name"]},
+                "new_password": {**login, "password_value": value},
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+    for name, content in (("Bank ü%2Fü", binary), ("gone", b"\x00")):
+        resp = await client.post(
+            f"/passwords/{name}/attachments",
+            files={"file": ("Preț.bin", content, "application/x-test")},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+    assert (await client.delete("/passwords/gone", headers=headers)).is_success
+    settings = {
+        "inactivity_ms": 300_000,
+        "warn_before_ms": 30_000,
+        "hidden_ms": 120_000,
+        "debounce_ms": 500,
+        "clipboard_clear_ms": 15_000,
+        "update_check_enabled": False,
+    }
+    await client.patch("/settings", json=settings, headers=headers)
+    original = await read_current_vault()
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert backup.status_code == 200
+    assert backup.headers["content-type"] == "application/octet-stream"
+    assert ".cmbackup" in backup.headers["content-disposition"]
+    assert all(e.backed_up for e in (await read_current_vault()).entries)
+
+    await reset_vault()
+    headers = auth(await create_vault(client, NEW_MASTER_PASSWORD))
+    resp = await _import(client, headers, backup.content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() | {"ignored_rows": [], "renamed_rows": []} == {
+        "imported": 2,
+        "skipped": 0,
+        "overwritten": 0,
+        "total": 3,
+        "ignored": 0,
+        "ignored_rows": [],
+        "renamed": 0,
+        "renamed_rows": [],
+        "trashed": 1,
+        "attachments": 2,
+        "settings_restored": True,
+    }
+    restored = await read_current_vault(NEW_MASTER_PASSWORD)
+    assert_same_vault(original, restored, compare=[*PLAINTEXT, "created", "updated"])
+    assert (await client.get("/settings", headers=headers)).json() == settings
+    [att] = (
+        await client.get("/passwords/Bank ü%2Fü/attachments", headers=headers)
+    ).json()
+    download = await client.get(
+        f"/passwords/Bank ü%2Fü/attachments/{att['id']}", headers=headers
+    )
+    assert download.content == binary
+
+
+async def test_restoring_into_a_used_vault_merges_without_losing_anything(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    await client.post(
+        "/passwords/create", json=entry("shared", "mine"), headers=headers
+    )
+    await client.post(
+        "/passwords/shared/attachments",
+        files={"file": ("mine.bin", b"mine", "x/y")},
+        headers=headers,
+    )
+    await client.patch(
+        "/settings",
+        json={
+            "inactivity_ms": 600_000,
+            "warn_before_ms": 30_000,
+            "hidden_ms": 60_000,
+            "debounce_ms": 1_000,
+            "clipboard_clear_ms": 30_000,
+            "update_check_enabled": True,
+        },
+        headers=headers,
+    )
+    data = backup_file(
+        [
+            backup_entry("shared", "theirs"),
+            backup_entry("new", "new-v"),
+            backup_entry("old", "old-v", deleted="2026-03-03T03:03:03.000003+00:00"),
+        ],
+        settings={
+            "inactivity_ms": 60_000,
+            "warn_before_ms": 10_000,
+            "hidden_ms": 60_000,
+            "debounce_ms": 1_000,
+            "clipboard_clear_ms": 30_000,
+            "update_check_enabled": False,
+        },
+    )
+
+    resp = await _import(client, headers, data)
+    assert resp.json()["imported"] == 1
+    assert resp.json()["skipped"] == 1
+    assert resp.json()["trashed"] == 1
+    assert resp.json()["settings_restored"] is False
+    assert (await client.get("/passwords/shared", headers=headers)).json()[
+        "password_value"
+    ] == "mine"
+
+    resp = await _import(client, headers, data, on_conflict="overwrite")
+    assert resp.json()["overwritten"] == 2
+    assert resp.json()["skipped"] == 1
+    assert resp.json()["trashed"] == 0
+    assert (await client.get("/passwords/shared", headers=headers)).json()[
+        "password_value"
+    ] == "theirs"
+    trash = (await client.get("/passwords/trash", headers=headers)).json()
+    by_value = {t["password_value"]: t for t in trash}
+    assert set(by_value) == {"mine", "new-v", "old-v"}
+    assert by_value["mine"]["attachment_count"] == 1
+    assert (await client.get("/settings", headers=headers)).json()[
+        "inactivity_ms"
+    ] == 600_000
+
+
+async def test_a_backup_from_another_vault_and_password_restores_with_that_password(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    await client.post("/passwords/create", json=entry("from-a"), headers=headers)
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    resp = await client.patch(
+        "/master_password/update",
+        json={
+            "master_password": MASTER_PASSWORD,
+            "new_master_password": NEW_MASTER_PASSWORD,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    from tests.support import unlock
+
+    headers = auth(await unlock(client, NEW_MASTER_PASSWORD))
+    await client.delete("/passwords/from-a", headers=headers)
+    await client.delete("/passwords/from-a/purge", headers=headers)
+    resp = await _import(client, headers, backup.content, NEW_MASTER_PASSWORD)
+    assert resp.status_code == 403
+    resp = await _import(client, headers, backup.content, MASTER_PASSWORD)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["imported"] == 1
+
+
+async def test_backup_requires_the_current_master_password(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = auth(await create_vault(client))
+    before = await db_snapshot()
+    resp = await client.post(
+        "/passwords/backup",
+        json={"master_password": WRONG_MASTER_PASSWORD},
+        headers=headers,
+    )
+    assert resp.status_code == 403
+    assert await db_snapshot() == before
+
+
+async def test_large_backups_spool_only_ciphertext_to_disk(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    headers = auth(await create_vault(client))
+    marker = b"Zq7SpoolCanary" * 1000
+    for index in range(4):
+        name = f"big-{index}"
+        await client.post("/passwords/create", json=entry(name), headers=headers)
+        resp = await client.post(
+            f"/passwords/{name}/attachments",
+            files={
+                "file": (
+                    f"{name}.bin",
+                    marker + os.urandom(5 * MIB - len(marker)),
+                    "x/y",
+                )
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+    spilled: list = []
+    real = tempfile.TemporaryFile
+
+    def recording(*args, **kwargs):
+        handle = real(*args, **kwargs)
+        spilled.append(handle)
+        return handle
+
+    monkeypatch.setattr(tempfile, "TemporaryFile", recording)
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert backup.status_code == 200
+    assert len(backup.content) > 20 * MIB
+    assert marker[:50] not in backup.content
+
+    await db_execute("DELETE FROM entries")
+    resp = await _import(client, headers, backup.content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["attachments"] == 4
+    assert spilled
+    for handle in spilled:
+        if handle.closed:
+            continue
+        handle.seek(0)
+        assert marker[:50] not in handle.read()
+
+
+async def test_an_empty_vault_backs_up_and_restores(client: httpx.AsyncClient) -> None:
+    headers = auth(await create_vault(client))
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    assert backup.status_code == 200
+    resp = await _import(client, headers, backup.content)
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+    assert resp.json()["settings_restored"] is False
+
+
+_TEXT = st.text(
+    alphabet=st.characters(blacklist_categories=("Cs",), blacklist_characters="\x00"),
+    min_size=1,
+    max_size=20,
+)
+
+
+@given(
+    names=st.lists(_TEXT, min_size=1, max_size=4, unique=True),
+    values=st.lists(_TEXT, min_size=4, max_size=4),
+    blobs=st.lists(st.binary(min_size=1, max_size=600), max_size=3),
+    trashed=st.booleans(),
+)
+async def test_any_vault_survives_a_backup_round_trip(
+    client: httpx.AsyncClient,
+    names: list[str],
+    values: list[str],
+    blobs: list[bytes],
+    trashed: bool,
+) -> None:
+    await reset_vault()
+    headers = auth(await create_vault(client))
+    stored = [n.strip() for n in names if n.strip() not in ("", ".", "..", "trash")]
+    stored = list(dict.fromkeys(stored))
+    for index, name in enumerate(stored):
+        resp = await client.post(
+            "/passwords/create",
+            json=entry(name, values[index], description=values[-1], tags=[values[0]]),
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+    if stored:
+        target = quote(stored[0], safe="")
+        for blob in blobs:
+            resp = await client.post(
+                f"/passwords/{target}/attachments",
+                files={"file": ("b", blob, "x/y")},
+                headers=headers,
+            )
+            assert resp.status_code == 200, resp.text
+        if trashed:
+            await client.delete(f"/passwords/{target}", headers=headers)
+    original = await read_current_vault()
+    backup = await client.post(
+        "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
+    )
+    await reset_vault()
+    headers = auth(await create_vault(client))
+    resp = await _import(client, headers, backup.content)
+    assert resp.status_code == 200, resp.text
+    assert_same_vault(
+        original, await read_current_vault(), compare=[*PLAINTEXT, "created", "updated"]
+    )
