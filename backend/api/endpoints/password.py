@@ -44,7 +44,14 @@ async def create_password(
     crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
 ) -> EncryptedPasswordResponse:
-    return await crud.create(context, **body.model_dump())
+    return await crud.create(
+        context,
+        encrypted_payload=body.encrypted_payload,
+        wrapped_key=body.wrapped_key,
+        encrypted_preferences=body.encrypted_preferences,
+        encrypted_attachments=body.encrypted_attachments,
+        shares=body.shares,
+    )
 
 
 @router.get("/{password_id}", response_model=EncryptedPasswordResponse)
@@ -63,7 +70,14 @@ async def update_password(
     crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
 ) -> EncryptedPasswordResponse:
-    return await crud.update(context, password_id, **body.model_dump())
+    return await crud.update(
+        context,
+        password_id,
+        encrypted_payload=body.encrypted_payload,
+        encrypted_preferences=body.encrypted_preferences,
+        encrypted_attachments=body.encrypted_attachments,
+        shares=body.shares,
+    )
 
 
 @router.patch("/{password_id}/preferences", response_model=EncryptedPasswordResponse)

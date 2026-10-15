@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Autocomplete,
   Box,
@@ -84,7 +84,7 @@ const toForm = (target, initialFolder = "") =>
     : { ...EMPTY_FORM, folder: initialFolderForEntry(null, initialFolder) };
 
 const sectionsForTarget = (target) => ({
-  access: !target,
+  access: false,
   totp: !!target?.totp_secret,
   tags: (target?.tags?.length ?? 0) > 0,
   custom: (target?.custom_fields?.length ?? 0) > 0,
@@ -93,59 +93,66 @@ const sectionsForTarget = (target) => ({
   history: false,
 });
 
-const FormSection = ({ label, count, preview, open, onToggle, children }) => (
-  <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-    <ButtonBase
-      onClick={onToggle}
-      sx={{
-        width: "100%",
-        justifyContent: "space-between",
-        px: 0.5,
-        py: 1,
-        minHeight: { xs: 44, sm: 0 },
-        borderRadius: 1,
-        "&:hover": { bgcolor: "action.hover" },
-      }}
-    >
-      <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
-        <ExpandMoreIcon
-          fontSize="small"
-          sx={{
-            color: "text.secondary",
-            transition: "transform 150ms ease",
-            transform: open ? "none" : "rotate(-90deg)",
-          }}
-        />
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {label}
-        </Typography>
-        {count > 0 && (
-          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            ({count})
+const FormSection = ({ label, count, preview, open, onToggle, children }) => {
+  const sectionRef = useRef(null);
+
+  return (
+    <Box ref={sectionRef} sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+      <ButtonBase
+        onClick={onToggle}
+        sx={{
+          width: "100%",
+          justifyContent: "space-between",
+          px: 0.5,
+          py: 1,
+          minHeight: { xs: 44, sm: 0 },
+          borderRadius: 1,
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
+          <ExpandMoreIcon
+            fontSize="small"
+            sx={{
+              color: "text.secondary",
+              transition: "transform 150ms ease",
+              transform: open ? "none" : "rotate(-90deg)",
+            }}
+          />
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {label}
+          </Typography>
+          {count > 0 && (
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              ({count})
+            </Typography>
+          )}
+        </Stack>
+        {!open && preview && (
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.disabled",
+              ml: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              maxWidth: 190,
+            }}
+          >
+            {preview}
           </Typography>
         )}
-      </Stack>
-      {!open && preview && (
-        <Typography
-          variant="caption"
-          sx={{
-            color: "text.disabled",
-            ml: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            maxWidth: 190,
-          }}
-        >
-          {preview}
-        </Typography>
-      )}
-    </ButtonBase>
-    <Collapse in={open}>
-      <Box sx={{ px: 0.5, pt: 0.5, pb: 1.5 }}>{children}</Box>
-    </Collapse>
-  </Box>
-);
+      </ButtonBase>
+      <Collapse
+        in={open}
+        onEntered={() => sectionRef.current?.scrollIntoView({ block: "nearest" })}
+      >
+        <Box sx={{ px: 0.5, pt: 0.5, pb: 1.5 }}>{children}</Box>
+      </Collapse>
+    </Box>
+  );
+};
 
 const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
   const { t } = useTranslation();
@@ -237,8 +244,10 @@ const PasswordFormDialog = ({
   const [genOpts, setGenOpts] = useState(GEN_DEFAULTS);
   const [submitting, setSubmitting] = useState(false);
   const [attachmentsDirty, setAttachmentsDirty] = useState(false);
+  const [accessDraft, setAccessDraft] = useState(null);
+  const [accessDirty, setAccessDirty] = useState(false);
 
-  const canManageAccess = editTarget?.access === "owner";
+  const canManageAccess = !editTarget || editTarget.access === "owner";
 
   useEffect(() => {
     if (!open) return;
@@ -249,11 +258,18 @@ const PasswordFormDialog = ({
     setShowTotp(false);
     setShowGenerator(false);
     setAttachmentsDirty(false);
+    setAccessDraft(null);
+    setAccessDirty(false);
   }, [open, editTarget, initialFolder]);
 
   const isNote = form.kind === "note";
 
   const toggleSection = (key) => () => setSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const handleSharesChange = useCallback((next, dirty) => {
+    setAccessDraft(next);
+    if (dirty) setAccessDirty(true);
+  }, []);
 
   const setField = (field) => (e) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
@@ -321,7 +337,7 @@ const PasswordFormDialog = ({
       return;
     }
 
-    if (editTarget && unchanged) {
+    if (editTarget && unchanged && !accessDirty) {
       onClose();
       return;
     }
@@ -329,7 +345,7 @@ const PasswordFormDialog = ({
     setSubmitting(true);
 
     try {
-      await onSubmit({
+      const payload = {
         password_name: form.password_name.trim(),
         kind: form.kind,
         username: isNote ? null : form.username.trim() || null,
@@ -341,7 +357,9 @@ const PasswordFormDialog = ({
         custom_fields: normalizeCustomFields(form.custom_fields),
         folder: form.folder.trim() || null,
         favorite: form.favorite,
-      });
+      };
+      if (!editTarget || accessDirty) payload.shares = accessDraft ?? [];
+      await onSubmit(payload);
     } catch (err) {
       setFormError(err.message);
     } finally {
@@ -528,13 +546,19 @@ const PasswordFormDialog = ({
         />
 
         <Box sx={{ mt: 1.5 }}>
-          {canManageAccess && editTarget && (
+          {canManageAccess && (
             <FormSection
-              label={t("sharing.manage")}
+              label={t("sharing.manageOptional")}
+              count={accessDraft?.length ?? 0}
               open={sections.access}
               onToggle={toggleSection("access")}
             >
-              <ShareAccessPanel entry={editTarget} active={open && sections.access} />
+              <ShareAccessPanel
+                entry={editTarget}
+                active={open && sections.access}
+                draft
+                onChange={handleSharesChange}
+              />
             </FormSection>
           )}
 
@@ -682,14 +706,14 @@ const PasswordFormDialog = ({
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={submitting}>
+        <Button onClick={onClose} disabled={submitting} sx={{ color: "text.primary" }}>
           {t("common.actions.cancel")}
         </Button>
         <Button
           variant="contained"
           onClick={handleSubmit}
           loading={submitting}
-          disabled={unchanged && !attachmentsDirty}
+          disabled={unchanged && !attachmentsDirty && !accessDirty}
         >
           {t(
             editTarget

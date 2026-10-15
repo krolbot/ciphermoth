@@ -43,11 +43,21 @@ const splitPassword = (password) => {
     "deleted",
     "favorite",
     "attachments",
+    "shares",
   ]) {
     delete payload[key];
   }
   return { payload, preferences: { favorite: password.favorite ?? false } };
 };
+
+export const wrapShares = (shares, entryKey) =>
+  Promise.all(
+    shares.map(async (share) => ({
+      user_id: share.user_id,
+      permission: share.permission,
+      wrapped_key: await wrapEntryKey(share.public_key, entryKey),
+    }))
+  );
 
 export const encryptNewPassword = async (password) => {
   const entryKey = generateEntryKey();
@@ -65,6 +75,7 @@ export const encryptNewPassword = async (password) => {
         })
       )
     ),
+    shares: await wrapShares(password.shares ?? [], entryKey),
   };
 };
 
@@ -103,6 +114,9 @@ export const encryptUpdatedPassword = async (record, password, restoring = false
         )
       );
     }
+  }
+  if (Array.isArray(password.shares)) {
+    result.shares = await wrapShares(password.shares, entryKey);
   }
   return result;
 };

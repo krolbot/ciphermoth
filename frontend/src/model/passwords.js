@@ -81,7 +81,7 @@ const Passwords = {
     try {
       const { data } = await apiClient.post("/passwords", await encryptNewPassword(payload));
       await actions.get();
-      return data;
+      return decryptPasswordRecord(data);
     } catch (err) {
       throw new Error(await errorDetail(err, i18n.t("errors.createPassword")));
     }

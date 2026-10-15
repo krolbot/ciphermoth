@@ -15,7 +15,7 @@ import {
   unwrapEntryKey,
   wrapEntryKey,
 } from "../src/lib/crypto.js";
-import { mergePasswordUpdate } from "../src/lib/vault.js";
+import { mergePasswordUpdate, wrapShares } from "../src/lib/vault.js";
 
 const vector = {
   password: "Correct-Horse_42!",
@@ -63,6 +63,20 @@ test("browser-generated user keys wrap and unwrap encrypted JSON", async () => {
 
   assert.equal(unwrapped, entryKey);
   assert.deepEqual(await decryptJson(unwrapped, await encryptJson(entryKey, payload)), payload);
+});
+
+test("entry shares wrap the same key for each selected user", async () => {
+  const member = await generateUserKeyMaterial("member password");
+  const entryKey = generateEntryKey();
+  const [share] = await wrapShares(
+    [{ user_id: 7, permission: "write", public_key: member.publicKey }],
+    entryKey
+  );
+
+  assert.deepEqual(Object.keys(share).sort(), ["permission", "user_id", "wrapped_key"]);
+  assert.equal(share.user_id, 7);
+  assert.equal(share.permission, "write");
+  assert.equal(await unwrapEntryKey(member.privateKey, share.wrapped_key, ""), entryKey);
 });
 
 test("browser auth key signs a server challenge without exposing the master password", async () => {

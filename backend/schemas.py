@@ -255,6 +255,12 @@ EncryptedAttachmentCiphertext = Annotated[
 ]
 
 
+class ShareAssignmentPayload(BaseModel):
+    user_id: int = Field(ge=1)
+    permission: SharePermission
+    wrapped_key: str = Field(min_length=1, max_length=16_384)
+
+
 class EncryptedPasswordCreatePayload(BaseModel):
     encrypted_payload: str = Field(min_length=1, max_length=4_000_000)
     wrapped_key: str = Field(min_length=1, max_length=16_384)
@@ -262,6 +268,7 @@ class EncryptedPasswordCreatePayload(BaseModel):
     encrypted_attachments: list[EncryptedAttachmentCiphertext] = Field(
         default_factory=list, max_length=20
     )
+    shares: list[ShareAssignmentPayload] = Field(default_factory=list, max_length=100)
 
 
 class EncryptedPasswordUpdatePayload(BaseModel):
@@ -270,6 +277,7 @@ class EncryptedPasswordUpdatePayload(BaseModel):
     encrypted_attachments: list[EncryptedAttachmentCiphertext] | None = Field(
         default=None, max_length=20
     )
+    shares: list[ShareAssignmentPayload] | None = Field(default=None, max_length=100)
 
 
 class EncryptedPreferencesUpdatePayload(BaseModel):
@@ -315,6 +323,7 @@ class ShareGrant(BaseModel):
     user_id: int
     username: str
     role: UserRole
+    public_key: str
     permission: SharePermission
 
 

@@ -372,6 +372,7 @@ const en = {
     noAvailableTargets: "No other users are available.",
     title: "Share {{name}}",
     manage: "Manage sharing",
+    manageOptional: "Manage sharing (optional)",
     access: "Owner / access",
     user: "User",
     selectUser: "Select",
@@ -381,6 +382,7 @@ const en = {
     owner: "Owner",
     empty: "This entry is not shared.",
     revoke: "Revoke",
+    savedWithEntry: "Access changes are applied when you save the entry.",
   },
   users: {
     title: "Users",

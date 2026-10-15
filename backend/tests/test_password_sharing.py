@@ -10,7 +10,7 @@ from crud.auth import AuthContext
 from crud.encrypted_password import EncryptedPasswordCRUD
 from helpers import encrypt, generate_entry_key, wrap_entry_key
 from models import BaseModel, InstanceStateModel, UserModel
-from schemas import SharePermission
+from schemas import ShareAssignmentPayload, SharePermission
 
 
 @pytest_asyncio.fixture
@@ -98,5 +98,66 @@ async def test_opaque_entry_sharing_enforces_acl_without_human_server_keys(
     assert changed.encrypted_payload == changed_ciphertext.decode()
 
     await passwords.revoke_share(owner, created.id, member.user.id)
+    with pytest.raises(NotFound):
+        await passwords.get(member, created.id)
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_apply_shares_with_the_entry(
+    session: AsyncSession,
+) -> None:
+    owner = await user_context(session, "owner", "admin")
+    member = await user_context(session, "member", "member")
+    passwords = EncryptedPasswordCRUD(session)
+    entry_key = generate_entry_key()
+    original = encrypt(entry_key, b"original").decode()
+    changed = encrypt(entry_key, b"changed").decode()
+    owner_wrapped = encoded(wrap_entry_key(owner.user.public_key, entry_key))
+    member_wrapped = encoded(wrap_entry_key(member.user.public_key, entry_key))
+
+    created = await passwords.create(
+        owner,
+        encrypted_payload=original,
+        wrapped_key=owner_wrapped,
+        shares=[
+            ShareAssignmentPayload(
+                user_id=member.user.id,
+                permission=SharePermission.read,
+                wrapped_key=member_wrapped,
+            )
+        ],
+    )
+    assert (await passwords.get(member, created.id)).access == SharePermission.read
+
+    with pytest.raises(NotFound, match="Share target"):
+        await passwords.update(
+            owner,
+            created.id,
+            encrypted_payload=changed,
+            shares=[
+                ShareAssignmentPayload(
+                    user_id=999,
+                    permission=SharePermission.write,
+                    wrapped_key=member_wrapped,
+                )
+            ],
+        )
+    assert (await passwords.get(owner, created.id)).encrypted_payload == original
+
+    await passwords.update(
+        owner,
+        created.id,
+        encrypted_payload=changed,
+        shares=[
+            ShareAssignmentPayload(
+                user_id=member.user.id,
+                permission=SharePermission.write,
+                wrapped_key=member_wrapped,
+            )
+        ],
+    )
+    assert (await passwords.get(member, created.id)).access == SharePermission.write
+
+    await passwords.update(owner, created.id, encrypted_payload=changed, shares=[])
     with pytest.raises(NotFound):
         await passwords.get(member, created.id)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
   Dialog,
@@ -22,7 +22,7 @@ const ACCESS_GRID_COLUMNS = {
 };
 const SELECT_SX = { minHeight: { xs: 44, sm: 40 } };
 
-export const ShareAccessPanel = ({ entry, active = true }) => {
+export const ShareAccessPanel = ({ entry, active = true, draft = false, onChange }) => {
   const { t } = useTranslation();
   const { listShares, setShare, revokeShare } = useStoreActions(
     (a) => a.ciphermothModels.passwords
@@ -33,54 +33,111 @@ export const ShareAccessPanel = ({ entry, active = true }) => {
   const [targetId, setTargetId] = useState("");
   const [permission, setPermission] = useState("read");
   const [error, setError] = useState("");
+  const lifecycleRef = useRef(0);
 
-  const load = useCallback(async () => {
-    if (!entry) return;
-    try {
-      setError("");
-      const [nextShares, nextTargets] = await Promise.all([listShares(entry.id), shareTargets()]);
-      setShares(nextShares);
-      setTargets(nextTargets);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [entry, listShares, shareTargets]);
+  const load = useCallback(
+    async (isCurrent = () => true) => {
+      if (!isCurrent()) return;
+      try {
+        setError("");
+        const [nextShares, nextTargets] = await Promise.all([
+          entry ? listShares(entry.id) : Promise.resolve([]),
+          shareTargets(),
+        ]);
+        if (!isCurrent()) return;
+        const sharesWithKeys = nextShares.map((share) => ({
+          ...share,
+          public_key:
+            share.public_key ??
+            nextTargets.find((target) => target.id === share.user_id)?.public_key,
+        }));
+        setShares(sharesWithKeys);
+        setTargets(nextTargets);
+        if (draft) onChange?.(sharesWithKeys, false);
+      } catch (err) {
+        if (isCurrent()) setError(err.message);
+      }
+    },
+    [draft, entry, listShares, onChange, shareTargets]
+  );
 
   useEffect(() => {
-    if (!active || !entry) return;
+    const lifecycle = ++lifecycleRef.current;
+    if (!active) return;
+    let current = true;
     setTargetId("");
-    load();
+    load(() => current && lifecycleRef.current === lifecycle);
+    return () => {
+      current = false;
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current += 1;
+    };
   }, [active, entry, load]);
+
+  const setDraftShares = (next) => {
+    setShares(next);
+    onChange?.(next, true);
+  };
 
   const save = async () => {
     if (!targetId) return;
+    if (draft) {
+      const target = targets.find((candidate) => candidate.id === targetId);
+      if (!target) return;
+      setDraftShares([
+        ...shares,
+        {
+          user_id: target.id,
+          username: target.username,
+          role: target.role,
+          public_key: target.public_key,
+          permission,
+        },
+      ]);
+      setTargetId("");
+      return;
+    }
+    const lifecycle = lifecycleRef.current;
     try {
       setError("");
       await setShare({ passwordId: entry.id, userId: targetId, permission });
       setTargetId("");
-      await load();
+      await load(() => lifecycleRef.current === lifecycle);
     } catch (err) {
-      setError(err.message);
+      if (lifecycleRef.current === lifecycle) setError(err.message);
     }
   };
 
   const revoke = async (userId) => {
+    if (draft) {
+      setDraftShares(shares.filter((share) => share.user_id !== userId));
+      return;
+    }
+    const lifecycle = lifecycleRef.current;
     try {
       setError("");
       await revokeShare({ passwordId: entry.id, userId });
-      await load();
+      await load(() => lifecycleRef.current === lifecycle);
     } catch (err) {
-      setError(err.message);
+      if (lifecycleRef.current === lifecycle) setError(err.message);
     }
   };
 
   const changePermission = async (userId, nextPermission) => {
+    if (draft) {
+      setDraftShares(
+        shares.map((share) =>
+          share.user_id === userId ? { ...share, permission: nextPermission } : share
+        )
+      );
+      return;
+    }
+    const lifecycle = lifecycleRef.current;
     try {
       setError("");
       await setShare({ passwordId: entry.id, userId, permission: nextPermission });
-      await load();
+      await load(() => lifecycleRef.current === lifecycle);
     } catch (err) {
-      setError(err.message);
+      if (lifecycleRef.current === lifecycle) setError(err.message);
     }
   };
 
@@ -90,6 +147,11 @@ export const ShareAccessPanel = ({ entry, active = true }) => {
 
   return (
     <Stack spacing={3}>
+      {draft && (
+        <Typography variant="body2" color="text.secondary">
+          {t("sharing.savedWithEntry")}
+        </Typography>
+      )}
       <Stack spacing={1}>
         <Typography variant="subtitle2">{t("sharing.currentAccess")}</Typography>
         {shares.length === 0 ? (

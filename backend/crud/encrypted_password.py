@@ -17,6 +17,7 @@ from schemas import (
     EncryptedAttachmentResponse,
     EncryptedPasswordResponse,
     EntryPermission,
+    ShareAssignmentPayload,
     ShareGrant,
     SharePermission,
     UserRole,
@@ -143,6 +144,72 @@ class EncryptedPasswordCRUD:
             deleted=entry.deleted,
         )
 
+    async def _prepare_shares(
+        self,
+        context: AuthContext,
+        shares: list[ShareAssignmentPayload],
+    ) -> list[tuple[ShareAssignmentPayload, bytes]]:
+        user_ids = [share.user_id for share in shares]
+        if len(user_ids) != len(set(user_ids)):
+            raise TypesMismatchError("A share target can only be listed once.")
+        if not user_ids:
+            return []
+        targets = (
+            await self.session.scalars(
+                select(UserModel).where(
+                    UserModel.id.in_(user_ids),
+                    UserModel.active.is_(True),
+                    UserModel.id != context.user.id,
+                )
+            )
+        ).all()
+        targets_by_id = {target.id: target for target in targets}
+        if len(targets_by_id) != len(user_ids):
+            raise NotFound("Share target not found.")
+        return [
+            (
+                share,
+                _decode_wrapped_key(share.wrapped_key),
+            )
+            for share in shares
+        ]
+
+    async def _replace_shares(
+        self,
+        context: AuthContext,
+        entry: PasswordModel,
+        prepared: list[tuple[ShareAssignmentPayload, bytes]],
+    ) -> None:
+        existing = {
+            access.user_id: access
+            for access in await self.session.scalars(
+                select(PasswordAccessModel).where(
+                    PasswordAccessModel.password_id == entry.id,
+                    PasswordAccessModel.permission != EntryPermission.owner,
+                )
+            )
+        }
+        next_user_ids = {share.user_id for share, _ in prepared}
+        for user_id, access in existing.items():
+            if user_id not in next_user_ids:
+                await self.session.delete(access)
+        for share, wrapped_key in prepared:
+            access = existing.get(share.user_id)
+            if access is None:
+                self.session.add(
+                    PasswordAccessModel(
+                        password_id=entry.id,
+                        user_id=share.user_id,
+                        permission=share.permission,
+                        wrapped_key=wrapped_key,
+                        granted_by=context.user.id,
+                    )
+                )
+            else:
+                access.permission = share.permission
+                access.wrapped_key = wrapped_key
+                access.granted_by = context.user.id
+
     async def create(
         self,
         context: AuthContext,
@@ -151,8 +218,10 @@ class EncryptedPasswordCRUD:
         wrapped_key: str,
         encrypted_preferences: str | None = None,
         encrypted_attachments: list[str] | None = None,
+        shares: list[ShareAssignmentPayload] | None = None,
     ) -> EncryptedPasswordResponse:
         attachment_payloads = _decode_attachment_payloads(encrypted_attachments or [])
+        prepared_shares = await self._prepare_shares(context, shares or [])
         entry = PasswordModel(
             owner_id=context.user.id,
             encryption_version=3,
@@ -183,6 +252,7 @@ class EncryptedPasswordCRUD:
             )
             for payload in attachment_payloads
         )
+        await self._replace_shares(context, entry, prepared_shares)
         await self.session.flush()
         return self._response(entry, access)
 
@@ -224,10 +294,16 @@ class EncryptedPasswordCRUD:
         encrypted_payload: str,
         encrypted_preferences: str | None = None,
         encrypted_attachments: list[str] | None = None,
+        shares: list[ShareAssignmentPayload] | None = None,
     ) -> EncryptedPasswordResponse:
         entry, access = await self._entry_and_access(context, password_id)
         if access.permission not in (EntryPermission.owner, SharePermission.write):
             raise Forbidden("Write access is required.")
+        if shares is not None and access.permission != EntryPermission.owner:
+            raise Forbidden("Only the owner can manage sharing.")
+        prepared_shares = (
+            await self._prepare_shares(context, shares) if shares is not None else None
+        )
 
         payload = _decode_fernet(encrypted_payload, label="encrypted payload")
         preferences = (
@@ -242,6 +318,8 @@ class EncryptedPasswordCRUD:
         entry.encrypted_payload = payload
         if preferences is not None:
             access.encrypted_preferences = preferences
+        if prepared_shares is not None:
+            await self._replace_shares(context, entry, prepared_shares)
 
         entry.updated = datetime.now(UTC).replace(tzinfo=None)
         await self.session.flush()
@@ -329,6 +407,7 @@ class EncryptedPasswordCRUD:
             user_id=target.id,
             username=target.username,
             role=UserRole(target.role),
+            public_key=_encode(target.public_key) or "",
             permission=permission,
         )
 
@@ -352,6 +431,7 @@ class EncryptedPasswordCRUD:
                 user_id=user.id,
                 username=user.username,
                 role=UserRole(user.role),
+                public_key=_encode(user.public_key) or "",
                 permission=SharePermission(access.permission),
             )
             for access, user in rows

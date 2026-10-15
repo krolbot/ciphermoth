@@ -89,6 +89,7 @@ const PasswordsPage = () => {
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [revealEntryId, setRevealEntryId] = useState(null);
   const [healthActionTarget, setHealthActionTarget] = useState(null);
 
   useEffect(() => {
@@ -148,13 +149,14 @@ const PasswordsPage = () => {
         { variant: "success" }
       );
     } else {
-      await create(password);
+      const created = await create(password);
       enqueueSnackbar(
         t(
           password.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"
         ),
         { variant: "success" }
       );
+      setRevealEntryId(created.id);
     }
     setDialogOpen(false);
   };
@@ -237,6 +239,20 @@ const PasswordsPage = () => {
   }, [passwords, search, activeFolder, i18n.resolvedLanguage]);
 
   useEffect(() => setPage(1), [search, activeFolder]);
+
+  useEffect(() => {
+    if (!revealEntryId) return;
+    const index = filteredPasswords.findIndex((entry) => entry.id === revealEntryId);
+    if (index < 0) {
+      if (search || activeFolder) {
+        setSearch("");
+        setFolderFilter("");
+      }
+      return;
+    }
+    setPage(Math.floor(index / PAGE_SIZE) + 1);
+    setRevealEntryId(null);
+  }, [revealEntryId, filteredPasswords, search, activeFolder]);
 
   const pageCount = Math.max(1, Math.ceil(filteredPasswords.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
