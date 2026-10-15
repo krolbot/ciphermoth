@@ -252,6 +252,9 @@ async def test_orphaned_attachments_and_duplicate_rows_are_reported(
 ) -> None:
     key = await _rich_vault(client)
     with closing(sqlite3.connect(data_dir() / VAULT_FILE)) as unchecked:
+        [(index_sql,)] = unchecked.execute(
+            "SELECT sql FROM sqlite_schema WHERE name = 'uq_entries_name_active'"
+        ).fetchall()
         unchecked.execute("UPDATE attachments SET entry_id = 999")
         unchecked.execute("DROP INDEX uq_entries_name_active")
         unchecked.execute(
@@ -260,8 +263,13 @@ async def test_orphaned_attachments_and_duplicate_rows_are_reported(
             "WHERE deleted IS NULL LIMIT 1"
         )
         unchecked.commit()
-
-    vault = await _scan(key, strict=False)
+    try:
+        vault = await _scan(key, strict=False)
+    finally:
+        with closing(sqlite3.connect(data_dir() / VAULT_FILE)) as unchecked:
+            unchecked.execute("DELETE FROM entries")
+            unchecked.execute(index_sql)
+            unchecked.commit()
 
     reasons = sorted(str(p) for p in vault.problems)
     assert any("entry_id: no such entry" in r for r in reasons)

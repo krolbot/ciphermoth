@@ -440,10 +440,12 @@ async def test_cancelled_unlocks_creations_and_rotations_leave_nothing_behind(
     entered = asyncio.Event()
     original = helpers.derive
 
-    async def slow_derive(*args: object) -> bytes:
+    async def slow_derive(
+        password: str, salt: bytes, params: helpers.KdfParams = helpers.DEFAULT_KDF
+    ) -> bytes:
         entered.set()
         await asyncio.sleep(30)
-        return await original(*args)
+        return await original(password, salt, params)
 
     monkeypatch.setattr(helpers, "derive", slow_derive)
     creating = asyncio.create_task(
