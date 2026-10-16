@@ -4,6 +4,7 @@ Requests still use production FastAPI validation, auth and transactions. Only
 ciphertext streams touch disk; 256 KiB chunks cross the in-process ASGI bridge.
 """
 
+import errno
 import json
 import os
 import stat
@@ -16,7 +17,7 @@ CHUNK = 256 * 1024
 MAX_BACKUP = 1024 * 1024 * 1024
 
 
-async def call(app, header, body):
+async def _call(app, header, body):
     operation = header.get("native")
     path = Path(header["file"])
     if not path.is_absolute():
@@ -100,3 +101,18 @@ async def call(app, header, body):
             input_chunks=chunks(),
             input_size=len(prefix) + info.st_size + len(suffix),
         )
+
+
+async def call(app, header, body):
+    try:
+        return await _call(app, header, body)
+    except OSError as error:
+        if error.errno == errno.ENOSPC:
+            detail = "Not enough free disk space. Free space and try again."
+        elif error.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+            detail = "The selected file or folder is not accessible. Choose a writable folder."
+        elif error.errno == errno.EEXIST:
+            detail = "A file already exists there. Choose a new filename."
+        else:
+            detail = "The file operation could not finish safely. Check the selected file, available disk space, and folder permissions."
+        return 400, [], json.dumps({"detail": detail}).encode()
