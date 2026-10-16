@@ -175,6 +175,26 @@ class Stack:
         fail(f"{self.project}: backend logs never said {message!r}\n{logs[-2000:]}")
         return ""
 
+    def wait_backend_exit(self, expected: int, timeout: float = 30) -> str:
+        """Wait for the refusal process to exit before reading its exit code."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            container = self.dc("ps", "-a", "-q", "backend").stdout.strip()
+            if container:
+                state = json.loads(run("docker", "inspect", container).stdout)[0][
+                    "State"
+                ]
+                if state["Status"] == "exited":
+                    if state["ExitCode"] != expected:
+                        fail(
+                            f"the new backend exited with {state['ExitCode']}, "
+                            f"not {expected}"
+                        )
+                    return container
+            time.sleep(0.2)
+        fail(f"{self.project}: backend did not exit with {expected}")
+        return ""
+
     def admin(
         self, *args: str, running: bool = True, check: bool = True
     ) -> subprocess.CompletedProcess:
@@ -845,6 +865,10 @@ def legacy(tag: str, prefix: str, workdir: Path, old_compose: Path) -> None:
     folder.mkdir()
     compose = folder / "docker-compose.prod.yml"
     shutil.copy(old_compose, compose)
+    refusal_override = folder / "refusal.yml"
+    refusal_override.write_text(
+        'services:\n  backend:\n    restart: "no"\n', encoding="utf-8"
+    )
     env = {"POSTGRES_PASSWORD": "smoke-legacy-password", "CIPHERMOTH_VERSION": "1.6.0"}
     stack = Stack(f"{prefix}-legacy", compose, env)
     try:
@@ -862,13 +886,11 @@ def legacy(tag: str, prefix: str, workdir: Path, old_compose: Path) -> None:
         ok("a v1.6.0 PostgreSQL install runs from its own compose file")
 
         stack.env["CIPHERMOTH_VERSION"] = tag
-        stack.dc("up", "-d")
+        stack.dc("up", "-d", overrides=(str(refusal_override),))
         stack.backend_exited_with("no longer uses PostgreSQL")
-        container = stack.dc("ps", "-a", "-q", "backend").stdout.strip()
+        container = stack.wait_backend_exit(78)
         inspect = json.loads(run("docker", "inspect", container).stdout)[0]
         code = inspect["State"]["ExitCode"]
-        if code != 78:
-            fail(f"the new backend exited with {code}, not 78")
         mounts = [m for m in inspect["Mounts"] if m["Destination"] == "/data"]
         if mounts:
             listing = run(
