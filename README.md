@@ -51,7 +51,11 @@ Open **[http://localhost:3000](http://localhost:3000)**, create your master pass
 one SQLite file in a persistent Docker volume, so it survives restarts and updates, and a consistent snapshot of it is
 one command away (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md)).
 
-> Coming from CipherMoth 1.x (PostgreSQL)? 2.0 needs a fresh install with a new vault; it never reads or deletes
+> Coming from CipherMoth 2.0? **3.0 requires a new vault** and refuses the old file unchanged. Export active entries
+> in 2.0 first, preserve the old vault explicitly, then create a new vault and import the ZIP. Follow the
+> [complete upgrade procedure](./docs/UPDATING.md#moving-from-ciphermoth-20-vault-format-1).
+>
+> Coming from CipherMoth 1.x (PostgreSQL)? This release needs a fresh install with a new vault; it never reads or deletes
 > your old database. The steps, and how to bring your entries along, are in [docs/UPDATING.md](./docs/UPDATING.md#moving-from-a-postgresql-release-v160-and-older).
 
 Rather read the script before piping it to a shell, set it up by hand, run it on a real server, or tweak the config?
@@ -64,7 +68,7 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 ## What it does
 
 - one master password unlocks the vault, no account, no email, no recovery codes sent to a phone number you changed three years ago
-- all passwords encrypted at rest with a key derived from your master password; the server never stores or logs that key
+- all entry contents encrypted at rest with a random vault key, stored only wrapped under a key derived from your master password
 - store a username, website, tags, folders, a two-factor (TOTP) secret, and your own custom fields alongside each entry, all encrypted, entry names included (see [Security](#security))
 - built-in two-factor: paste a 2FA secret, and CipherMoth shows the live rolling code, computed in the browser
 - secure notes for free-form secrets (recovery codes, Wi-Fi, passport details), encrypted just like passwords

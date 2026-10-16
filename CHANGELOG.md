@@ -2,12 +2,17 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-16
+
+CipherMoth 3.0 encrypts entry metadata and introduces complete, authenticated encrypted backups.
+
 This release changes how the vault is encrypted (vault format 2) and replaces the backup format. **It needs a new vault**: it does not open or convert a vault created by CipherMoth 2.0, and never changes or deletes one. The format is specified in [docs/VAULT_FORMAT.md](docs/VAULT_FORMAT.md).
 
 ### Upgrading
 
 - **Make a backup in 2.0 before updating**, and a snapshot. A 2.0 vault is refused at startup with a message ("was created by CipherMoth 2.0 or earlier"); nothing is changed. Move it aside with the new `ciphermoth-admin set-aside` (it is moved into the snapshot folder, never deleted), start the new version, create a vault, and import the 2.0 backup ZIP. The steps, and how to go back to 2.0, are in [docs/UPDATING.md](docs/UPDATING.md#moving-from-ciphermoth-20-vault-format-1).
 - The 2.0 backup ZIP carries active entries only (no trash, history, attachments or settings), as before. New backups are complete.
+- **Rollback needs the preserved 2.0 vault.** CipherMoth 2.0 cannot open a 3.0 vault; a raw 2.0 SQLite snapshot is for recovery with 2.0, not import into 3.0. Updates remain manual; one-click updates are unavailable.
 - Use the CLI of this release. A 2.0 CLI still works against this server, but its `backup` saves the new format under a `.zip` name and its `import` sends the current master password as the backup password.
 
 ### Security
@@ -28,6 +33,8 @@ This release changes how the vault is encrypted (vault format 2) and replaces th
 ### Changed
 
 - SQLite schema 2 (tables `vault`, `entries`, `attachments`). The schema version and the vault's cryptographic format version are checked separately; a newer one of either is refused at startup without changes.
+- Complete backups are limited to **1 GiB** and **1,000,001 frames**, including the envelope; each entry frame is at most **64 MiB**, and each attachment frame at most **5 MiB**. Capacity checks reject supported writes before the vault outgrows its backup capacity.
+- The architecture remains SQLite only: two containers and one persistent vault volume, with no PostgreSQL or updater service.
 - Backups download as `ciphermoth_backup_<time>.cmbackup`. Large backups are staged as encrypted files; CSV imports and attachment uploads still stay in memory. Backup size bounds follow the backup format instead of the old HTTP upload cap.
 - The CLI streams backup downloads and imports. Downloads are written privately to a unique `.partial` file and published only after a complete, flushed transfer, without overwriting an existing backup.
 - Removed the misleading per-entry "backed up" indicators. Generating or requesting a download cannot establish that the browser saved it; the UI asks you to check the saved file.

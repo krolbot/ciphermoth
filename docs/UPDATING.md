@@ -1,12 +1,12 @@
 # Updating CipherMoth
 
-A self-hosted CipherMoth keeps the whole vault in one SQLite file, `vault.db`, in the `vault_data` Docker volume. Updating replaces the two containers; the volume stays. Nothing here ever needs your master password.
+A self-hosted CipherMoth keeps the whole vault in one SQLite file, `vault.db`, in the `vault_data` Docker volume. Updating replaces the two containers; the volume stays. Snapshot and file-management commands do not need your master password; exporting or importing a portable backup does.
 
 One-click updates are paused in this release: the previous updater was built around PostgreSQL and was retired with it. The app still tells you when a release is out and shows the commands below.
 
 ## Update
 
-In your CipherMoth folder:
+**Coming from 2.0? Follow [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1) first.** The general commands below do not convert a 2.0 vault; 3.0 refuses it unchanged. For a compatible 3.x vault, in your CipherMoth folder:
 
 ```shell
 docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
@@ -14,12 +14,12 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-The first command writes a consistent, integrity-checked copy of the vault into the volume (next section) and prints its name; keep it until you have used the new version for a while. `CIPHERMOTH_VERSION` in `.env` decides which release runs (`latest`, or a pinned version such as `2.0.0`). Everyone is asked to unlock again after the restart, because sessions live in the server's memory.
+The first command writes a consistent, integrity-checked copy of the vault into the volume (next section) and prints its name; keep it until you have used the new version for a while. `CIPHERMOTH_VERSION` in `.env` decides which release runs (`latest`, or a pinned version such as `3.0.0`). Everyone is asked to unlock again after the restart, because sessions live in the server's memory.
 
 To check that the images are CipherMoth's own before you start them, verify their signatures (see [SECURITY.md](../SECURITY.md)):
 
 ```shell
-cosign verify ghcr.io/mr-grj/ciphermoth-backend:2.0.0 \
+cosign verify ghcr.io/mr-grj/ciphermoth-backend:3.0.0 \
   --certificate-identity-regexp '^https://github.com/mr-grj/ciphermoth/\.github/workflows/release\.yml@refs/tags/v.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -111,7 +111,7 @@ To move your entries:
 
 1. **Before updating**, in CipherMoth 2.0, make a backup (web UI **Backup**, or `cip backup`). The 2.0 backup ZIP carries your active entries with their fields, not the trash, password history, attachments or settings; download attachments you want to keep from the entries themselves. If you already updated, pin `2.0.0` again to make it.
 2. Take a snapshot as well (`ciphermoth-admin snapshot`), so the old vault can always be restored with 2.0.
-3. Update (`pull`), then move the old vault aside while the backend is stopped:
+3. Set `CIPHERMOTH_VERSION=3.0.0` in `.env` (including if you pinned `2.0.0` to export your entries). Pull the new images and verify their signatures as above, then move the old vault aside while the backend is stopped:
 
    ```shell
    docker compose -f docker-compose.prod.yml pull
@@ -130,7 +130,7 @@ To move your entries:
 
    (and any `/data/snapshots/vault-<time>.db` or `replaced-<time>` folder from before the update).
 
-To go back to 2.0, move the new vault aside as well, put the old files back, and start 2.0:
+A raw 2.0 SQLite snapshot cannot be opened or imported by 3.0; keep it for recovery with 2.0. Likewise, 2.0 cannot open a 3.0 vault. To go back to 2.0, use the 3.0 admin tool to move the new vault aside, put the old files back, and start 2.0:
 
 ```shell
 docker compose -f docker-compose.prod.yml stop backend
