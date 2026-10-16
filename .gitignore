@@ -76,3 +76,7 @@ node_modules/
 
 # Local SQLite vaults (CIPHERMOTH_DATA_DIR defaults to ./data)
 backend/data/
+
+!desktop/core/core.spec
+desktop/src-tauri/gen/
+desktop/.dev-data/
