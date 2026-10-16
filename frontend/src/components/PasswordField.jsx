@@ -1,3 +1,4 @@
+import { IS_DESKTOP } from "../platform";
 import { useState } from "react";
 import { IconButton, InputAdornment, TextField, Tooltip } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -14,6 +15,7 @@ const PasswordField = ({ show: showProp, onToggleShow, adornment = null, slotPro
       fullWidth
       type={show ? "text" : "password"}
       {...props}
+      autoComplete={IS_DESKTOP ? "off" : props.autoComplete}
       slotProps={{
         ...slotProps,
         htmlInput: {

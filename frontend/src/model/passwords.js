@@ -1,5 +1,7 @@
 import { action, thunk } from "easy-peasy";
 
+import { IS_DESKTOP, nativeBackup, nativeRestore } from "../platform";
+import { getSessionToken } from "../utils";
 import apiClient from "../api/client";
 import { errorDetail, triggerDownload } from "../lib/http";
 
@@ -191,7 +193,7 @@ const Passwords = {
     const path = entryPath(passwordName, `/attachments/${attachmentId}`);
     try {
       const response = await apiClient.get(path, { responseType: "blob", headers });
-      triggerDownload(response.data, filename || "attachment");
+      await triggerDownload(response.data, filename || "attachment");
     } catch (err) {
       throw new Error(await errorDetail(err, "Failed to download attachment."));
     }
@@ -210,6 +212,19 @@ const Passwords = {
 
   importPasswords: thunk(async (actions, { file, masterPassword, onConflict }) => {
     try {
+      if (IS_DESKTOP) {
+        const data = await nativeRestore(
+          getSessionToken(),
+          masterPassword,
+          file.ticket,
+          onConflict
+        ).catch((message) => {
+          throw new Error(String(message));
+        });
+        await actions.get();
+        await actions.getTrash();
+        return data;
+      }
       const formData = new FormData();
       formData.append("file", file);
       formData.append("master_password", masterPassword);
@@ -219,7 +234,7 @@ const Passwords = {
       await actions.getTrash();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Import failed."));
+      throw new Error(await errorDetail(err, IS_DESKTOP ? err.message : "Import failed."));
     }
   }),
 
@@ -232,12 +247,16 @@ const Passwords = {
       await actions.get();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Import failed."));
+      throw new Error(await errorDetail(err, IS_DESKTOP ? err.message : "Import failed."));
     }
   }),
 
   backup: thunk(async (_actions, masterPassword) => {
     try {
+      if (IS_DESKTOP)
+        return await nativeBackup(getSessionToken(), masterPassword).catch((message) => {
+          throw new Error(String(message));
+        });
       const response = await apiClient.post(
         "/passwords/backup",
         { master_password: masterPassword },
@@ -246,7 +265,7 @@ const Passwords = {
       const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
       triggerDownload(response.data, `ciphermoth_backup_${stamp}.cmbackup`);
     } catch (err) {
-      throw new Error(await errorDetail(err, "Backup failed."));
+      throw new Error(await errorDetail(err, IS_DESKTOP ? err.message : "Backup failed."));
     }
   }),
 };

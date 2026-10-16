@@ -1,3 +1,4 @@
+import { IS_DESKTOP, openExternal } from "../../platform";
 import { Box, Chip, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import GppBadIcon from "@mui/icons-material/GppBad";
 import GppGoodIcon from "@mui/icons-material/GppGood";
@@ -55,7 +56,8 @@ const CellActionButton = ({ title, onClick, children }) => (
 
 const openUrl = (url) => {
   const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-  window.open(safe, "_blank", "noopener,noreferrer");
+  if (IS_DESKTOP) openExternal(safe).catch(() => {});
+  else window.open(safe, "_blank", "noopener,noreferrer");
 };
 
 const strengthIconFor = (level) => {

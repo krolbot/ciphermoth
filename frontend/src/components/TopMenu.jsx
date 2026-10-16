@@ -15,6 +15,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import { useStoreActions, useStoreState } from "easy-peasy";
 
+import { IS_DESKTOP } from "../platform";
 import { endSession } from "../api/session";
 import { isAuth } from "../utils";
 import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
@@ -101,7 +102,7 @@ const TopMenu = () => {
                     icon={<UpgradeIcon sx={{ fontSize: 18 }} />}
                     label="Update"
                     size="small"
-                    onClick={() => setUpdateOpen(true)}
+                    onClick={() => setUpdateOpen(!IS_DESKTOP)}
                     sx={{
                       mr: 1,
                       bgcolor: GLOW,

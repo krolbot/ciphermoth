@@ -16,7 +16,8 @@
     "notistack": "^3.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "@tauri-apps/api": "2.10.1"
   },
   "scripts": {
     "dev": "vite",
@@ -26,7 +27,9 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{js,jsx}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx}\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:desktop": "vite build --mode desktop",
+    "build:desktop:qa": "vite build --mode desktop-qa"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

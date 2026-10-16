@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 
+import { IS_DESKTOP, chooseBackup } from "../../platform";
 import PasswordField from "../PasswordField";
 
 const plural = (n) => (n !== 1 ? "s" : "");
@@ -148,6 +149,8 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
       setResult(data);
     } catch (err) {
       setError(err.message);
+      // Native selections are single-use grants; a retry needs a fresh picker.
+      if (IS_DESKTOP && !isCsv) setFile(null);
     } finally {
       setLoading(false);
     }
@@ -179,22 +182,36 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
             </Typography>
 
             <Button
-              component="label"
+              component={IS_DESKTOP && !isCsv ? "button" : "label"}
+              onClick={
+                IS_DESKTOP && !isCsv
+                  ? async () => {
+                      try {
+                        setFile(await chooseBackup());
+                        setError("");
+                      } catch {
+                        setError("Could not open the file picker.");
+                      }
+                    }
+                  : undefined
+              }
               variant="outlined"
               startIcon={<UploadFileIcon />}
               fullWidth
               sx={{ justifyContent: "flex-start", textTransform: "none" }}
             >
               {file ? file.name : isCsv ? "Choose CSV file (.csv)" : "Choose backup file"}
-              <input
-                type="file"
-                hidden
-                accept={isCsv ? ".csv" : ".cmbackup,.zip"}
-                onChange={(e) => {
-                  setFile(e.target.files[0] ?? null);
-                  setError("");
-                }}
-              />
+              {(!IS_DESKTOP || isCsv) && (
+                <input
+                  type="file"
+                  hidden
+                  accept={isCsv ? ".csv" : ".cmbackup,.zip"}
+                  onChange={(e) => {
+                    setFile(e.target.files[0] ?? null);
+                    setError("");
+                  }}
+                />
+              )}
             </Button>
 
             {!isCsv && (

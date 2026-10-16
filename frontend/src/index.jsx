@@ -27,3 +27,5 @@ root.render(
     </SnackbarProvider>
   </StoreProvider>
 );
+
+if (import.meta.env.VITE_DESKTOP_QA === "1") import("./platform/qa");

@@ -1,4 +1,6 @@
 import axios from "axios";
+import { IS_DESKTOP, clearClipboard } from "../platform";
+import { ipcAdapter } from "../platform/axiosAdapter";
 
 import { LOGOUT_NOTICE, clearSession, getSessionToken, isAuth } from "../utils";
 
@@ -6,7 +8,8 @@ export const SESSION_ENDED = "Your vault was locked. Unlock it to continue.";
 export const SESSION_HEADER = "x-ciphermoth-session";
 
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000/api",
+  baseURL: IS_DESKTOP ? "/api" : import.meta.env.VITE_API_URL || "http://localhost:8000/api",
+  ...(IS_DESKTOP ? { adapter: ipcAdapter } : {}),
 });
 
 apiClient.interceptors.request.use((config) => {
@@ -42,6 +45,7 @@ apiClient.interceptors.response.use(
   async (error) => {
     if (isAuth() && (await endsSession(error.response))) {
       clearSession();
+      await clearClipboard();
       sessionStorage.setItem(LOGOUT_NOTICE, SESSION_ENDED);
       window.location.reload();
     }

@@ -1,3 +1,4 @@
+import { IS_DESKTOP, saveFile } from "../platform";
 // Shared helpers for the easy-peasy model thunks. React-free so the HTTP
 // error/download plumbing stays in one auditable place.
 
@@ -36,6 +37,7 @@ export const errorDetail = async (err, fallback) => {
 
 // Save a Blob to disk via a transient object URL and anchor click.
 export const triggerDownload = (blob, filename) => {
+  if (IS_DESKTOP) return saveFile(blob, filename);
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

@@ -1,3 +1,4 @@
+import { IS_DESKTOP, lockNative, clearClipboard } from "../platform";
 import { LOGOUT_NOTICE, clearSession, getSessionToken } from "../utils";
 import apiClient, { SESSION_HEADER } from "./client";
 
@@ -18,7 +19,13 @@ export const readSession = () =>
 export const endSession = async (notice) => {
   const token = getSessionToken();
   clearSession();
+  await clearClipboard();
   if (notice) sessionStorage.setItem(LOGOUT_NOTICE, notice);
+  if (IS_DESKTOP) {
+    await lockNative();
+    window.location.replace("/login");
+    return;
+  }
   if (token) {
     await apiClient
       .post("/master_password/lock", null, {

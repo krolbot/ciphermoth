@@ -18,7 +18,14 @@ const versionFile = {
 };
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  define:
+    mode === "desktop-qa"
+      ? {
+          "import.meta.env.VITE_DESKTOP_QA": JSON.stringify("1"),
+          "import.meta.env.VITE_DESKTOP": JSON.stringify("1"),
+        }
+      : {},
   plugins: [react(), versionFile],
   server: {
     host: true, // listen on 0.0.0.0 so the dev server is reachable from Docker
@@ -30,4 +37,4 @@ export default defineConfig({
   build: {
     outDir: "dist",
   },
-});
+}));

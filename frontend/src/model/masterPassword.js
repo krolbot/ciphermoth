@@ -1,5 +1,6 @@
 import { action, thunk } from "easy-peasy";
 
+import { enterVault } from "../platform";
 import apiClient from "../api/client";
 import { errorDetail } from "../lib/http";
 import { setSessionToken } from "../utils";
@@ -43,7 +44,9 @@ const MasterPassword = {
       const { data } = await apiClient.post("/master_password/unlock", masterPasswordPayload);
       if (data.valid && data.session_token) {
         setSessionToken(data.session_token);
-        window.location.replace("/passwords");
+        actions.setValue("");
+        actions.setConfirm("");
+        enterVault();
       } else {
         actions.setError("Invalid master password.");
       }
@@ -69,7 +72,9 @@ const MasterPassword = {
         return;
       }
       setSessionToken(data.session_token);
-      window.location.replace("/passwords");
+      actions.setValue("");
+      actions.setConfirm("");
+      enterVault();
     } catch (err) {
       actions.setError(await errorDetail(err, "An error occurred."));
     } finally {

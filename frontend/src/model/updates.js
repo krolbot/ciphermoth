@@ -1,5 +1,6 @@
 import { action, thunk } from "easy-peasy";
 
+import { IS_DESKTOP } from "../platform";
 import apiClient from "../api/client";
 import { getUpdateStatus } from "../lib/updateCheck";
 
@@ -34,6 +35,7 @@ const Updates = {
   }),
 
   checkForUpdates: thunk(async (actions) => {
+    if (IS_DESKTOP) return;
     actions.setChecking(true);
     try {
       actions.setStatus(await getUpdateStatus());

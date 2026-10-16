@@ -1,3 +1,4 @@
+import { IS_DESKTOP } from "../platform";
 import { useEffect, useState } from "react";
 import {
   Button,
@@ -151,36 +152,43 @@ const SettingsModal = ({ open, onClose }) => {
             />
           ))}
           <Divider sx={{ my: 0.5 }} />
-          <FormControlLabel
-            sx={{ ml: 0, justifyContent: "space-between" }}
-            labelPlacement="start"
-            control={
-              <Switch
-                checked={form.update_check_enabled}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    update_check_enabled: e.target.checked,
-                  }))
-                }
-              />
-            }
-            label={
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography variant="body2">Check for updates</Typography>
-                <Tooltip
-                  title="Lets your browser ask GitHub whether a newer CipherMoth release exists. Your vault never leaves this machine; turn it off to stay fully third-party-free."
-                  arrow
-                  placement="top"
-                >
-                  <HelpOutlineIcon
-                    fontSize="small"
-                    sx={{ color: "text.disabled", cursor: "help" }}
-                  />
-                </Tooltip>
-              </Stack>
-            }
-          />
+          {!IS_DESKTOP && (
+            <FormControlLabel
+              sx={{ ml: 0, justifyContent: "space-between" }}
+              labelPlacement="start"
+              control={
+                <Switch
+                  checked={form.update_check_enabled}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      update_check_enabled: e.target.checked,
+                    }))
+                  }
+                />
+              }
+              label={
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Typography variant="body2">Check for updates</Typography>
+                  <Tooltip
+                    title="Lets your browser ask GitHub whether a newer CipherMoth release exists. Your vault never leaves this machine; turn it off to stay fully third-party-free."
+                    arrow
+                    placement="top"
+                  >
+                    <HelpOutlineIcon
+                      fontSize="small"
+                      sx={{ color: "text.disabled", cursor: "help" }}
+                    />
+                  </Tooltip>
+                </Stack>
+              }
+            />
+          )}
+          {IS_DESKTOP && (
+            <Typography variant="body2" color="text.secondary">
+              Desktop alpha updates are installed manually. Your vault stays on this computer.
+            </Typography>
+          )}
           {formError && (
             <Typography variant="body2" color="error">
               {formError}

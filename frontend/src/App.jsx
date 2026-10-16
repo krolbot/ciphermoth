@@ -1,8 +1,9 @@
 import { useEffect } from "react";
-import { BrowserRouter as Router, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Box, Container, CssBaseline, GlobalStyles, Toolbar } from "@mui/material";
 import { useStoreActions } from "easy-peasy";
 
+import DesktopGate from "./platform/DesktopGate";
 import ThemeToggle from "./components/ThemeToggle";
 import TopMenu from "./components/TopMenu";
 import { ColorModeProvider } from "./hooks/useColorMode";
@@ -14,6 +15,7 @@ import { GLOW, INFO, PAPER_DARK, TEXT_ON_DARK, WARN, WEAK } from "./lib/brand";
 const SANS = "'Space Grotesk Variable', system-ui, sans-serif";
 
 const AppContent = () => {
+  useLocation();
   useAutoLogout();
 
   const authed = isAuth();
@@ -99,7 +101,9 @@ const App = () => (
     <ColorModeProvider>
       {snackbarStyles}
       {themeTransitionStyles}
-      <AppContent />
+      <DesktopGate>
+        <AppContent />
+      </DesktopGate>
     </ColorModeProvider>
   </Router>
 );
