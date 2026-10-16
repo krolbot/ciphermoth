@@ -169,3 +169,7 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 ## License
 
 MIT: see [LICENSE](./LICENSE).
+
+## Desktop alpha development
+
+A local Tauri desktop alpha now uses the same v3 Python core and encrypted SQLite vault without Docker. See [desktop setup and validation](desktop/README.md). Desktop installers are not publicly distributed yet; the server installation above remains supported.

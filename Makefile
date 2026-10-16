@@ -100,3 +100,26 @@ test-stress:
 check:
 	cd backend && uv run ruff check . ../docker/smoke && uv run ruff format --check . ../docker/smoke && uv run ty check . ../docker/smoke
 	cd frontend && npm run lint && npm run format:check
+
+# Desktop uses a private Python process, never the Docker/server installation.
+.PHONY: desktop-setup desktop-dev desktop-build desktop-test desktop-check
+desktop-setup:
+	python3 desktop/dev_setup.py
+	cd frontend && npm ci
+	cd desktop && npm ci
+
+desktop-dev: desktop-setup
+	cd desktop && npm run tauri dev -- --config tauri.dev.json
+
+desktop-build:
+	python3 desktop/core/build_core.py --python 3.13.15
+	cd frontend && npm ci
+	cd desktop && npm ci && npm run tauri build -- --bundles app
+
+desktop-test:
+	desktop/core/build/venv/bin/python -m pytest desktop/core/tests
+	cd desktop/src-tauri && cargo test
+
+desktop-check:
+	cd desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+	cd backend && uv run ruff check ../desktop --exclude build --exclude dist --exclude target

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add a local Tauri desktop alpha using the real v3 Python core over private binary IPC, native clipboard/locking, and streaming encrypted backups.
+- Preserve injected empty session stores in the application factory so the desktop single-session policy is enforced.
+
 ## [Unreleased]
 
 ## [3.0.0] - 2026-10-16

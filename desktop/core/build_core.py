@@ -61,7 +61,7 @@ def main() -> int:
                 "--python",
                 str(venv_python(venv)),
                 "-r",
-                str(HERE / "requirements-desktop.txt"),
+                str(HERE / "requirements-desktop.lock"),
                 "-r",
                 str(HERE / "requirements-build.txt"),
                 *(["--find-links", str(args.find_links)] if args.find_links else []),
