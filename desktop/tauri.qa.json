@@ -1,0 +1,5 @@
+{
+  "identifier": "com.ciphermoth.desktop.qa",
+  "productName": "CipherMoth QA",
+  "build": {"beforeBuildCommand": "npm --prefix ../frontend run build:desktop:qa"}
+}

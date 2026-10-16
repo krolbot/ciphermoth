@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CipherMoth Alpha",
+  "version": "3.0.0",
+  "identifier": "com.ciphermoth.desktop.alpha",
+  "build": {
+    "frontendDist": "../../frontend/dist",
+    "devUrl": "http://127.0.0.1:3000",
+    "beforeDevCommand": "npm --prefix ../frontend run dev -- --host 127.0.0.1 --mode desktop",
+    "beforeBuildCommand": "npm --prefix ../frontend run build:desktop"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "CipherMoth",
+        "width": 1100,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 560,
+        "center": true,
+        "backgroundColor": "#0b0b0c",
+        "incognito": true,
+        "contentProtected": true,
+        "create": false
+      }
+    ],
+    "security": {
+      "capabilities": [
+        "default"
+      ],
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-ancestors": "'none'"
+      },
+      "freezePrototype": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../core/dist/ciphermoth-core/": "core/"
+    },
+    "macOS": {
+      "hardenedRuntime": true,
+      "signingIdentity": null,
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
