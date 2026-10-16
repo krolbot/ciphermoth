@@ -1117,3 +1117,11 @@ async def test_a_restarted_server_has_no_sessions(tmp_path: Path) -> None:
         text = (tmp_path / log).read_text(errors="replace")
         assert token not in text
         assert fresh not in text
+
+
+def test_app_factory_keeps_an_empty_injected_session_store():
+    from main import get_application
+    from vault_sessions import VaultSessions
+
+    sessions = VaultSessions(idle_timeout_ms=30_000, max_sessions=1)
+    assert get_application(vault_sessions=sessions).state.vault_sessions is sessions

@@ -78,8 +78,10 @@ def get_application(
     settings = get_api_settings()
     server = FastAPI(**settings.fastapi_kwargs, lifespan=lifespan)
     server.state.database = database or Database()
-    server.state.vault_sessions = vault_sessions or VaultSessions(
-        idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"]
+    server.state.vault_sessions = (
+        vault_sessions
+        if vault_sessions is not None
+        else VaultSessions(idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"])
     )
 
     server.state.limiter = limiter
