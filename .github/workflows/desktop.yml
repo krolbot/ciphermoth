@@ -167,7 +167,7 @@ jobs:
           cd desktop && npm run tauri build -- --bundles "${{ matrix.bundles }}" --ci
           cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
           cargo build --release --example verify_update
-          cd ../../..
+          cd "$GITHUB_WORKSPACE"
           python desktop/release/artifacts.py --out desktop-results/packages --version "$(node -p 'require("./desktop/package.json").version')"
 
       - name: Install and test the actual production package
