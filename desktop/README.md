@@ -1,30 +1,30 @@
-# CipherMoth desktop alpha
+# CipherMoth desktop
 
 A Tauri 2 window around the existing React UI and **the production v3 Python vault core**. Normal vault operations run offline. No Docker, terminal, database server, or backend TCP listener is needed to use the packaged app.
 
-This is a local unsigned alpha, not a public installer release. Signing, notarization, production auto-updates, distribution, and an independent human cryptographic audit belong to Phase 6.
+Installers and signed updater artifacts are built on six native GitHub runners. See [installation and updates](../docs/UPDATING.md#desktop-updates) and [release maintenance](RELEASING.md). Apple Developer ID/notarization and Windows Authenticode signing are not used.
 
 ## Launch on macOS
 
-Build with `make desktop-build`, then open `desktop/src-tauri/target/release/bundle/macos/CipherMoth Alpha.app` in Finder. You may copy the complete `.app` to Applications. Do not copy its executable alone. The first screen creates a master password; subsequent launches unlock the persisted vault. Use **Log out**, or **Command/Ctrl+Shift+L**, to lock. Closing the window or quitting terminates the core.
+Build with `make desktop-build`, then open `desktop/src-tauri/target/release/bundle/macos/CipherMoth.app` in Finder. You may copy the complete `.app` to Applications. Do not copy its executable alone. The first screen creates a master password; subsequent launches unlock the persisted vault. Use **Log out**, or **Command/Ctrl+Shift+L**, to lock. Closing the window or quitting terminates the core.
 
-The bundle is unsigned/ad-hoc for local development. It is not notarized, and Gatekeeper can reject a downloaded copy. No hardened-runtime/library-validation bypass entitlement is added. Developer ID signing must cover every Python/native library with the same team before distribution.
+macOS bundles are ad-hoc signed, not notarized, and Gatekeeper can reject an internet download. No library-validation bypass entitlement is added. Tauri updater signatures authorize updates independently of OS publisher signing.
 
 ## Data isolation
 
-Application identity: `com.ciphermoth.desktop.alpha` (distinct from the spike, server, and QA app). Tauri resolves the OS application-local directory:
+Application identity: `com.ciphermoth.desktop` (distinct from Alpha, the spike, server, and QA app). Tauri resolves the OS application-local directory:
 
-- macOS: `~/Library/Application Support/com.ciphermoth.desktop.alpha/data/vault.db`.
+- macOS: `~/Library/Application Support/com.ciphermoth.desktop/data/vault.db`.
 - Windows: the user's Local AppData directory under that identity.
-- Linux: `$XDG_DATA_HOME/com.ciphermoth.desktop.alpha/data/vault.db`, normally `~/.local/share/...`.
+- Linux: `$XDG_DATA_HOME/com.ciphermoth.desktop/data/vault.db`, normally `~/.local/share/...`.
 
 Debug builds use a separate `development/` subdirectory. QA builds require an explicit absolute synthetic-data root and use `com.ciphermoth.desktop.qa`. Release builds ignore environment overrides for the core executable and vault path. Reinstalling the bundle leaves data untouched. Never delete the data directory to fix a startup failure.
 
-The production storage layer creates POSIX directories `0700` and files `0600`, takes the existing single-process vault lock, checks an existing file read-only before opening it, and uses SQLite WAL, FULL synchronous writes, and the production schema/format identity. Unsupported or damaged vaults are refused, not migrated or replaced. Windows uses the current user's application-local directory and inherited OS ACLs; this needs native ACL validation before distribution.
+The production storage layer creates POSIX directories `0700` and files `0600`, takes the existing single-process vault lock, checks an existing file read-only before opening it, and uses SQLite WAL, FULL synchronous writes, and the production schema/format identity. Unsupported or damaged vaults are refused, not migrated or replaced. Windows uses the current user's application-local directory and inherited OS ACLs; the installer does not grant other users access.
 
 ## Development
 
-Prerequisites: uv, Node 22+, Rust 1.99 (rustup), and native Tauri build prerequisites. On macOS, install Xcode Command Line Tools. On Linux, see the package list in `.github/workflows/desktop-alpha.yml`.
+Prerequisites: uv, Node 22+, Rust 1.99 (rustup), and native Tauri build prerequisites. On macOS, install Xcode Command Line Tools. On Linux, see the package list in `.github/workflows/desktop.yml`.
 
 ```sh
 make desktop-setup
@@ -37,7 +37,7 @@ make check
 `desktop-dev` runs Vite and the source Python core from the dedicated venv. Python edits require restarting the app, **not rebuilding PyInstaller**. Frontend edits hot reload. Debug Python and script paths are fixed relative to the checkout; the production binary selects only the bundled executable.
 
 ```sh
-make desktop-build
+TAURI_SIGNING_PRIVATE_KEY=/path/to/owner-only/updater.key make desktop-build
 ```
 
 This freezes Python 3.13.15 as PyInstaller **onedir**, then builds the real app. `requirements-desktop.lock` locks the dedicated runtime without uvicorn, PostgreSQL, CLI or Docker dependencies. `greenlet`, `aiosqlite`, and cryptography are explicit. The frozen runtime reports its actual SQLite version during the ready handshake; the production storage layer rejects an unpatched version. Local macOS builds use SQLite 3.53.1.
@@ -93,7 +93,7 @@ desktop/core/build/venv/bin/python desktop/harness/native.py \
   --root /private/tmp/ciphermoth-native-test-UNIQUE
 ```
 
-Use a new synthetic root. Do not rebuild an app bundle while a test is using it; copying it to a temporary install folder first is preferable. The CI installer adapter does that on macOS. On Linux it installs the `.deb`; Windows installs the NSIS package on its disposable runner. The six-target workflow uploads **test evidence only**, never installer artifacts, and does not publish releases.
+Use a new synthetic root. Do not rebuild an app bundle while a test is using it; copying it to a temporary install folder first is preferable. The CI installer adapter does that on macOS. On Linux it installs the `.deb`; Windows installs the NSIS package on its disposable runner. PR builds use disposable signing keys and retain only evidence. Trusted release builds retain verified production packages; the release workflow publishes them only after all desktop and Docker gates pass.
 
 An optional macOS dialog walkthrough is enabled by building QA with `VITE_DESKTOP_DIALOG_QA=1` and running `native.py --dialogs`. It drives the real Save/Open panels and restores through an opaque grant. It requires macOS Accessibility permission for the automation host; local automation was blocked by that permission. The maintainer completed the equivalent manual Save/Open and backup restoration walkthrough. The standard native suite does not require keystroke automation and verifies a large backup through the same Rust file workflow with a fixed QA destination.
 
@@ -101,4 +101,10 @@ An optional macOS dialog walkthrough is enabled by building QA with `VITE_DESKTO
 
 Ported from `experiment/desktop-feasibility` at `9d3a4ea`: binary framing, ASGI adapter, stdout isolation, supervisor, platform process cleanup, onedir packaging, native CI matrix and harness structure. Synthetic storage/routes and the spike's production self-test mode were removed. The experimental branch/worktree and its evidence remain unchanged.
 
-See [VALIDATION.md](VALIDATION.md) for measured results and remaining review gates.
+See [VALIDATION.md](VALIDATION.md) for measured results and documented acceptance limits.
+
+## Updater boundary
+
+The official Tauri updater runs only in Rust. Renderer capabilities expose `update_check`, `update_install` and `update_cancel`, with no endpoint, key, URL or installer arguments. The compiled configuration fixes the HTTPS GitHub endpoint and public key; there are no general updater plugin permissions. `requireSignedVersion` rejects version substitution, and a verified trusted-comment filename binds the artifact to its native target. Release collection renames artifacts before signing those canonical filenames. The plugin verifies before installation as well as after downloading.
+
+The user confirms installation in the existing Update dialog. Only after verification does Rust invalidate native grants, remove decrypted UI, clear the owned clipboard and stop the core. Windows installs per user; macOS/Linux restart after replacement. Debian users receive manual package instructions. The QA-only HTTPS endpoint and host-controlled test commands are absent from production binaries.

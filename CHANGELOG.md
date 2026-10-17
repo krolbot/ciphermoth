@@ -1,11 +1,24 @@
 # Changelog
 
-## Unreleased
-
-- Add a local Tauri desktop alpha using the real v3 Python core over private binary IPC, native clipboard/locking, and streaming encrypted backups.
-- Preserve injected empty session stores in the application factory so the desktop single-session policy is enforced.
-
 ## [Unreleased]
+
+## [3.1.0] - 2026-10-17
+
+CipherMoth is now a standalone desktop password manager for macOS, Windows and Linux. Your secrets stay in the dark; Docker remains available.
+
+### Added
+
+- Native desktop installers for Apple Silicon/Intel macOS, Windows x64/ARM64 and Linux x64/ARM64, with bundled Python 3.13 and SQLite. No development tools or backend listener.
+- Optional GitHub release checks and user-confirmed Tauri updates, with mandatory signatures binding the release version and native architecture. Downloads can be canceled; verified installs lock the vault and preserve its local data.
+- DMGs, NSIS installers, AppImages, Debian packages, updater signatures, `latest.json`, SHA-256 checksums and source provenance in one release. AppImage supports built-in updates; Debian uses manual package updates.
+- Native clipboard clearing, automatic locking, private binary IPC and complete encrypted backups using the existing vault format. Passwords, notes, attachments, TOTP, generator, folders, history and Trash are shared with the Docker edition.
+
+### Changed
+
+- Production app identity is `com.ciphermoth.desktop`, with a separate vault from Alpha and Docker. Existing vaults are never moved automatically.
+- Updater credentials are restricted to trusted release jobs. Installer signing for Apple/Microsoft verified-publisher status is not provided; OS warnings and managed-device restrictions may apply.
+- Preserve explicitly injected empty session stores, enforcing the desktop single-session policy while retaining the server API.
+- Wait for saved settings before checking for updates, so a disabled preference is respected after unlocking.
 
 ## [3.0.0] - 2026-10-16
 

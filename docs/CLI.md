@@ -1,5 +1,7 @@
 # CipherMoth CLI
 
+The CLI connects to the Docker/server API. Desktop vaults have no HTTP listener; use the native app and its encrypted backup/import UI for them.
+
 Sometimes you just want to grab a password from the terminal without switching windows. That's what the CLI is for. It's a thin client that talks to the same API as the web UI, so everything stays encrypted the same way.
 
 ## Run it

@@ -1,8 +1,27 @@
 # Updating CipherMoth
 
+## Desktop updates
+
+Download from [GitHub Releases](https://github.com/mr-grj/ciphermoth/releases/latest), choosing your CPU architecture. The desktop app includes its own Python runtime. No development tools or account are needed.
+
+- **macOS:** open the DMG, drag CipherMoth to Applications, then launch the copied app. The app is ad-hoc signed for bundle integrity, but has no Apple Developer ID or notarization. Gatekeeper may block an internet download. After trying to open it, use **System Settings → Privacy & Security → Open Anyway** if macOS offers it and you trust the release. Managed Macs may disallow that exception. Do not disable Gatekeeper or remove quarantine globally. [Apple explains these exceptions](https://support.apple.com/en-us/102445).
+- **Windows:** run the NSIS installer for x64 or ARM64. It installs for the current user. There is no Authenticode verified publisher; SmartScreen may warn. Inspect **More info**, confirm the download source, and choose **Run anyway** only if offered and you trust it. Organizational policies, Smart App Control or antivirus may block it; do not disable them to install CipherMoth. [Microsoft explains Smart App Control](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
+- **Linux AppImage:** store the file somewhere writable by your user, make it executable (`chmod +x <file>.AppImage`), and open it. AppImage may require your distribution's FUSE compatibility package. Built-in updates replace this AppImage in place; do not keep it in a system-owned folder.
+- **Debian/Ubuntu `.deb`:** use `sudo apt install ./<file>.deb`. To update, quit CipherMoth and install the newer package the same way. Built-in AppImage installation is disabled for this edition. There is no CipherMoth apt repository.
+
+When **Settings → Check for updates** is on, CipherMoth checks after you unlock. A discreet **Update** chip opens the release version and notes. **Download and install** is your confirmation: the native Tauri 2 updater downloads over HTTPS from GitHub Releases, verifies the embedded trusted key and signed version/platform filename, locks the vault, closes Python, installs and restarts. You can cancel the download before installation starts. Closing the notice installs nothing. Turn checks off in Settings to stop contacting GitHub.
+
+Checks send no vault contents, master password, session token or entry metadata. GitHub receives ordinary connection information, such as your IP address. Offline checks and rejected downloads leave the app usable. OS restrictions can still prevent installation: cryptographic updater authorization is separate from Apple/Microsoft publisher approval. Do not bypass a system policy to make an update work.
+
+Updates replace application files, not the local SQLite vault. Use **Backup** periodically and keep the encrypted `.cmbackup` somewhere separate. If installation fails, relaunch the existing app or reinstall a compatible release from GitHub. Never delete the data folder to fix startup. Unsupported future vault schemas are refused unchanged; downgrades are not offered.
+
+The production identity is `com.ciphermoth.desktop`. It never opens or migrates the old Alpha vault automatically. Export a complete encrypted backup in Alpha and import it into a newly created production vault if you choose to move your data. Docker remains independent. [Desktop data paths](../desktop/README.md#data-isolation) and [maintainer release instructions](../desktop/RELEASING.md) provide technical details.
+
+## Docker edition
+
 A self-hosted CipherMoth keeps the whole vault in one SQLite file, `vault.db`, in the `vault_data` Docker volume. Updating replaces the two containers; the volume stays. Snapshot and file-management commands do not need your master password; exporting or importing a portable backup does.
 
-One-click updates are paused in this release: the previous updater was built around PostgreSQL and was retired with it. The app still tells you when a release is out and shows the commands below.
+Docker updates are manual. The web app checks GitHub in the browser and shows the commands below; the backend never contacts GitHub.
 
 ## Update
 
@@ -14,12 +33,12 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-The first command writes a consistent, integrity-checked copy of the vault into the volume (next section) and prints its name; keep it until you have used the new version for a while. `CIPHERMOTH_VERSION` in `.env` decides which release runs (`latest`, or a pinned version such as `3.0.0`). Everyone is asked to unlock again after the restart, because sessions live in the server's memory.
+The first command writes a consistent, integrity-checked copy of the vault into the volume (next section) and prints its name; keep it until you have used the new version for a while. `CIPHERMOTH_VERSION` in `.env` decides which release runs (`latest`, or a pinned version such as `3.1.0`). Everyone is asked to unlock again after the restart, because sessions live in the server's memory.
 
 To check that the images are CipherMoth's own before you start them, verify their signatures (see [SECURITY.md](../SECURITY.md)):
 
 ```shell
-cosign verify ghcr.io/mr-grj/ciphermoth-backend:3.0.0 \
+cosign verify ghcr.io/mr-grj/ciphermoth-backend:3.1.0 \
   --certificate-identity-regexp '^https://github.com/mr-grj/ciphermoth/\.github/workflows/release\.yml@refs/tags/v.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

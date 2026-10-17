@@ -24,7 +24,7 @@ Things that are out of scope:
 - Vulnerabilities in third-party dependencies that don't directly affect ciphermoth - please report those upstream
 - Self-XSS or anything only exploitable by someone already authenticated with their own master password
 
-## What the server knows
+## What the Python core knows
 
 So you can judge reports (and your own deployment) against what CipherMoth actually does:
 
@@ -57,7 +57,9 @@ Two session details worth knowing: closing a tab without logging out leaves its 
 
 Release images (`ciphermoth-backend`, `ciphermoth-frontend`) are signed with [cosign](https://github.com/sigstore/cosign) - keyless, via GitHub OIDC - so each image's digest is provably built by CipherMoth's own release workflow. Verify them before you start a new version; the command is in [docs/UPDATING.md](docs/UPDATING.md).
 
-The update *check* runs in your browser against GitHub's public release API (it can be turned off in Settings); the server never contacts anything. One-click updates are paused: the earlier updater, which held the Docker socket, was built around PostgreSQL and was retired with it; updaters already installed refuse to install this release.
+Desktop updates use the official Tauri 2 updater, a fixed HTTPS GitHub Releases endpoint and an embedded public verification key. The private key is restricted to trusted release jobs. Artifact signatures bind the version and native platform filename; modified, unsigned, mismatched and older artifacts are refused before installation. The renderer cannot choose a key, endpoint, source URL or installer arguments. The user confirms installation; Rust clears the session and stops the Python core before replacing application files. Linux `.deb` installations use manual package updates. These signatures are separate from OS publisher signing: there is no Apple notarization or Windows Authenticode certificate.
+
+The desktop has no backend network listener. Python owns keys and sessions, communicating over private framed pipes; React holds only an opaque token in memory. Its CSP permits native IPC, not arbitrary network requests. The optional Rust update check sends no vault information. The Docker edition checks GitHub from the browser and updates manually; the old Docker-socket updater is retired. See [update instructions](docs/UPDATING.md).
 
 ## The vault file and its snapshots
 

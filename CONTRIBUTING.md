@@ -2,6 +2,10 @@
 
 This doc is for people who want to **hack on CipherMoth** or **self-host it their own way**, on a real server, behind a proxy, with custom ports. If you just want to run it on your machine, the [README quick start](./README.md#get-started) is all you need; come back here when you want more.
 
+## Desktop development
+
+For the native application, see [desktop/README.md](desktop/README.md). [desktop/RELEASING.md](desktop/RELEASING.md) covers reproducible release builds, updater signing and recovery. The sections below cover the shared core and Docker edition.
+
 ## Development
 
 Clone the repo, then start the dev stack. It builds from your working tree and hot-reloads, and it's a throwaway sandbox with its own vault, completely separate from any real vault.
@@ -89,7 +93,7 @@ The vault is one SQLite file (`vault.db` in `CIPHERMOTH_DATA_DIR`, `/data` in th
 
 How writes stay correct without row locks: a `GET` request runs in a read transaction and sees one consistent snapshot; every other request starts with `BEGIN IMMEDIATE`, so it holds SQLite's single write lock from its first statement (including the session key check) until it commits. Writers are therefore serialized, and a master password change can never interleave with another write. Keep two rules: **a `GET` route must never write**, and anything slow (key derivation) runs before the write lock is taken, as `/unlock`, `/create` and the master password change do. Session tokens are checked in memory before any database access, so a request without a live session never waits for or holds the write lock. A request that cannot get the lock within the busy timeout gets `503` with `"code": "busy"`.
 
-There is no migration framework yet, because there is only one schema. The file records its schema in `PRAGMA user_version` (`storage.SCHEMA_VERSION`, currently 1), and CipherMoth refuses a file with a newer or unknown schema without changing it. The first schema change must add, in the same release: an ordered upgrade step for each version, run in one write transaction after an automatic snapshot (`storage.snapshot`), a raised `SCHEMA_VERSION`, and a test that upgrades a vault written by the previous release.
+There is no migration framework yet, because unsupported older schemas are refused rather than migrated. The file records its schema in `PRAGMA user_version` (`storage.SCHEMA_VERSION`, currently 2), and CipherMoth refuses a file with a newer or unknown schema without changing it. The first schema change must add, in the same release: an ordered upgrade step for each version, run in one write transaction after an automatic snapshot (`storage.snapshot`), a raised `SCHEMA_VERSION`, and a test that upgrades a vault written by the previous release.
 
 ## Configuration
 
@@ -149,6 +153,6 @@ docker compose -f docker-compose.prod.yml pull && \
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-`CIPHERMOTH_VERSION` in your `.env` (or `latest`) decides which release runs. One-click updates are paused in this release: the previous updater was built around PostgreSQL and was retired with it.
+`CIPHERMOTH_VERSION` in your `.env` (or `latest`) decides which release runs. Docker updates remain manual. The desktop edition uses the signed Tauri update flow described in [docs/UPDATING.md](docs/UPDATING.md#desktop-updates).
 
 Details, snapshots, restores and moving from a PostgreSQL release: [docs/UPDATING.md](docs/UPDATING.md).

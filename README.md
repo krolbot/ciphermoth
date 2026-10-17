@@ -4,14 +4,14 @@
 
 **Your secrets stay in the dark.**
 
-A simple, self-hosted password manager with **no accounts, no cloud, and no witnesses.**
+A local-first desktop password manager with **no accounts, no cloud, and no witnesses.**
 
 [![CI](https://github.com/mr-grj/ciphermoth/actions/workflows/ci.yml/badge.svg)](https://github.com/mr-grj/ciphermoth/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/mr-grj/ciphermoth?color=000000&label=release)](https://github.com/mr-grj/ciphermoth/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-000000.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13-000000.svg)](https://www.python.org/)
 [![SQLite](https://img.shields.io/badge/sqlite-3.53-000000.svg)](https://www.sqlite.org/)
-[![Self-hosted](https://img.shields.io/badge/self--hosted-7dd3c0.svg?labelColor=000000)](#get-started)
+[![Desktop](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-7dd3c0.svg?labelColor=000000)](#get-started)
 
 </div>
 
@@ -23,11 +23,10 @@ I built this for myself because I was tired of every password manager wanting my
 browser extension with access to everything, and ideally my soul too. Most of the big ones lean on a hosted account,
 a sync layer, or a monthly bill by default.
 
-I wanted something that lives on my own machine, has no telemetry, talks to no third party, and doesn't wake up one day
+I wanted something that lives on my own machine, has no telemetry, and doesn't wake up one day
 to announce it's been acquired and migrating to some new platform. No Google. No OAuth. No analytics pinging home. Nothing.
 
-So there's **CipherMoth**. It lives on your hardware, speaks to nobody, and keeps the passwords encrypted with a key only
-you know. One master password unlocks everything. If someone gets the vault file, they get encrypted blobs, not your passwords.
+So there's **CipherMoth**. It lives on your hardware and keeps your secrets in an encrypted local vault. One master password unlocks everything. The optional update check asks GitHub about releases; your vault stays put. If someone gets the vault file, they get encrypted blobs, not your passwords.
 
 ## Screenshots
 
@@ -40,26 +39,30 @@ you know. One master password unlocks everything. If someone gets the vault file
 
 ## Get started
 
-CipherMoth runs on your own machine with [Docker](https://docs.docker.com/get-docker/): two containers and one volume, no
-database server, nothing to configure. One command pulls the release images (signed with cosign; [docs/UPDATING.md](./docs/UPDATING.md) shows how to verify them) and starts everything:
+**[Download the latest release](https://github.com/mr-grj/ciphermoth/releases/latest)**. No Python, Docker, or developer tools needed.
+
+| Your machine | Download |
+|---|---|
+| macOS, Apple Silicon (M-series) | `darwin-aarch64.dmg` |
+| macOS, Intel | `darwin-x86_64.dmg` |
+| Windows, Intel/AMD | `windows-x86_64.exe` |
+| Windows, ARM64 | `windows-aarch64.exe` |
+| Linux, Intel/AMD | `linux-x86_64.AppImage` or `.deb` |
+| Linux, ARM64 | `linux-aarch64.AppImage` or `.deb` |
+
+Open the DMG and drag **CipherMoth** to Applications, run the Windows installer, or make the Linux AppImage executable and open it. Debian/Ubuntu users can install the `.deb` with `sudo apt install ./<downloaded-file>.deb`.
+
+Open CipherMoth, choose a strong master password, and add your first password. That's it. Your vault lives in your user data folder and survives app updates. The old Alpha app and Docker edition have separate vaults; nothing is moved automatically.
+
+These are free, unsigned-publisher downloads: macOS may require **System Settings → Privacy & Security → Open Anyway**, and Windows may show a SmartScreen warning. Only approve a download you obtained from this project's release page. Organizational policies may prevent installation. [Installation details and updates](docs/UPDATING.md#desktop-updates) explain the limits; never disable OS protections globally.
+
+**Prefer Docker?** The self-hosted edition is still here, with the same encrypted vault core:
 
 ```shell
 curl -fsSL https://raw.githubusercontent.com/mr-grj/ciphermoth/master/install.sh | sh
 ```
 
-Open **[http://localhost:3000](http://localhost:3000)**, create your master password, and you're in. The whole vault is
-one SQLite file in a persistent Docker volume, so it survives restarts and updates, and a consistent snapshot of it is
-one command away (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md)).
-
-> Coming from CipherMoth 2.0? **3.0 requires a new vault** and refuses the old file unchanged. Export active entries
-> in 2.0 first, preserve the old vault explicitly, then create a new vault and import the ZIP. Follow the
-> [complete upgrade procedure](./docs/UPDATING.md#moving-from-ciphermoth-20-vault-format-1).
->
-> Coming from CipherMoth 1.x (PostgreSQL)? This release needs a fresh install with a new vault; it never reads or deletes
-> your old database. The steps, and how to bring your entries along, are in [docs/UPDATING.md](./docs/UPDATING.md#moving-from-a-postgresql-release-v160-and-older).
-
-Rather read the script before piping it to a shell, set it up by hand, run it on a real server, or tweak the config?
-That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
+Then open **[http://localhost:3000](http://localhost:3000)**. [CONTRIBUTING.md](CONTRIBUTING.md) covers manual setup and servers. Coming from 2.0 or PostgreSQL? Read the [upgrade procedure](docs/UPDATING.md) first; those vaults are never converted automatically.
 
 > ⚠️ **There is no password recovery.** Losing your master password means losing your vault, permanently. No reset link,
 > no support email, no backdoor. That's the trade for nobody-but-you holding the key. **Write it down somewhere safe**,
@@ -80,15 +83,15 @@ That's all in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 - cryptographically secure password generator (not the `Math.random()` kind) with a strength indicator on every entry
 - import from Chrome, Bitwarden, KeePass, Proton Pass, and friends via CSV
 - complete encrypted backups (`.cmbackup`): every entry, the trash, password history, attachments and settings, restorable into this vault or a new one
-- a CLI (`ciphermoth`) for the terminal, and auto-lock plus clipboard-clearing (for the small things that matter ^^)
-- notices new releases (from your browser, never the server) and shows the commands to update, with a consistent, integrity-checked snapshot of the vault first; release images are signed (Sigstore / cosign)
+- a CLI (`ciphermoth`) for the self-hosted edition, and native desktop auto-lock plus clipboard-clearing (for the small things that matter ^^)
+- optional desktop update checks through GitHub Releases: you choose when to install, Tauri verifies the signature, and your local vault stays in place. No account or telemetry. AppImage supports built-in updates; Debian uses package updates. Docker images remain signed with cosign
 
 ## Who it's for (and who it isn't)
 
 CipherMoth is probably a good fit if you:
 
-- want a self-hosted password manager with no accounts, no telemetry, and no third parties
-- are comfortable running Docker on a machine you control
+- want a password manager on your own computer, with no accounts or telemetry
+- want it to work offline, with optional updates and backups you control
 - like small, auditable software and are happy owning your own backups
 
 It's probably not for you (yet) if you need browser autofill, a mobile app, family or team sharing, managed cloud sync,
@@ -99,15 +102,14 @@ this is trying to be.
 
 Straight up, because this is a password manager and you deserve it: **CipherMoth has not been independently audited.**
 It's a personal project I use myself and built carefully, with the crypto kept small and readable on purpose, but it has
-not been through a formal third-party security review. It's designed for self-hosted personal use on hardware you trust,
+not been through a formal third-party security review. It's designed for personal use on hardware you trust,
 not as a public, multi-tenant service holding other people's secrets. Weigh that accordingly.
 
 How it works (the full specification is [docs/VAULT_FORMAT.md](./docs/VAULT_FORMAT.md)):
 
 - each vault has a random 256-bit **vault key**. It is stored only wrapped (AES-256-GCM) under a key derived from your
-  master password with **Argon2id** (OWASP 2024 interactive profile, a random salt per vault). There is no separate
-  password hash: a wrong master password simply cannot unwrap the key, and guessing costs one Argon2id run per try.
-  New vaults require a reasonably strong master password (12+ characters, mixed types), enforced on the server;
+  master password with **Argon2id** (OWASP 2024 interactive profile, a random salt per vault). A password commitment derived through the same Argon2id work rejects wrong passwords without a cheaper guessing path; a wrong password cannot unwrap the key.
+  New vaults require a reasonably strong master password (12+ characters, mixed types), enforced by the Python core;
 - **everything you put in an entry is encrypted** with **AES-256-GCM**: its name, username, password or note, website,
   2FA secret, description, tags, folder, custom fields, password history, favorite flag and type, and each attachment's
   name, type and bytes. Every encrypted value is bound to its own record, so it cannot be swapped into another entry
@@ -118,21 +120,15 @@ How it works (the full specification is [docs/VAULT_FORMAT.md](./docs/VAULT_FORM
   its trashed copies) and your timeout settings. This is encryption of each entry, not of the whole file;
 - changing the master password creates a new vault key and re-encrypts everything, so the old password and the old key
   open nothing in the vault afterwards (older snapshots and backups keep the password they were made with);
-- when you unlock, the server unwraps the key and keeps it in memory for a **session**; your browser and the CLI only
-  get a random session token (the browser keeps it in `sessionStorage` for that tab), never the key, and no route
-  hands the key out or accepts it back. The server ends the session after the inactivity timeout from Settings, when
-  you log out, when the master password changes, and when it restarts (closing a tab without logging out leaves its
-  session until the timeout), and never stores or logs the key or the token. While you're using the vault, the
-  server process does handle the key and your passwords in plaintext: run it on a machine you trust;
-- a strict Content-Security-Policy restricts the web UI to connecting to its own API (and GitHub's release address
-  for the update check);
+- Python owns the keys and gives React only an **opaque session token**. Desktop sessions stay in memory, and the bundled Python core talks to Rust through private binary pipes: no backend TCP listener. Locking clears the owned clipboard and stops the process holding the keys. The Docker edition keeps keys in its server process and the browser's session token in `sessionStorage`;
+- a strict Content-Security-Policy restricts the UI. Desktop release checks run in Rust against the fixed GitHub release source; no vault contents, passwords, session tokens or entry metadata are sent;
 - **backups** (`.cmbackup`) are complete and authenticated: every entry including the trash and history, attachments
   byte for byte, and your settings, encrypted with AES-256-GCM under Argon2id with the backup's own random salt and
   your master password. A wrong password, a damaged or cut-off file changes nothing on restore. A backup is the
   portable copy; a **snapshot** (`ciphermoth-admin snapshot`, see [docs/UPDATING.md](./docs/UPDATING.md#snapshots))
   is a raw local copy of the vault file for recovering this installation. Check that a browser download actually
   saved the backup file; the app cannot verify browser saving and does not label entries as safely backed up;
-- the UI and API listen on `127.0.0.1` by default; exposing them to other machines is an explicit setting;
+- the Docker UI and API listen on `127.0.0.1` by default; exposing them to other machines is an explicit setting;
 - the password generator uses `crypto.getRandomValues` with rejection sampling, no `Math.random()`, no shortcuts;
 
 **It protects against** someone who steals the vault file, a snapshot, a backup or the disk (they get ciphertext and
@@ -156,12 +152,14 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 | Database | SQLite 3.53 (one file, WAL, full sync) |
 | Frontend | React 19, Vite, MUI v9, easy-peasy |
 | Package manager | uv (backend), npm (frontend) |
-| Infrastructure | Docker, Docker Compose v2 |
+| Desktop | Tauri 2, Rust, PyInstaller onedir |
+| Infrastructure | Docker, Docker Compose v2, GitHub Actions |
 
 ## Docs
 
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** - hacking on CipherMoth, self-hosting on a server, configuration, and updates
-- **[docs/UPDATING.md](./docs/UPDATING.md)** - updating, snapshots, restoring a snapshot, and moving from a PostgreSQL install
+- **[docs/UPDATING.md](./docs/UPDATING.md)** - desktop installation and updates, Docker snapshots and older vaults
+- **[desktop/README.md](desktop/README.md)** - native builds, data paths and desktop internals
 - **[docs/CLI.md](./docs/CLI.md)** - the `ciphermoth` command-line reference. A plain Docker install already has it: `install.sh` leaves a `cip` script in your CipherMoth folder, so `./cip password list` just works (no Python, no clone)
 - **[SECURITY.md](./SECURITY.md)** - reporting a vulnerability
 - Logo, wordmark, and favicon live in [`docs/brand/`](./docs/brand)
@@ -169,7 +167,3 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 ## License
 
 MIT: see [LICENSE](./LICENSE).
-
-## Desktop alpha development
-
-A local Tauri desktop alpha now uses the same v3 Python core and encrypted SQLite vault without Docker. See [desktop setup and validation](desktop/README.md). Desktop installers are not publicly distributed yet; the server installation above remains supported.

@@ -1,4 +1,22 @@
-# Desktop alpha validation — 2026-10-17
+# Desktop release validation
+
+## v3.1.0 acceptance
+
+PR #58 was marked ready and merged by fast-forward to `a3cf4a33cd37424dbc82274a3e8b0af7fe3f2485`, preserving the implementation commits. The sole maintainer used the repository's administrator bypass for its review requirement; no review was fabricated. Standard CI on merged master passed, including both architectures of the existing Docker/Compose edition ([run 39025185013](https://github.com/mr-grj/ciphermoth/actions/runs/39025185013)).
+
+The release uses production identity `com.ciphermoth.desktop`, separate from Alpha, and the committed updater public key. The [Desktop workflow](../.github/workflows/desktop.yml) is the six-target acceptance gate; the [Release workflow](../.github/workflows/release.yml) cannot publish until every native job and the published-image smoke checks pass. The exact release commit and build run are recorded in the downloadable per-target provenance; CI retains selected test results rather than synthetic vaults or QA packages.
+
+Local Apple Silicon checks during release implementation passed 783 backend tests (2 deselected), 142 frontend tests, 12 frontend-container configuration tests, eight Rust tests, formatting and Clippy. The real production DMG passed sealed ad-hoc bundle integrity, native architecture, name/version/identity, absence of QA hooks, 27 frozen cryptographic vectors and all 30 installed-core tests. Those core tests include damaged/future-schema vault refusal without modification.
+
+The local final native workflow also passed, including a 26,217,209-byte backup restored byte-for-byte, clipboard/locking/password rotation, crash recovery, reopen persistence and orphan checks. Installed macOS ARM64 updater acceptance passed all checks below: 3.0.98 updated to 3.0.99 while unlocked, restarted and unlocked the same vault, with an unchanged content/attachment fingerprint and working old/new backups. Evidence is outside Git at `/private/tmp/ciphermoth-release-native-final/run/results.json`, `/private/tmp/ciphermoth-release-production-macos/results.json` and `/private/tmp/ciphermoth-release-update-macos-7/results.json`. A local `spctl --assess` rejected the ad-hoc production bundle; this is not an Apple-notarized application.
+
+Each native job separately exercises the complete application workflow, including the existing backup exceeding 24 MiB, and installs disposable versions 3.0.98 and 3.0.99 through the real Tauri updater. The update gate checks persistence, original-password unlock, notes/history/Trash/settings/attachment fingerprints, old/new encrypted backups, process cleanup, no-update detection, malformed/missing signatures, altered bytes, signed wrong version/platform, invalid manifests, downgrade, interruption, cancellation, unreachable source and installer failure. The actual production packages are tested before QA builds and are never replaced with those fixtures.
+
+The test endpoint uses verified local HTTPS with a test CA available only in QA builds. macOS bundles are ad-hoc signed; Windows installers have no Authenticode publisher identity. CI tests native installation mechanics, not internet reputation dialogs or organization-specific policies. Linux automatic installation is exercised with AppImage; Debian installations explicitly use manual/package-manager updates. See [installation limitations](../docs/UPDATING.md#desktop-updates) and the [maintainer release guide](RELEASING.md).
+
+## Historical desktop alpha validation — 2026-10-17
+
+The remainder records validation before PR #58 was merged. Historical Alpha paths and limitations here are not production instructions.
 
 The macOS Apple Silicon alpha has been copied to the user's Applications folder and tested independently of the build tree. The maintainer confirmed physical screen-lock, sleep/wake and native backup save/import behavior using synthetic data. [Draft PR #58](https://github.com/mr-grj/ciphermoth/pull/58) runs the real Phase 5 implementation on six native targets. Nothing has been merged or released, and the workflow uploads evidence rather than installers. This remains an unsigned development alpha, unsuitable for important real passwords.
 
@@ -123,4 +141,4 @@ The final shell/frontend exclude QA commands, notification injection, test canar
 
 Phase 5 implementation, local validation and the six-target native matrix are complete for a development alpha. Physical Windows WTS/power and Linux desktop sleep/lock delivery, Windows inherited ACL behavior, macOS user switching, exact 1 GiB and near-limit GUI backup behavior and unsupported filesystems remain explicit acceptance limits. The macOS screen-lock/sleep and backup-picker manual checks are complete; they do not establish another platform's behavior.
 
-Before Phase 6 distribution: Developer ID signing/notarization of every bundled native library, Windows signing/SmartScreen work, a distribution/update design, external human cryptographic audit, and platform acceptance testing. Clipboard history hints can be ignored, Linux clipboard ownership checks are content-based, and screen-capture exclusion has platform limitations. No claim of protection from OS compromise or same-user memory inspection is made.
+The maintainer subsequently chose free distribution without Apple Developer ID/notarization, Windows Authenticode certificates or an external-audit publication requirement. Tauri updater signing and actual native update acceptance remain mandatory for v3.1.0. Clipboard history hints can be ignored, Linux clipboard ownership checks are content-based, and screen-capture exclusion has platform limitations. No claim of protection from OS compromise or same-user memory inspection is made.
