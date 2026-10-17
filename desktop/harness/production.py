@@ -143,6 +143,14 @@ def main():
         "signature_scope": "macOS ad-hoc bundle integrity; Tauri updater authorization checked separately",
     }
     (out / "results.json").write_text(json.dumps(result, indent=2) + "\n")
+    if sys.platform.startswith("linux"):
+        # Production and the separately named QA .deb contain the same native
+        # executable path. Remove only the package installed by this job before
+        # the next QA install, on this disposable CI runner.
+        package_name = subprocess.check_output(
+            ["dpkg-deb", "-f", str(package), "Package"], text=True
+        ).strip()
+        subprocess.run(["sudo", "apt-get", "remove", "-y", package_name], check=True)
     print(json.dumps(result))
 
 
