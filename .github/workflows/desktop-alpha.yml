@@ -133,8 +133,10 @@ jobs:
           uv run --no-project --python "$PYTHON_VERSION" desktop/core/build_core.py --python "$PYTHON_VERSION" --report desktop-results/core-build.json
           if [ "$RUNNER_OS" = "Windows" ]; then py=desktop/core/build/venv/Scripts/python.exe; core=desktop/core/dist/ciphermoth-core/ciphermoth-core.exe; else py=desktop/core/build/venv/bin/python; core=desktop/core/dist/ciphermoth-core/ciphermoth-core; fi
           uv pip install --python "$py" -r desktop/core/requirements-test.txt
-          "$core" --check-vectors testdata/vectors > desktop-results/vectors.json
-          CORE_BIN="$PWD/$core" "$py" -m pytest -vv desktop/core/tests --junitxml=desktop-results/core-tests.xml
+          echo "Verify frozen vectors (120-second limit)"
+          "$py" -c 'import subprocess,sys; subprocess.run([sys.argv[1], "--check-vectors", "testdata/vectors"], stdout=open("desktop-results/vectors.json", "wb"), check=True, timeout=120)' "$core"
+          echo "Verify framed production core"
+          CORE_BIN="$PWD/$core" "$py" -m pytest -vv desktop/core/tests --basetemp=desktop-results/core-test-data --junitxml=desktop-results/core-tests.xml
 
       - name: Build production application
         run: |
@@ -160,6 +162,7 @@ jobs:
             desktop-results/core-build.json
             desktop-results/vectors.json
             desktop-results/core-tests.xml
+            desktop-results/core-test-data/**/core.log
             desktop-results/runner.txt
             desktop-results/source-builds.txt
             desktop-results/native/results.json

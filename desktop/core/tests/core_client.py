@@ -112,9 +112,13 @@ class Core:
         self.ready: Frame | None = None
         self.ready_after_s: float | None = None
         if wait_ready:
-            self.ready = self.next_frame(timeout=60)
-            self.ready_after_s = time.perf_counter() - self.spawned_at
-            assert self.ready is not None and self.ready.kind == READY, self.ready
+            try:
+                self.ready = self.next_frame(timeout=60)
+                self.ready_after_s = time.perf_counter() - self.spawned_at
+                assert self.ready is not None and self.ready.kind == READY, self.ready
+            except BaseException:
+                self.kill()
+                raise
 
     def _read(self) -> None:
         stream = self.proc.stdout
@@ -136,10 +140,27 @@ class Core:
         return self.frames.get(timeout=timeout)
 
     def send(self, data: bytes) -> None:
-        with self.write_lock:
-            assert self.proc.stdin is not None
-            self.proc.stdin.write(data)
-            self.proc.stdin.flush()
+        result: queue.Queue[BaseException | None] = queue.Queue()
+
+        def write():
+            try:
+                with self.write_lock:
+                    assert self.proc.stdin is not None
+                    self.proc.stdin.write(data)
+                    self.proc.stdin.flush()
+            except BaseException as exc:
+                result.put(exc)
+            else:
+                result.put(None)
+
+        threading.Thread(target=write, daemon=True).start()
+        try:
+            error = result.get(timeout=30)
+        except queue.Empty:
+            self.kill()
+            raise TimeoutError("core stopped consuming framed input") from None
+        if error is not None:
+            raise error
 
     def submit(
         self,

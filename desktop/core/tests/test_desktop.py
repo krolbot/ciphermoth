@@ -293,6 +293,7 @@ def test_malformed_frames(core, header):
         (REQUEST, b"x" * (24 * 1024 * 1024 + 1), b"{}"),
         (REQUEST, b"", b"x" * 65537),
     ],
+    ids=["unknown-kind", "oversized-body", "oversized-header"],
 )
 def test_oversized_and_unknown_frames(core, kind, body, header):
     core.send(frame(kind, 100, header, body))
