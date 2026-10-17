@@ -14,6 +14,8 @@ import { useStoreState } from "easy-peasy";
 
 import { GLOW } from "../lib/brand";
 import { MANUAL_UPDATE_COMMAND } from "../lib/updateCommands";
+import { IS_DESKTOP } from "../platform";
+import DesktopUpdateDialog from "./DesktopUpdateDialog";
 
 const stripV = (v) => String(v ?? "").replace(/^v/, "");
 
@@ -78,4 +80,4 @@ const UpdateDialog = ({ open, onClose }) => {
   );
 };
 
-export default UpdateDialog;
+export default IS_DESKTOP ? DesktopUpdateDialog : UpdateDialog;

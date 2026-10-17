@@ -81,6 +81,7 @@ export async function workflows(checks) {
     password: "Desktop-GUI-Canary-2026!",
   });
   ensure(backup.bytes > 24 * 1024 * 1024 && backup.result.saved, "large native export incomplete");
+  await invoke("qa_report", { result: { stage: "backup_exported" } });
   await api.delete(path);
   await api.delete(path + "/purge");
   const restored = await invoke("qa_backup", {
@@ -89,9 +90,11 @@ export async function workflows(checks) {
     password: "Desktop-GUI-Canary-2026!",
   });
   ensure(restored.result.attachments === 5, "large native restore incomplete");
+  await invoke("qa_report", { result: { stage: "backup_restored" } });
   const attachments = (await api.get(path + "/attachments")).data;
   ensure(attachments.length === 5, "restored attachment count");
   for (const attachment of attachments) {
+    await invoke("qa_report", { result: { stage: "verify_attachment", id: attachment.id } });
     const downloaded = (
       await api.get(path + `/attachments/${attachment.id}`, { responseType: "arraybuffer" })
     ).data;

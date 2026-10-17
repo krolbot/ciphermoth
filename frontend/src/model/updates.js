@@ -1,5 +1,6 @@
 import { action, thunk } from "easy-peasy";
 
+import { invoke } from "@tauri-apps/api/core";
 import { IS_DESKTOP } from "../platform";
 import apiClient from "../api/client";
 import { getUpdateStatus } from "../lib/updateCheck";
@@ -10,9 +11,13 @@ const Updates = {
   releaseUrl: null,
   updateAvailable: false,
   checking: false,
+  notes: null,
+  canInstall: false,
 
   setStatus: action((state, status) => {
     if (!status) return;
+    state.notes = status.notes;
+    state.canInstall = status.canInstall ?? false;
     state.current = status.current;
     state.latest = status.latest;
     state.releaseUrl = status.releaseUrl;
@@ -35,10 +40,11 @@ const Updates = {
   }),
 
   checkForUpdates: thunk(async (actions) => {
-    if (IS_DESKTOP) return;
     actions.setChecking(true);
     try {
-      actions.setStatus(await getUpdateStatus());
+      actions.setStatus(IS_DESKTOP ? await invoke("update_check") : await getUpdateStatus());
+    } catch {
+      // Offline GitHub must never interfere with the vault.
     } finally {
       actions.setChecking(false);
     }

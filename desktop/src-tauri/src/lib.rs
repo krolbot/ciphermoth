@@ -12,6 +12,7 @@ mod protocol;
 #[cfg(feature = "gui-test")]
 mod qa;
 mod sidecar;
+mod updates;
 
 use sidecar::{CoreConfig, Supervisor};
 use std::sync::Arc;
@@ -97,8 +98,12 @@ fn core_config(app: &tauri::AppHandle) -> Result<CoreConfig, Box<dyn std::error:
 }
 
 pub fn run() {
+    #[cfg(feature = "gui-test")]
+    qa::restore_launch_environment();
     let launched = Instant::now();
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::Updates::default());
     #[cfg(not(feature = "gui-test"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         commands::core_request,
@@ -112,7 +117,10 @@ pub fn run() {
         native::backup_export,
         native::backup_import,
         native::save_file,
-        native::open_external
+        native::open_external,
+        updates::update_check,
+        updates::update_install,
+        updates::update_cancel
     ]);
     #[cfg(feature = "gui-test")]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -128,15 +136,19 @@ pub fn run() {
         native::backup_import,
         native::save_file,
         native::open_external,
+        updates::update_check,
+        updates::update_install,
+        updates::update_cancel,
         qa::qa_report,
         qa::qa_backup,
-        qa::qa_lock
+        qa::qa_lock,
+        qa::qa_update_step
     ]);
     let app = builder
         .setup(move |app| {
             #[cfg(feature = "gui-test")]
             app.add_capability(
-                r#"{"identifier":"qa","windows":["main"],"permissions":["allow-qa-report","allow-qa-lock","allow-qa-backup"]}"#,
+                r#"{"identifier":"qa","windows":["main"],"permissions":["allow-qa-report","allow-qa-lock","allow-qa-backup","allow-qa-update-step"]}"#,
             )?;
             let handle = app.handle().clone();
             let emitter = handle.clone();

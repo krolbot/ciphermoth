@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CipherMoth Alpha",
-  "version": "3.0.0",
-  "identifier": "com.ciphermoth.desktop.alpha",
+  "productName": "CipherMoth",
+  "version": "3.1.0",
+  "identifier": "com.ciphermoth.desktop",
   "build": {
     "frontendDist": "../../frontend/dist",
     "devUrl": "http://127.0.0.1:3000",
@@ -60,7 +60,7 @@
     },
     "macOS": {
       "hardenedRuntime": true,
-      "signingIdentity": null,
+      "signingIdentity": "-",
       "minimumSystemVersion": "11.0"
     },
     "linux": {
@@ -71,6 +71,19 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFCRjg0QTc4NzBBMzYyMkMKUldRc1lxTndlRXI0RzQxeUt5N0l2TUVqRkNlbGRCUkdHTDRXUER4ZEgrdDJvQVpsTTd6ZDQrNWEK",
+      "endpoints": [
+        "https://github.com/mr-grj/ciphermoth/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

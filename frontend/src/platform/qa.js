@@ -113,7 +113,13 @@ try {
     sessionStorage.setItem("qa-files", "done");
     checks.push("native backup save/open dialogs and restore");
   }
-  const denied = ["plugin:shell|execute", "plugin:fs|read_file", "plugin:window|close"];
+  const denied = [
+    "plugin:shell|execute",
+    "plugin:fs|read_file",
+    "plugin:window|close",
+    "plugin:updater|check",
+    "plugin:updater|download_and_install",
+  ];
   for (const command of denied) {
     let refused = false;
     try {

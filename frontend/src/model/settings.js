@@ -14,11 +14,13 @@ const DEFAULTS = {
 
 const Settings = {
   loading: false,
+  loaded: false,
   error: null,
   settings: DEFAULTS,
 
   setSettings: action((state, settings) => {
     state.settings = settings;
+    state.loaded = true;
   }),
   setLoading: action((state, loading) => {
     state.loading = loading;

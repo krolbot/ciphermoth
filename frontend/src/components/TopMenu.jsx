@@ -15,7 +15,6 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import { useStoreActions, useStoreState } from "easy-peasy";
 
-import { IS_DESKTOP } from "../platform";
 import { endSession } from "../api/session";
 import { isAuth } from "../utils";
 import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
@@ -34,6 +33,7 @@ const TopMenu = () => {
   const updateCheckEnabled = useStoreState(
     (s) => s.ciphermothModels.settings.settings.update_check_enabled
   );
+  const settingsLoaded = useStoreState((s) => s.ciphermothModels.settings.loaded);
   const updateAvailable = useStoreState((s) => s.ciphermothModels.updates.updateAvailable);
   const version = useStoreState((s) => s.ciphermothModels.updates.current);
   const checkForUpdates = useStoreActions((a) => a.ciphermothModels.updates.checkForUpdates);
@@ -44,8 +44,8 @@ const TopMenu = () => {
   }, [userIsAuth, fetchVersion]);
 
   useEffect(() => {
-    if (userIsAuth && updateCheckEnabled) checkForUpdates();
-  }, [userIsAuth, updateCheckEnabled, checkForUpdates]);
+    if (userIsAuth && settingsLoaded && updateCheckEnabled) checkForUpdates();
+  }, [userIsAuth, settingsLoaded, updateCheckEnabled, checkForUpdates]);
 
   const handleLogout = () => endSession();
 
@@ -102,7 +102,7 @@ const TopMenu = () => {
                     icon={<UpgradeIcon sx={{ fontSize: 18 }} />}
                     label="Update"
                     size="small"
-                    onClick={() => setUpdateOpen(!IS_DESKTOP)}
+                    onClick={() => setUpdateOpen(true)}
                     sx={{
                       mr: 1,
                       bgcolor: GLOW,

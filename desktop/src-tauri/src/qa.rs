@@ -1,4 +1,91 @@
 //! Compiled only into the separately identified native QA artifact.
+pub fn restore_launch_environment() {
+    // LaunchServices restarts preserve argv, not the test host's environment.
+    // These flags exist only in isolated QA binaries, never production.
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        let name = match arg.as_str() {
+            "--qa-root" => "CIPHERMOTH_QA_ROOT",
+            "--qa-update-endpoint" => "CIPHERMOTH_QA_UPDATE_ENDPOINT",
+            "--qa-update-ca" => "CIPHERMOTH_QA_UPDATE_CA",
+            _ => continue,
+        };
+        if let Some(value) = args.next() {
+            std::env::set_var(name, value);
+        }
+    }
+}
+
+pub fn update_builder(
+    builder: tauri_plugin_updater::UpdaterBuilder,
+) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
+    let Ok(endpoint) = std::env::var("CIPHERMOTH_QA_UPDATE_ENDPOINT") else {
+        return Ok(builder);
+    };
+    let url = url::Url::parse(&endpoint).map_err(|_| "Invalid QA endpoint")?;
+    if url.scheme() != "https" || url.host_str() != Some("localhost") {
+        return Err("QA requires local HTTPS".into());
+    }
+    let pem = std::fs::read(std::env::var("CIPHERMOTH_QA_UPDATE_CA").map_err(|_| "Missing QA CA")?)
+        .map_err(|_| "Missing QA CA")?;
+    let cert = reqwest::Certificate::from_pem(&pem).map_err(|_| "Invalid QA CA")?;
+    builder
+        .endpoints(vec![url])
+        .map(|b| {
+            b.configure_client(move |c| {
+                c.add_root_certificate(cert.clone())
+                    .https_only(true)
+                    .timeout(std::time::Duration::from_secs(30))
+            })
+        })
+        .map_err(|_| "Invalid QA endpoint".into())
+}
+
+pub fn update_download(
+    update: &tauri_plugin_updater::Update,
+) -> Result<tauri_plugin_updater::Update, String> {
+    let mut update = update.clone();
+    if let Ok(endpoint) = std::env::var("CIPHERMOTH_QA_UPDATE_ENDPOINT") {
+        let mut url = url::Url::parse(&endpoint).map_err(|_| "Invalid QA endpoint")?;
+        url.set_path(update.download_url.path());
+        update.download_url = url;
+    }
+    Ok(update)
+}
+
+#[tauri::command]
+pub async fn qa_update_step(
+    result: serde_json::Value,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    let root = std::path::PathBuf::from(
+        std::env::var("CIPHERMOTH_QA_ROOT").map_err(|_| "Missing QA root")?,
+    );
+    let id = uuid::Uuid::new_v4().to_string();
+    let response = root.join(format!("update-{id}.json"));
+    let request = serde_json::json!({"id":id,"version":app.package_info().version.to_string(),"pid":std::process::id(),"core":app.state::<std::sync::Arc<crate::sidecar::Supervisor>>().status(),"result":result});
+    std::fs::write(
+        root.join("update-request.partial"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .map_err(|_| "QA write failed")?;
+    std::fs::rename(
+        root.join("update-request.partial"),
+        root.join("update-request.json"),
+    )
+    .map_err(|_| "QA write failed")?;
+    for _ in 0..2400 {
+        if response.exists() {
+            let bytes = std::fs::read(&response).map_err(|_| "QA read failed")?;
+            std::fs::remove_file(response).map_err(|_| "QA cleanup failed")?;
+            return serde_json::from_slice(&bytes).map_err(|_| "Invalid QA response".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err("QA host timed out".into())
+}
+
 #[tauri::command]
 pub async fn qa_backup(
     operation: String,
