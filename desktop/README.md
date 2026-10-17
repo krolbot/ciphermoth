@@ -49,7 +49,7 @@ This freezes Python 3.13.15 as PyInstaller **onedir**, then builds the real app.
 - `desktop/src-tauri/`: supervisor, capabilities, native dialogs, clipboard and OS lock events. The ready handshake checks both protocol and core version. At most three crash restarts per minute; startup failures show a retry screen. Windows Job Objects fail closed, Linux uses parent-death signals, and macOS uses pipe EOF plus parent monitoring.
 - `frontend/src/platform/`: the only platform switch. Axios uses normal HTTP for web builds and binary native IPC for desktop. Desktop sessions stay in memory. No vault key enters Rust or React. Native file paths never enter React; selected backups use expiring, single-use opaque grants.
 
-Manual/idle/native lock destroys the core process and all in-flight key derivations, clears owned clipboard content, and returns to the locked UI. SQLite rolls back unfinished transactions. A native window hide/navigation removes the old decrypted view before renderer events are processed. The Python core separately enforces idle and absolute expiry; desktop permits one session.
+Manual/idle/native lock destroys the core process and all in-flight key derivations, clears owned clipboard content, invalidates file grants and pending saves, and returns to the locked UI. SQLite rolls back unfinished transactions. A native window hide/navigation removes the old decrypted view before renderer events are processed. The native watchdog enforces trusted core expiry and hidden-window policy even when JavaScript timers cannot execute. The Python core separately enforces idle and absolute expiry; desktop permits one session.
 
 Production capabilities allow only the app's narrow commands and event subscription. No filesystem/shell plugin is exposed. CSP forbids remote scripts/connections; navigation and new windows are restricted. Release devtools are disabled. The webview is incognito and password fields disable autocomplete; these are best-effort webview controls, not guarantees against a compromised OS.
 
@@ -95,7 +95,7 @@ desktop/core/build/venv/bin/python desktop/harness/native.py \
 
 Use a new synthetic root. Do not rebuild an app bundle while a test is using it; copying it to a temporary install folder first is preferable. The CI installer adapter does that on macOS. On Linux it installs the `.deb`; Windows installs the NSIS package on its disposable runner. The six-target workflow uploads **test evidence only**, never installer artifacts, and does not publish releases.
 
-An optional macOS dialog walkthrough is enabled by building QA with `VITE_DESKTOP_DIALOG_QA=1` and running `native.py --dialogs`. It drives the real Save/Open panels and restores through an opaque grant. It requires macOS Accessibility permission for the automation host; the local attempt was blocked by that permission, so this optional check is not reported as passed. The standard native suite does not require keystroke automation.
+An optional macOS dialog walkthrough is enabled by building QA with `VITE_DESKTOP_DIALOG_QA=1` and running `native.py --dialogs`. It drives the real Save/Open panels and restores through an opaque grant. It requires macOS Accessibility permission for the automation host; local automation was blocked by that permission. The maintainer completed the equivalent manual Save/Open and backup restoration walkthrough. The standard native suite does not require keystroke automation and verifies a large backup through the same Rust file workflow with a fixed QA destination.
 
 ## Provenance
 
