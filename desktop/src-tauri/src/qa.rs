@@ -29,16 +29,37 @@ pub async fn qa_backup(
 }
 
 #[tauri::command]
-pub fn qa_report(result: serde_json::Value) -> Result<(), String> {
+pub async fn qa_report(mut result: serde_json::Value) -> Result<(), String> {
     let root = std::env::var("CIPHERMOTH_QA_ROOT").map_err(|_| "QA root missing")?;
     let root = std::path::Path::new(&root);
+    let ack = if cfg!(target_os = "macos")
+        && [Some("clipboard_timeout"), Some("clipboard_replaced")]
+            .contains(&result["stage"].as_str())
+    {
+        let nonce = uuid::Uuid::new_v4().to_string();
+        result["ack"] = serde_json::json!(nonce);
+        Some(root.join(format!("{nonce}.done")))
+    } else {
+        None
+    };
     std::fs::write(
         root.join("webview.partial"),
         serde_json::to_vec_pretty(&result).unwrap(),
     )
     .map_err(|_| "Could not write QA report")?;
     std::fs::rename(root.join("webview.partial"), root.join("webview.json"))
-        .map_err(|_| "Could not publish QA report".into())
+        .map_err(|_| "Could not publish QA report")?;
+    if let Some(ack) = ack {
+        for _ in 0..600 {
+            if ack.exists() {
+                std::fs::remove_file(ack).map_err(|_| "Could not consume QA acknowledgement")?;
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        return Err("The host did not acknowledge the clipboard check".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -66,13 +66,20 @@ class MemorySampler:
         }
 
 
-def wait_report(path, process, timeout=180, dialogs=False):
+def wait_report(path, process, timeout=240, dialogs=False, started=None):
+    started = started or time.monotonic()
+    interactive = None
+    initial_core = None
     deadline = time.monotonic() + timeout
     stages = set()
     while time.monotonic() < deadline:
         if path.exists():
             report = json.loads(path.read_text(encoding="utf-8"))
             stage = report.get("stage")
+            if stage == "interactive" and interactive is None:
+                interactive = round(time.monotonic() - started, 3)
+                initial_core = report.get("core")
+            stage_key = report.get("ack", stage)
             if stage == "native_idle" and stage not in stages:
                 stages.add(stage)
                 pid = report["core"]["info"]["pid"]
@@ -88,8 +95,12 @@ def wait_report(path, process, timeout=180, dialogs=False):
                     assert not psutil.pid_exists(pid), (
                         "idle lock depended on blocked JavaScript timers"
                     )
-            if stage and stage not in stages and __import__("sys").platform == "darwin":
-                stages.add(stage)
+            if (
+                stage
+                and stage_key not in stages
+                and __import__("sys").platform == "darwin"
+            ):
+                stages.add(stage_key)
                 if stage == "clipboard_timeout":
                     assert (
                         subprocess.check_output(["pbpaste"]).decode()
@@ -99,7 +110,12 @@ def wait_report(path, process, timeout=180, dialogs=False):
                         ["osascript", "-e", 'tell application "Finder" to activate'],
                         check=True,
                     )
-                    time.sleep(1.3)
+                    clipboard_deadline = time.monotonic() + 3
+                    while (
+                        time.monotonic() < clipboard_deadline
+                        and subprocess.check_output(["pbpaste"]) != b""
+                    ):
+                        time.sleep(0.1)
                     assert subprocess.check_output(["pbpaste"]) == b"", (
                         "native clipboard did not clear in background"
                     )
@@ -135,8 +151,14 @@ end run"""
                         check=True,
                         timeout=15,
                     )
+                if report.get("ack"):
+                    # The app cannot start the next clipboard write until the
+                    # host has checked this one, even on a slow CI runner.
+                    (path.parent / (report["ack"] + ".done")).touch()
             if not stage:
                 assert report.get("ok"), report
+                report["launch_to_interactive_s"] = interactive
+                report["initial_core"] = initial_core
                 return report
         if process.poll() is not None:
             raise RuntimeError(f"App exited {process.returncode}")
@@ -183,7 +205,7 @@ def main():
         app = subprocess.Popen([str(args.app)], env=env, stdout=log, stderr=log)
         sampler = MemorySampler(app.pid)
         try:
-            first = wait_report(report_path, app, dialogs=args.dialogs)
+            first = wait_report(report_path, app, dialogs=args.dialogs, started=started)
             first["launch_to_ui_s"] = round(time.monotonic() - started, 3)
             core_pid = first["core"]["info"]["pid"]
             if __import__("sys").platform.startswith("linux"):
@@ -214,8 +236,11 @@ def main():
             app.wait(10)
             assert gone(new_core), "orphaned core after shell SIGKILL"
             report_path.unlink()
+            started = time.monotonic()
             app = subprocess.Popen([str(args.app)], env=env, stdout=log, stderr=log)
-            reopened = wait_report(report_path, app, dialogs=args.dialogs)
+            reopened = wait_report(
+                report_path, app, dialogs=args.dialogs, started=started
+            )
             assert not reopened["fresh"]
             core_pid = reopened["core"]["info"]["pid"]
             if __import__("sys").platform == "darwin":

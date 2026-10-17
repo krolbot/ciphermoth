@@ -38,7 +38,7 @@ try {
     });
   }
   const fresh = !!document.querySelector('input[type="checkbox"]');
-  input("Master Password", "Desktop-GUI-Canary-2026!");
+  input("Master Password", sessionStorage.getItem("qa-password") || "Desktop-GUI-Canary-2026!");
   if (fresh) {
     input("Confirm Master Password", "Desktop-GUI-Canary-2026!");
     document.querySelector('input[type="checkbox"]').click();
@@ -72,6 +72,21 @@ try {
   )
     throw new Error("saved entry not found");
   checks.push("retrieve password through native IPC");
+  const search = await until(() => document.querySelector('input[placeholder^="Search name"]'));
+  const setSearch = (value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(search, value);
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const hasEntryRow = () =>
+    [...document.querySelectorAll('[role="row"]')].some((row) =>
+      row.textContent.includes("Native GUI entry")
+    );
+  setSearch("no-match-synthetic-qa");
+  await until(() => !hasEntryRow());
+  setSearch("Native GUI entry");
+  await until(hasEntryRow);
+  setSearch("");
+  checks.push("search filters and restores the native vault rows");
   if (fresh) {
     const { workflows } = await import("./qaWorkflows");
     await workflows(checks);
@@ -167,6 +182,36 @@ try {
     });
     sessionStorage.setItem("qa-lock-stage", "native");
     await invoke("qa_lock");
+  } else if (stage === "native") {
+    sessionStorage.setItem("qa-lock-stage", "rotation");
+    sessionStorage.setItem("qa-password", "Desktop-Rotated-Canary-2027!");
+    await api.patch("/master_password/update", {
+      master_password: "Desktop-GUI-Canary-2026!",
+      new_master_password: "Desktop-Rotated-Canary-2027!",
+    });
+  } else if (stage === "rotation") {
+    const old = await api.post("/master_password/unlock", {
+      master_password: "Desktop-GUI-Canary-2026!",
+    });
+    if (old.data.valid) throw new Error("old password survived rotation");
+    sessionStorage.setItem("qa-lock-stage", "rotation-back");
+    sessionStorage.removeItem("qa-password");
+    await api.patch("/master_password/update", {
+      master_password: "Desktop-Rotated-Canary-2027!",
+      new_master_password: "Desktop-GUI-Canary-2026!",
+    });
+  } else if (stage === "rotation-back") {
+    sessionStorage.setItem("qa-lock-stage", "shortcut");
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "L",
+        code: "KeyL",
+        metaKey: true,
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      })
+    );
   } else {
     await invoke("qa_report", {
       result: {
@@ -177,6 +222,8 @@ try {
           "manual lock then UI unlock",
           "native idle lock while WebView timers cannot execute",
           "native lock callback then UI unlock",
+          "master password rotated through Tauri; old password rejected; UI unlock with new password",
+          "lock keyboard shortcut then UI unlock",
         ],
         core: await coreStatus(),
         backup: JSON.parse(sessionStorage.getItem("qa-backup-metrics") || "null"),
