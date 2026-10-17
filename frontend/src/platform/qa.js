@@ -30,6 +30,13 @@ try {
       button("Unlock Vault") ||
       document.querySelector('input[type="checkbox"]')
   );
+  const interactiveMs = Math.round(performance.now());
+  if (!sessionStorage.getItem("qa-interactive-ms")) {
+    sessionStorage.setItem("qa-interactive-ms", String(interactiveMs));
+    await invoke("qa_report", {
+      result: { stage: "interactive", interactive_ms: interactiveMs, core: await coreStatus() },
+    });
+  }
   const fresh = !!document.querySelector('input[type="checkbox"]');
   input("Master Password", "Desktop-GUI-Canary-2026!");
   if (fresh) {
@@ -49,7 +56,10 @@ try {
     input("Password", "Native-GUI-password-canary!");
     await pause(100);
     (await until(() => button("Create"))).click();
-    await until(() => !button("Create"));
+    // A disabled submit button means the request is in flight, not completed.
+    await until(
+      () => ![...document.querySelectorAll("button")].some((x) => x.textContent === "Create")
+    );
     checks.push("create password through UI");
   }
   const { data } = await api.get("/passwords");
@@ -62,6 +72,10 @@ try {
   )
     throw new Error("saved entry not found");
   checks.push("retrieve password through native IPC");
+  if (fresh) {
+    const { workflows } = await import("./qaWorkflows");
+    await workflows(checks);
+  }
   if (import.meta.env.VITE_DESKTOP_DIALOG_QA === "1" && !sessionStorage.getItem("qa-files")) {
     const { getSessionToken } = await import("../utils");
     const session = getSessionToken();
@@ -126,6 +140,31 @@ try {
     sessionStorage.setItem("qa-lock-stage", "manual");
     button("Log out").click();
   } else if (stage === "manual") {
+    sessionStorage.setItem("qa-lock-stage", "idle");
+    await api.patch("/settings", {
+      inactivity_ms: 30000,
+      warn_before_ms: 5000,
+      hidden_ms: 60000,
+      debounce_ms: 1000,
+      clipboard_clear_ms: 30000,
+      update_check_enabled: false,
+    });
+    await invoke("qa_report", { result: { stage: "native_idle", core: await coreStatus() } });
+    // Deliberately starve this real WebView's event loop. The host must observe
+    // core termination before JS timers or this script can run again.
+    const blockedUntil = performance.now() + 35000;
+    while (performance.now() < blockedUntil) {
+      /* QA only */
+    }
+  } else if (stage === "idle") {
+    await api.patch("/settings", {
+      inactivity_ms: 120000,
+      warn_before_ms: 60000,
+      hidden_ms: 60000,
+      debounce_ms: 1000,
+      clipboard_clear_ms: 30000,
+      update_check_enabled: false,
+    });
     sessionStorage.setItem("qa-lock-stage", "native");
     await invoke("qa_lock");
   } else {
@@ -136,9 +175,12 @@ try {
         checks: [
           ...JSON.parse(sessionStorage.getItem("qa-checks")),
           "manual lock then UI unlock",
+          "native idle lock while WebView timers cannot execute",
           "native lock callback then UI unlock",
         ],
         core: await coreStatus(),
+        backup: JSON.parse(sessionStorage.getItem("qa-backup-metrics") || "null"),
+        interactive_ms: Number(sessionStorage.getItem("qa-interactive-ms")),
       },
     });
   }

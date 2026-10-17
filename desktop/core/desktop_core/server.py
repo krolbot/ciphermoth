@@ -21,7 +21,7 @@ DROPPED_HEADERS = {"content-length", "transfer-encoding", "connection", "host"}
 class ProtocolWriter:
     def __init__(self, fd: int) -> None:
         self.fd = fd
-        self.queue: queue.Queue[bytes | None] = queue.Queue()
+        self.queue: queue.Queue[bytes | None] = queue.Queue(maxsize=MAX_IN_FLIGHT)
         self.thread = threading.Thread(target=self._run, name="proto-out", daemon=True)
         self.thread.start()
 
@@ -39,10 +39,18 @@ class ProtocolWriter:
                 os._exit(3)
 
     def send(self, kind: int, request_id: int, header: dict, body: bytes = b"") -> None:
-        self.queue.put(f.encode(kind, request_id, header, body))
+        try:
+            self.queue.put_nowait(f.encode(kind, request_id, header, body))
+        except queue.Full:
+            # A shell that stopped reading must not retain unbounded secrets
+            # or block the event loop (including cancellation and expiry).
+            os._exit(3)
 
     def close(self, timeout: float = 2.0) -> None:
-        self.queue.put(None)
+        try:
+            self.queue.put_nowait(None)
+        except queue.Full:
+            return
         self.thread.join(timeout)
 
 
@@ -267,9 +275,46 @@ class CoreServer:
         self.writer.send(
             f.RESPONSE,
             request_id,
-            {"status": status, "headers": response_headers},
+            {
+                "status": status,
+                "headers": response_headers,
+                "session": self._session_info(request, status, response_body),
+            },
             response_body,
         )
+
+    def _session_info(self, request, status, body):
+        """Authoritative native idle deadline, without a key or session token.
+
+        Reading this metadata never refreshes a session. The shell can enforce
+        expiry even when the renderer is suspended.
+        """
+        if isinstance(request, dict):
+            token = request.get("session")
+        else:
+            _, path, _, headers = request
+            token = next(
+                (
+                    value
+                    for name, value in headers
+                    if name.lower() == "x-ciphermoth-session"
+                ),
+                None,
+            )
+            if status == 200 and path in (
+                "/api/master_password/create",
+                "/api/master_password/unlock",
+            ):
+                token = json.loads(body).get("session_token")
+        if not token:
+            return None
+        from errors import SessionRequired
+
+        try:
+            info = self.app.state.vault_sessions.info(token)
+        except SessionRequired:
+            return {"expires_in_ms": 0}
+        return {"expires_in_ms": info.expires_in_ms}
 
     async def _drain(self) -> None:
         for task in list(self.in_flight.values()):

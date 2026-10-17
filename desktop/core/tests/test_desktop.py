@@ -88,6 +88,25 @@ def test_fresh_create_unlock_lock(core):
     )
 
 
+def test_native_session_deadline_is_authoritative_and_contains_no_token(core):
+    import time
+
+    token = create(core)
+    headers = [["x-ciphermoth-session", token]]
+    first = core.call("GET", "/api/master_password/session", headers=headers)
+    time.sleep(0.05)
+    second = core.call("GET", "/api/master_password/session", headers=headers)
+    assert set(first.header["session"]) == {"expires_in_ms"}
+    assert (
+        second.header["session"]["expires_in_ms"]
+        < first.header["session"]["expires_in_ms"]
+    )
+    assert token not in json.dumps(second.header)
+    api(core, "POST", "/master_password/lock", token=token)
+    ended = core.call("GET", "/api/master_password/session", headers=headers)
+    assert ended.header["session"] == {"expires_in_ms": 0}
+
+
 def test_persistence_permissions_and_no_plaintext(core, tmp_path):
     token = create(core)
     entry(core, token)

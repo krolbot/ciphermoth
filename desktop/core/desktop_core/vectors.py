@@ -10,7 +10,7 @@ def run_all(folder):
 
     require_supported_sqlite()
     count = 0
-    vectors = json.loads((folder / "vault-v2.json").read_text())
+    vectors = json.loads((folder / "vault-v2.json").read_text(encoding="utf-8"))
     for vector in vectors["vaults"]:
         derived = helpers.argon2id(
             vector["password"], bytes.fromhex(vector["salt_hex"])
@@ -54,7 +54,7 @@ def run_all(folder):
     import hashlib
     from backup_format import BackupReader
 
-    backup = json.loads((folder / "backup-v2.json").read_text())
+    backup = json.loads((folder / "backup-v2.json").read_text(encoding="utf-8"))
     data = (folder / backup["file"]).read_bytes()
     assert hashlib.sha256(data).hexdigest() == backup["file_sha256"]
     reader = BackupReader(io.BytesIO(data))

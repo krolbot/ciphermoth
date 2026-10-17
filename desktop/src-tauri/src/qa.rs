@@ -1,5 +1,34 @@
 //! Compiled only into the separately identified native QA artifact.
 #[tauri::command]
+pub async fn qa_backup(
+    operation: String,
+    session: String,
+    password: String,
+    core: tauri::State<'_, std::sync::Arc<crate::sidecar::Supervisor>>,
+) -> Result<serde_json::Value, String> {
+    if !["backup_export", "backup_import"].contains(&operation.as_str()) {
+        return Err("Invalid QA operation".into());
+    }
+    let root = std::path::PathBuf::from(
+        std::env::var("CIPHERMOTH_QA_ROOT").map_err(|_| "QA root missing")?,
+    );
+    let path = root.join("transport.cmbackup");
+    // Fixed synthetic destination authorized by the test host. This exercises
+    // the real native transfer, separately from optional OS-picker automation.
+    let result = crate::native::file_request(
+        &core,
+        &operation,
+        path.clone(),
+        session,
+        serde_json::json!({"master_password": password, "on_conflict": "skip"}),
+    )
+    .await?;
+    Ok(
+        serde_json::json!({"result": result, "bytes": std::fs::metadata(path).map_err(|_| "Missing backup")?.len()}),
+    )
+}
+
+#[tauri::command]
 pub fn qa_report(result: serde_json::Value) -> Result<(), String> {
     let root = std::env::var("CIPHERMOTH_QA_ROOT").map_err(|_| "QA root missing")?;
     let root = std::path::Path::new(&root);

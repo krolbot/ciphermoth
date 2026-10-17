@@ -1,6 +1,7 @@
 """Small install adapter using the feasibility harness's proven platform paths."""
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -53,3 +54,17 @@ if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
         *command,
     ]
 subprocess.run(command, check=True)
+result_path = args.out / "results.json"
+result = json.loads(result_path.read_text(encoding="utf-8"))
+result["artifacts"] = [
+    {"name": path.name, "bytes": path.stat().st_size}
+    for path in bundle.rglob("*")
+    if path.is_file() and path.suffix in (".dmg", ".deb", ".exe")
+]
+if sys.platform == "darwin":
+    result["app_bundle_bytes"] = sum(
+        p.stat().st_size
+        for p in installed.rglob("*")
+        if p.is_file() and not p.is_symlink()
+    )
+result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")

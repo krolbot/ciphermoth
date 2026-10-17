@@ -19,6 +19,8 @@ use std::time::Instant;
 use tauri::{Emitter, Manager, RunEvent};
 
 fn core_config(app: &tauri::AppHandle) -> Result<CoreConfig, Box<dyn std::error::Error>> {
+    #[cfg(all(feature = "gui-test", debug_assertions))]
+    let _ = app;
     #[cfg(not(feature = "gui-test"))]
     let base = app.path().app_local_data_dir()?;
     #[cfg(feature = "gui-test")]
@@ -127,13 +129,14 @@ pub fn run() {
         native::save_file,
         native::open_external,
         qa::qa_report,
+        qa::qa_backup,
         qa::qa_lock
     ]);
     let app = builder
         .setup(move |app| {
             #[cfg(feature = "gui-test")]
             app.add_capability(
-                r#"{"identifier":"qa","windows":["main"],"permissions":["allow-qa-report","allow-qa-lock"]}"#,
+                r#"{"identifier":"qa","windows":["main"],"permissions":["allow-qa-report","allow-qa-lock","allow-qa-backup"]}"#,
             )?;
             let handle = app.handle().clone();
             let emitter = handle.clone();

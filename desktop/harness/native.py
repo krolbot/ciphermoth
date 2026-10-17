@@ -8,19 +8,86 @@ import argparse
 import json
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import psutil
 
 
-def wait_report(path, process, timeout=60, dialogs=False):
+class MemorySampler:
+    """RSS includes the process tree and newly started macOS WebKit XPCs.
+
+    XPCs belong to launchd, so capture their PIDs separately and retain the
+    attribution scope in the report. RSS can double-count shared pages.
+    """
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.baseline = set(psutil.pids())
+        self.stop = threading.Event()
+        self.peak = 0
+        self.webviews = set()
+        self.samples = 0
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def run(self):
+        while not self.stop.wait(0.1):
+            try:
+                processes = [psutil.Process(self.pid)]
+                processes += processes[0].children(recursive=True)
+                if __import__("sys").platform == "darwin":
+                    for process in psutil.process_iter(["pid", "name"]):
+                        if process.pid not in self.baseline and "com.apple.WebKit." in (
+                            process.info["name"] or ""
+                        ):
+                            processes.append(process)
+                            self.webviews.add(process.pid)
+                rss = 0
+                for process in {p.pid: p for p in processes}.values():
+                    try:
+                        rss += process.memory_info().rss
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                self.peak = max(self.peak, rss)
+                self.samples += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+    def finish(self):
+        self.stop.set()
+        self.thread.join(2)
+        return {
+            "peak_total_rss": self.peak,
+            "samples": self.samples,
+            "macos_new_webkit_pids": sorted(self.webviews),
+            "scope": "process tree plus WebKit XPCs started during this isolated launch; RSS includes shared pages",
+        }
+
+
+def wait_report(path, process, timeout=180, dialogs=False):
     deadline = time.monotonic() + timeout
     stages = set()
     while time.monotonic() < deadline:
         if path.exists():
-            report = json.loads(path.read_text())
+            report = json.loads(path.read_text(encoding="utf-8"))
             stage = report.get("stage")
+            if stage == "native_idle" and stage not in stages:
+                stages.add(stage)
+                pid = report["core"]["info"]["pid"]
+                idle_deadline = time.monotonic() + 33
+                while time.monotonic() < idle_deadline and psutil.pid_exists(pid):
+                    try:
+                        if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                            break
+                    except psutil.NoSuchProcess:
+                        break
+                    time.sleep(0.1)
+                else:
+                    assert not psutil.pid_exists(pid), (
+                        "idle lock depended on blocked JavaScript timers"
+                    )
             if stage and stage not in stages and __import__("sys").platform == "darwin":
                 stages.add(stage)
                 if stage == "clipboard_timeout":
@@ -114,6 +181,7 @@ def main():
     started = time.monotonic()
     with (args.root / "shell.log").open("wb") as log:
         app = subprocess.Popen([str(args.app)], env=env, stdout=log, stderr=log)
+        sampler = MemorySampler(app.pid)
         try:
             first = wait_report(report_path, app, dialogs=args.dialogs)
             first["launch_to_ui_s"] = round(time.monotonic() - started, 3)
@@ -129,6 +197,7 @@ def main():
                 )
             first["shell_rss"] = psutil.Process(app.pid).memory_info().rss
             first["core_rss"] = psutil.Process(core_pid).memory_info().rss
+            first["memory"] = sampler.finish()
             if not __import__("sys").platform.startswith("linux"):
                 assert not [
                     c
@@ -172,6 +241,7 @@ def main():
             (args.root / "results.json").write_text(json.dumps(result, indent=2))
             print(json.dumps(result, indent=2))
         finally:
+            sampler.finish()
             if app.poll() is None:
                 app.kill()
                 app.wait(10)

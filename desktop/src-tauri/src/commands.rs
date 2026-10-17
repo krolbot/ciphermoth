@@ -117,6 +117,9 @@ pub async fn core_request(
         return Err(reject("too_large", "request body too large"));
     }
     let timeout = Duration::from_millis(meta.timeout_ms.unwrap_or(30_000).clamp(1, MAX_TIMEOUT_MS));
+    let epoch = crate::lock::epoch();
+    let sent_at = std::time::Instant::now();
+    let settings = meta.path == "/api/settings";
     let header = json!({
         "method": meta.method,
         "path": meta.path,
@@ -127,6 +130,7 @@ pub async fn core_request(
         .request(header, body, timeout, meta.client_id)
         .await
         .map_err(|e| serde_json::to_string(&e).unwrap())?;
+    crate::lock::observe(epoch, sent_at, &head, settings.then_some(body.as_slice()));
     if [Some(401), Some(403)].contains(&head["status"].as_u64()) {
         use tauri::Manager;
         app.state::<Arc<crate::clipboard::Clipboard>>().clear();

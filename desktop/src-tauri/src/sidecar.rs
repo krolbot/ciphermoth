@@ -20,6 +20,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const RESTART_WINDOW: Duration = Duration::from_secs(60);
 const MAX_RESTARTS: usize = 3;
 const LOG_ROTATE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_QUEUED_FRAMES: usize = 16;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CoreError {
@@ -64,7 +65,7 @@ pub struct CoreConfig {
 }
 
 struct Running {
-    writer: mpsc::Sender<Vec<u8>>,
+    writer: mpsc::SyncSender<(Option<u32>, Vec<u8>)>,
     pending: Pending,
 }
 
@@ -189,9 +190,19 @@ impl Supervisor {
         if let Some(client) = &client_id {
             self.clients.lock().unwrap().insert(client.clone(), id);
         }
-        if writer.send(frame).is_err() {
+        if let Err(error) = writer.try_send((Some(id), frame)) {
             pending.lock().unwrap().waiting.remove(&id);
-            return Err(CoreError::new("core_exited", "the core stopped"));
+            if let Some(client) = &client_id {
+                self.clients.lock().unwrap().remove(client);
+            }
+            return Err(match error {
+                mpsc::TrySendError::Full(_) => {
+                    CoreError::new("busy", "Please wait for the current vault operation.")
+                }
+                mpsc::TrySendError::Disconnected(_) => {
+                    CoreError::new("core_exited", "the core stopped")
+                }
+            });
         }
         let outcome = tokio::time::timeout(timeout, rx).await;
         if let Some(client) = &client_id {
@@ -203,7 +214,12 @@ impl Supervisor {
             Err(_) => {
                 pending.lock().unwrap().waiting.remove(&id);
                 if let Ok(cancel) = protocol::encode(protocol::CANCEL, id, b"{}", b"") {
-                    let _ = writer.send(cancel);
+                    if writer.try_send((None, cancel)).is_err() {
+                        // A full queue must not silently discard cancellation
+                        // and later execute a timed-out mutation.
+                        let (ack, _) = mpsc::channel();
+                        self.send(Control::Lock(ack));
+                    }
                 }
                 Err(CoreError::new("timeout", "the core did not answer in time"))
             }
@@ -217,7 +233,12 @@ impl Supervisor {
         };
         if let Some(running) = self.running.lock().unwrap().as_ref() {
             if let Ok(frame) = protocol::encode(protocol::CANCEL, id, b"{}", b"") {
-                return running.writer.send(frame).is_ok();
+                if running.writer.try_send((None, frame)).is_ok() {
+                    return true;
+                }
+                let (ack, _) = mpsc::channel();
+                self.send(Control::Lock(ack));
+                return true;
             }
         }
         false
@@ -233,7 +254,7 @@ impl Supervisor {
         let job = crate::job::Job::kill_on_close();
         let mut generation = 0u64;
         let mut child: Option<Child> = None;
-        let mut writer: Option<mpsc::Sender<Vec<u8>>> = None;
+        let mut writer: Option<mpsc::SyncSender<(Option<u32>, Vec<u8>)>> = None;
         let mut pending: Option<Pending> = None;
         let mut became_ready = false;
         let mut incompatible = false;
@@ -284,12 +305,14 @@ impl Supervisor {
                                     continue;
                                 }
                             }
-                            let (frames_tx, frames_rx) = mpsc::channel::<Vec<u8>>();
+                            // Timeouts remove pending requests, but a blocked pipe
+                            // can still retain their frames. Bound that queue too.
+                            let (frames_tx, frames_rx) = mpsc::sync_channel(MAX_QUEUED_FRAMES);
                             let map: Pending = Arc::new(Mutex::new(PendingMap::default()));
                             let stdin = spawned.stdin.take().unwrap();
                             let stdout = spawned.stdout.take().unwrap();
                             let stderr = spawned.stderr.take().unwrap();
-                            spawn_writer(stdin, frames_rx);
+                            spawn_writer(stdin, frames_rx, map.clone());
                             spawn_reader(stdout, generation, map.clone(), control_tx.clone());
                             spawn_logger(stderr, config.log_dir.clone());
                             let timer_tx = control_tx.clone();
@@ -412,7 +435,7 @@ impl Supervisor {
                     *self.running.lock().unwrap() = None;
                     if let Some(w) = writer.take() {
                         if let Ok(frame) = protocol::encode(protocol::SHUTDOWN, 0, b"{}", b"") {
-                            let _ = w.send(frame);
+                            let _ = w.try_send((None, frame));
                         }
                     }
                     pending = None;
@@ -515,17 +538,34 @@ fn spawn_core(config: &CoreConfig) -> std::io::Result<Child> {
     command.spawn()
 }
 
-fn spawn_writer(mut stdin: std::process::ChildStdin, frames: mpsc::Receiver<Vec<u8>>) {
+fn spawn_writer(
+    stdin: std::process::ChildStdin,
+    frames: mpsc::Receiver<(Option<u32>, Vec<u8>)>,
+    pending: Pending,
+) {
     thread::Builder::new()
         .name("core-stdin".into())
-        .spawn(move || {
-            while let Ok(frame) = frames.recv() {
-                if stdin.write_all(&frame).and_then(|_| stdin.flush()).is_err() {
-                    return;
-                }
-            }
-        })
+        .spawn(move || write_frames(stdin, frames, pending))
         .expect("writer thread");
+}
+
+fn write_frames(
+    mut output: impl Write,
+    frames: mpsc::Receiver<(Option<u32>, Vec<u8>)>,
+    pending: Pending,
+) {
+    while let Ok((id, frame)) = frames.recv() {
+        if id.is_some_and(|id| !pending.lock().unwrap().waiting.contains_key(&id)) {
+            continue;
+        }
+        if output
+            .write_all(&frame)
+            .and_then(|_| output.flush())
+            .is_err()
+        {
+            return;
+        }
+    }
 }
 
 fn fail_all(pending: &Pending, code: &str) {
@@ -626,4 +666,79 @@ fn spawn_logger(stderr: std::process::ChildStderr, log_dir: PathBuf) {
             }
         })
         .expect("logger thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn timed_out_frames_cannot_grow_a_stalled_writer_queue() {
+        // Keep the receiver alive but never read it, just like a stopped core.
+        let (writer, receiver) = mpsc::sync_channel(MAX_QUEUED_FRAMES);
+        let (control, control_rx) = mpsc::channel();
+        let pending = Arc::new(Mutex::new(PendingMap::default()));
+        let core = Supervisor {
+            running: Mutex::new(Some(Running {
+                writer,
+                pending: pending.clone(),
+            })),
+            status: Mutex::new(Status {
+                state: "ready",
+                reason: None,
+                info: None,
+                ready_ms: None,
+                restarts: 0,
+                generation: 1,
+            }),
+            next_id: AtomicU32::new(1),
+            clients: Mutex::new(HashMap::new()),
+            control: Mutex::new(control),
+            on_status: Box::new(|_| {}),
+            launched: Instant::now(),
+        };
+        for n in 0..MAX_QUEUED_FRAMES * 4 {
+            let error = core
+                .request(
+                    json!({}),
+                    vec![0; 1024],
+                    Duration::from_millis(1),
+                    Some(n.to_string()),
+                )
+                .await
+                .unwrap_err();
+            assert!(["timeout", "busy"].contains(&error.code.as_str()));
+            assert!(pending.lock().unwrap().waiting.is_empty());
+            assert!(core.clients.lock().unwrap().is_empty());
+        }
+        assert_eq!(receiver.try_iter().count(), MAX_QUEUED_FRAMES);
+
+        // Fill every slot concurrently with mutations, with no room for CANCEL.
+        let core = Arc::new(core);
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..MAX_QUEUED_FRAMES {
+            let core = core.clone();
+            tasks.spawn(async move {
+                core.request(
+                    json!({"method":"DELETE"}),
+                    vec![],
+                    Duration::from_millis(10),
+                    None,
+                )
+                .await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            assert_eq!(result.unwrap().unwrap_err().code, "timeout");
+        }
+        assert!(control_rx
+            .try_iter()
+            .any(|control| matches!(control, Control::Lock(_))));
+        // Simulate the pipe becoming writable after the timeout. No expired
+        // mutation may reach it, even before the supervisor handles the lock.
+        *core.running.lock().unwrap() = None;
+        let mut output = Vec::new();
+        write_frames(&mut output, receiver, pending);
+        assert!(output.is_empty());
+    }
 }

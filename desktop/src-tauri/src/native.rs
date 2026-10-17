@@ -2,15 +2,34 @@ use crate::sidecar::Supervisor;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::State;
 
 #[derive(Default)]
-pub struct Files(Mutex<HashMap<String, (PathBuf, Instant)>>);
+pub struct Files {
+    grants: Mutex<HashMap<String, (PathBuf, Instant)>>,
+    generation: AtomicU64,
+}
+
+impl Files {
+    pub fn invalidate(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.grants.lock().unwrap().clear();
+    }
+
+    fn check(&self, generation: u64) -> Result<(), String> {
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err("The vault was locked. Unlock it and save again.".into());
+        }
+        Ok(())
+    }
+}
 
 #[tauri::command]
 pub async fn choose_backup(files: State<'_, Files>) -> Result<Option<Value>, String> {
+    let generation = files.generation.load(Ordering::SeqCst);
     let picked = rfd::AsyncFileDialog::new()
         .add_filter("CipherMoth backup", &["cmbackup", "zip"])
         .pick_file()
@@ -18,13 +37,14 @@ pub async fn choose_backup(files: State<'_, Files>) -> Result<Option<Value>, Str
     let Some(file) = picked else { return Ok(None) };
     let ticket = uuid::Uuid::new_v4().to_string();
     let name = file.file_name();
-    let mut grants = files.0.lock().unwrap();
+    let mut grants = files.grants.lock().unwrap();
+    files.check(generation)?;
     grants.clear(); // one pending selection; bounded, single use, expires
     grants.insert(ticket.clone(), (file.path().to_path_buf(), Instant::now()));
     Ok(Some(json!({"ticket":ticket,"name":name})))
 }
 
-async fn file_request(
+pub(super) async fn file_request(
     core: &Supervisor,
     operation: &str,
     path: PathBuf,
@@ -34,6 +54,8 @@ async fn file_request(
     if session.len() != 43 {
         return Err("Unlock your vault first.".into());
     }
+    let epoch = crate::lock::epoch();
+    let sent_at = Instant::now();
     let (head, data) = core
         .request(
             json!({"native":operation,"file":path,"session":session}),
@@ -45,6 +67,7 @@ async fn file_request(
         .map_err(|_| {
             "The file operation did not finish. Check the vault and try again.".to_string()
         })?;
+    crate::lock::observe(epoch, sent_at, &head, None);
     let result: Value = serde_json::from_slice(&data)
         .map_err(|_| "The file operation did not finish.".to_string())?;
     if head["status"].as_u64() != Some(200) {
@@ -96,7 +119,7 @@ pub async fn backup_import(
         return Err("Invalid restore options.".into());
     }
     let (path, selected) = files
-        .0
+        .grants
         .lock()
         .unwrap()
         .remove(&ticket)
@@ -115,7 +138,11 @@ pub async fn backup_import(
 }
 
 #[tauri::command]
-pub async fn save_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+pub async fn save_file(
+    request: tauri::ipc::Request<'_>,
+    files: State<'_, Files>,
+) -> Result<(), String> {
+    let generation = files.generation.load(Ordering::SeqCst);
     let data = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) if bytes.len() <= 5 * 1024 * 1024 => bytes.clone(),
         _ => return Err("Invalid attachment.".into()),
@@ -135,6 +162,16 @@ pub async fn save_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let Some(file) = picked else {
         return Err("Save cancelled.".into());
     };
+    save_selected_file(&files, generation, file.path(), &data)
+}
+
+fn save_selected_file(
+    files: &Files,
+    generation: u64,
+    path: &std::path::Path,
+    data: &[u8],
+) -> Result<(), String> {
+    files.check(generation)?;
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -144,14 +181,40 @@ pub async fn save_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
         options.mode(0o600);
     }
     let mut out = options
-        .open(file.path())
+        .open(path)
         .map_err(|_| "Choose a new filename in a writable folder.")?;
-    if out.write_all(&data).and_then(|_| out.sync_all()).is_err() {
+    if out.write_all(data).and_then(|_| out.sync_all()).is_err() {
         drop(out);
-        let _ = std::fs::remove_file(file.path());
+        let _ = std::fs::remove_file(path);
         return Err("Could not save the attachment. Check available disk space.".into());
     }
+    drop(out);
+    if let Err(error) = files.check(generation) {
+        let _ = std::fs::remove_file(path);
+        return Err(error);
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_cancels_an_open_attachment_picker_and_revokes_grants() {
+        let files = Files::default();
+        let generation = files.generation.load(Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("ciphermoth-save-{}", uuid::Uuid::new_v4()));
+        files
+            .grants
+            .lock()
+            .unwrap()
+            .insert("ticket".into(), (path.clone(), Instant::now()));
+        files.invalidate();
+        assert!(files.grants.lock().unwrap().is_empty());
+        assert!(save_selected_file(&files, generation, &path, b"secret").is_err());
+        assert!(!path.exists());
+    }
 }
 
 #[tauri::command]
