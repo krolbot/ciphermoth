@@ -244,6 +244,10 @@ def main():
             assert not reopened["fresh"]
             core_pid = reopened["core"]["info"]["pid"]
             if __import__("sys").platform == "darwin":
+                assert (
+                    subprocess.check_output(["pbpaste"])
+                    == b"Native-quit-clipboard-canary"
+                )
                 subprocess.run(
                     [
                         "osascript",
@@ -257,6 +261,11 @@ def main():
                 app.terminate()
             app.wait(10)
             assert gone(core_pid), "orphaned core after quit"
+            if __import__("sys").platform == "darwin":
+                assert subprocess.check_output(["pbpaste"]) == b"", (
+                    "owned clipboard survived quit"
+                )
+                reopened["clipboard_cleared_on_quit"] = True
             result = {
                 "first": first,
                 "crash_restart": restarted,

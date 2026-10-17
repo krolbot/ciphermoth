@@ -10,6 +10,7 @@ import {
 } from "@mui/material";
 
 import PasswordField from "../PasswordField";
+import { IS_DESKTOP } from "../../platform";
 
 const BackupDialog = ({ open, onClose, onBackup }) => {
   const [password, setPassword] = useState("");
@@ -52,7 +53,10 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Restore it here with Import, into this vault or a new one. Keep the file somewhere safe:
             anyone who knows the master password used for this backup can open it, even after you
-            change your master password. Check that your browser actually saves the file.
+            change your master password.{" "}
+            {IS_DESKTOP
+              ? "Choose a new filename in the Save dialog. Existing files are never replaced."
+              : "Check that your browser actually saves the file."}
           </Typography>
           <PasswordField
             label="Master Password"

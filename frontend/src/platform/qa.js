@@ -213,6 +213,7 @@ try {
       })
     );
   } else {
+    await invoke("clipboard_write", { value: "Native-quit-clipboard-canary", timeoutMs: 300000 });
     await invoke("qa_report", {
       result: {
         ok: true,

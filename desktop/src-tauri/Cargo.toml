@@ -41,5 +41,7 @@ gui-test = []
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+# Wry catches Objective-C exceptions when navigation cancels pending IPC.
+# Abort mode disables that recovery and can crash the app during locking.
+panic = "unwind"
 strip = true
