@@ -1,19 +1,53 @@
-name: Publish images
+name: Release
 
 on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  source:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: version
+        run: |
+          test "$GITHUB_REPOSITORY" = "mr-grj/ciphermoth"
+          [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          version="${GITHUB_REF#refs/tags/v}"
+          python desktop/release/version.py --check "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    needs: source
+    uses: ./.github/workflows/desktop.yml
+    with:
+      release: true
+    secrets: inherit
+    permissions:
+      contents: read
+
   # Build each architecture on its own NATIVE runner (no QEMU). Emulated arm64
   # Node/Vite builds took ~26 min and timed out; native arm64 builds in a couple
   # of minutes. Each job pushes an untagged, digest-only image; the merge job
   # stitches the per-arch digests into one multi-arch tag and signs it.
   build:
+    needs: source
     name: build ${{ matrix.image.name }} (${{ matrix.platform.slug }})
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 20
@@ -82,7 +116,7 @@ jobs:
   merge:
     name: merge & sign ${{ matrix.image }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, desktop]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -145,3 +179,47 @@ jobs:
           IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
           DIGEST: ${{ steps.digest.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  smoke:
+    needs: [source, merge]
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      version: ${{ needs.source.outputs.version }}
+    permissions:
+      contents: read
+
+  publish:
+    needs: [source, desktop, smoke]
+    runs-on: ubuntu-latest
+    environment: desktop-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-packages-*
+          path: release-assets
+          merge-multiple: true
+      - name: Install verifier prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - name: Verify every signature and generate the manifest
+        env:
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          mkdir -p desktop/core/dist/ciphermoth-core frontend/dist
+          echo '<!doctype html>' > frontend/dist/index.html
+          cd desktop/src-tauri
+          cargo build --release --example verify_update
+          cd ../..
+          python desktop/release/manifest.py --artifacts release-assets --version "$RELEASE_VERSION" --commit "$GITHUB_SHA" --verifier desktop/src-tauri/target/release/examples/verify_update --public-key release-assets/updater.pub
+          cd release-assets && sha256sum -c SHA256SUMS
+      - name: Stage and publish the complete stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+        run: python desktop/release/publish.py "$RELEASE_VERSION" release-assets

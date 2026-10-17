@@ -7,6 +7,12 @@ on:
         description: "Published version to test (X.Y.Z, no leading v)"
         required: true
 
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
 jobs:
   published:
     name: Published ${{ inputs.version }} (${{ matrix.platform.slug }})
@@ -48,11 +54,9 @@ jobs:
 
       - name: Exercise the published images with Compose
         run: |
-          git fetch --no-tags --depth=1 origin d7bc836aec566d18252baa43ef000d5bdae5a605
-          git show d7bc836aec566d18252baa43ef000d5bdae5a605:docker-compose.prod.yml > "$RUNNER_TEMP/compose-v1.6.0.yml"
           python3 docker/smoke/compose_smoke.py --tag "$RELEASE_VERSION" --prefix cm-release \
             --expect-version "$RELEASE_VERSION" \
-            --legacy-compose "$RUNNER_TEMP/compose-v1.6.0.yml" --installer
+            --installer
 
       - name: Install with the published installer
         run: sh docker/smoke/published_installer.sh "$RELEASE_VERSION"

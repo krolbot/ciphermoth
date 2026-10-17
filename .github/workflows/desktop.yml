@@ -1,21 +1,25 @@
-name: Desktop alpha
+name: Desktop
 
 on:
-  push:
-    branches: ["phase5-desktop-alpha"]
-    paths:
-      - "desktop/**"
-      - "!desktop/**/*.md"
-      - "backend/**"
-      - "frontend/**"
-      - ".github/workflows/desktop-alpha.yml"
+  pull_request:
+    paths: ["desktop/**", "backend/**", "frontend/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Use the protected production signing key and retain verified packages"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-alpha-${{ github.ref }}
+  group: desktop-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -29,6 +33,7 @@ jobs:
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    environment: ${{ inputs.release && 'desktop-release' || 'desktop-validation' }}
     strategy:
       fail-fast: false
       matrix:
@@ -49,15 +54,27 @@ jobs:
             vcpkg_openssl: arm64-windows-static-md
           - id: linux-x64
             runner: ubuntu-22.04
-            bundles: deb
+            bundles: deb,appimage
           - id: linux-arm64
             runner: ubuntu-22.04-arm
-            bundles: deb
+            bundles: deb,appimage
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted release source
+        if: inputs.release
+        run: |
+          test "$GITHUB_REPOSITORY" = "mr-grj/ciphermoth"
+          case "$GITHUB_REF" in refs/tags/v*|refs/heads/master|refs/heads/release/3.1.0) ;; *) exit 1 ;; esac
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          fi
 
       - name: Record runner
         run: |
@@ -98,7 +115,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf file \
-            xvfb xauth dbus-x11 lsof
+            xvfb xauth dbus-x11 lsof libfuse2
 
       - name: Static OpenSSL for cryptography (macOS without wheel)
         if: matrix.openssl
@@ -135,14 +152,31 @@ jobs:
           uv pip install --python "$py" -r desktop/core/requirements-test.txt
           echo "Verify frozen vectors (120-second limit)"
           "$py" -c 'import subprocess,sys; subprocess.run([sys.argv[1], "--check-vectors", "testdata/vectors"], stdout=open("desktop-results/vectors.json", "wb"), check=True, timeout=120)' "$core"
-          echo "Verify framed production core"
-          CORE_BIN="$PWD/$core" "$py" -m pytest -vv desktop/core/tests --basetemp=desktop-results/core-test-data --junitxml=desktop-results/core-tests.xml
+
+      - name: Configure updater signing
+        env:
+          RELEASE_SIGNING: ${{ inputs.release }}
+          RELEASE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+        run: |
+          cd desktop && npm ci && cd ..
+          python desktop/release/configure_signing.py
 
       - name: Build production application
         run: |
           cd frontend && npm ci && npm test && cd ..
-          cd desktop && npm ci && npm run tauri build -- --bundles "${{ matrix.bundles }}" --ci
+          cd desktop && npm run tauri build -- --bundles "${{ matrix.bundles }}" --ci
           cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+          cargo build --release --example verify_update
+          cd ../../..
+          python desktop/release/artifacts.py --out desktop-results/packages --version "$(node -p 'require("./desktop/package.json").version')"
+
+      - name: Install and test the actual production package
+        run: python desktop/harness/production.py --packages "$PWD/desktop-results/packages" --out "$PWD/desktop-results/production"
+
+      - name: Preserve production artifact before QA builds
+        run: |
+          python -c 'import shutil; shutil.rmtree("desktop/src-tauri/target/release/bundle")'
+
 
       - name: Build separate native QA artifact
         run: |
@@ -153,6 +187,27 @@ jobs:
         run: |
           uv run --no-project --python "$PYTHON_VERSION" desktop/harness/ci_native.py --out "$PWD/desktop-results/native"
 
+      - name: Build disposable signed update versions
+        run: python desktop/release/build_update_fixtures.py "$PWD/desktop-results/update-fixtures"
+
+      - name: Verify real installed application updates
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then py=desktop/core/build/venv/Scripts/python.exe; else py=desktop/core/build/venv/bin/python; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s '-screen 0 1280x1024x24' dbus-run-session -- "$py" desktop/harness/update.py --fixtures "$PWD/desktop-results/update-fixtures" --out "$PWD/desktop-results/update"
+          else
+            "$py" desktop/harness/update.py --fixtures "$PWD/desktop-results/update-fixtures" --out "$PWD/desktop-results/update"
+          fi
+
+      - name: Upload verified production packages
+        if: inputs.release
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-packages-${{ matrix.id }}
+          path: desktop-results/packages/*
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload evidence only
         if: always()
         uses: actions/upload-artifact@v4
@@ -161,10 +216,12 @@ jobs:
           path: |
             desktop-results/core-build.json
             desktop-results/vectors.json
-            desktop-results/core-tests.xml
-            desktop-results/core-test-data/**/core.log
+            desktop-results/production/core-tests.xml
+            desktop-results/production/results.json
+            desktop-results/production/vectors.json
             desktop-results/runner.txt
             desktop-results/source-builds.txt
             desktop-results/native/results.json
             desktop-results/native/webview.json
+            desktop-results/update/results.json
           retention-days: 14
