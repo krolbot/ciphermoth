@@ -29,6 +29,8 @@ def target():
 
 
 def collect(bundle, out, version, qa=False):
+    bundle = bundle.resolve()
+    out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     native = target()
     formats = {
