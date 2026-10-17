@@ -82,13 +82,14 @@ def main():
                     config["version"] = version
                     path.write_text(json.dumps(config, indent=2) + "\n")
                 else:
-                    path.write_text(
+                    # Preserve existing CRLF without a second Windows text-mode translation.
+                    path.write_bytes(
                         re.sub(
                             r'(?m)^(version|CORE_VERSION) = "[^"\n]+"',
                             lambda m, version=version: f'{m[1]} = "{version}"',
                             text,
                             count=1,
-                        )
+                        ).encode()
                     )
             subprocess.run(
                 [
