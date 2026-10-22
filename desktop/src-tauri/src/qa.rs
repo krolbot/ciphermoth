@@ -53,6 +53,14 @@ pub fn update_download(
     Ok(update)
 }
 
+fn update_request_paths(
+    root: &std::path::Path,
+    id: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let request = root.join(format!("update-request-{id}.json"));
+    (request.with_extension("partial"), request)
+}
+
 #[tauri::command]
 pub async fn qa_update_step(
     result: serde_json::Value,
@@ -65,16 +73,10 @@ pub async fn qa_update_step(
     let id = uuid::Uuid::new_v4().to_string();
     let response = root.join(format!("update-{id}.json"));
     let request = serde_json::json!({"id":id,"version":app.package_info().version.to_string(),"pid":std::process::id(),"core":app.state::<std::sync::Arc<crate::sidecar::Supervisor>>().status(),"result":result});
-    std::fs::write(
-        root.join("update-request.partial"),
-        serde_json::to_vec(&request).unwrap(),
-    )
-    .map_err(|_| "QA write failed")?;
-    std::fs::rename(
-        root.join("update-request.partial"),
-        root.join("update-request.json"),
-    )
-    .map_err(|_| "QA write failed")?;
+    let (partial, request_path) = update_request_paths(&root, &id);
+    std::fs::write(&partial, serde_json::to_vec(&request).unwrap())
+        .map_err(|_| "QA write failed")?;
+    std::fs::rename(partial, request_path).map_err(|_| "QA write failed")?;
     for _ in 0..2400 {
         if response.exists() {
             let bytes = std::fs::read(&response).map_err(|_| "QA read failed")?;
@@ -84,6 +86,18 @@ pub async fn qa_update_step(
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     Err("QA host timed out".into())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn concurrent_update_reports_use_distinct_paths() {
+        let root = std::path::Path::new("qa");
+        let (first_partial, first_request) = super::update_request_paths(root, "first");
+        let (second_partial, second_request) = super::update_request_paths(root, "second");
+        assert_ne!(first_partial, second_partial);
+        assert_ne!(first_request, second_request);
+    }
 }
 
 #[tauri::command]

@@ -186,13 +186,13 @@ class Host:
     def receive(self, timeout=180):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            path = self.root / "update-request.json"
-            if path.exists():
+            for path in self.root.glob("update-request-*.json"):
                 report = json.loads(path.read_text())
                 if report["id"] not in self.seen:
                     self.seen.add(report["id"])
                     self.report = report
                     assert report["result"].get("ok", True), report["result"]
+                    path.unlink()
                     return report
             time.sleep(0.1)
         raise TimeoutError("Installed update app did not report; see scoped shell.log")
