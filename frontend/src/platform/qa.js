@@ -73,7 +73,7 @@ try {
   )
     throw new Error("saved entry not found");
   checks.push("retrieve password through native IPC");
-  const search = await until(() => document.querySelector('input[placeholder^="Search name"]'));
+  const search = await until(() => document.querySelector("input[placeholder]"));
   const setSearch = (value) => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(search, value);
     search.dispatchEvent(new Event("input", { bubbles: true }));
