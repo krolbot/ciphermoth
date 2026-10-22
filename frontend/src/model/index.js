@@ -2,12 +2,14 @@ import MasterPassword from "./masterPassword";
 import Passwords from "./passwords";
 import Settings from "./settings";
 import Updates from "./updates";
+import Users from "./users";
 
 const ciphermothModels = {
   masterPassword: MasterPassword,
   passwords: Passwords,
   settings: Settings,
   updates: Updates,
+  users: Users,
 };
 
 export default ciphermothModels;

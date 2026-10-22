@@ -73,6 +73,8 @@ def _digest(token: str) -> bytes:
 @dataclass(slots=True)
 class _Session:
     key: VaultKey = field(repr=False)
+    user_id: int
+    credential_fingerprint: bytes | None = field(repr=False)
     created: Instant
     last_used: Instant
 
@@ -122,7 +124,12 @@ class VaultSessions:
         with self._lock:
             return len(self._sessions)
 
-    def open(self, key: VaultKey) -> str:
+    def open(
+        self,
+        key: VaultKey,
+        user_id: int = 0,
+        credential_fingerprint: bytes | None = None,
+    ) -> str:
         token = secrets.token_urlsafe(TOKEN_BYTES)
         now = self._clock()
         with self._lock:
@@ -130,7 +137,11 @@ class VaultSessions:
             while len(self._sessions) >= self._max_sessions:
                 self._sessions.popitem(last=False)
             self._sessions[_digest(token)] = _Session(
-                key=key, created=now, last_used=now
+                key=key,
+                user_id=user_id,
+                credential_fingerprint=credential_fingerprint,
+                created=now,
+                last_used=now,
             )
         return token
 
@@ -160,6 +171,24 @@ class VaultSessions:
                 expires_in_ms=max(0, int(remaining)),
             )
 
+    def user_id(self, token: str | None) -> int:
+        """Return the account bound to a live session without refreshing it."""
+        now = self._clock()
+        with self._lock:
+            _, session = self._live(token, now)
+            return session.user_id
+
+    def credential_fingerprint(self, token: str | None) -> bytes | None:
+        """Return the account-credential revision bound to a live session."""
+        now = self._clock()
+        with self._lock:
+            _, session = self._live(token, now)
+            return session.credential_fingerprint
+
+    def user_ids(self) -> tuple[int, ...]:
+        with self._lock:
+            return tuple(session.user_id for session in self._sessions.values())
+
     def revoke(self, token: str | None) -> bool:
         if token is None or not _TOKEN.fullmatch(token):
             return False
@@ -171,6 +200,29 @@ class VaultSessions:
             count = len(self._sessions)
             self._sessions.clear()
             return count
+
+    def revoke_user(self, user_id: int) -> int:
+        with self._lock:
+            matching = [
+                digest
+                for digest, session in self._sessions.items()
+                if session.user_id == user_id
+            ]
+            for digest in matching:
+                del self._sessions[digest]
+            return len(matching)
+
+    def revoke_user_except(self, user_id: int, token: str) -> int:
+        keep = _digest(token)
+        with self._lock:
+            matching = [
+                digest
+                for digest, session in self._sessions.items()
+                if session.user_id == user_id and digest != keep
+            ]
+            for digest in matching:
+                del self._sessions[digest]
+            return len(matching)
 
     def drop_expired(self) -> int:
         with self._lock:

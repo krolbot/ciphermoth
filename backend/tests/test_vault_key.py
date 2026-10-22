@@ -173,13 +173,17 @@ async def _readable_state(client: httpx.AsyncClient, headers: Headers) -> dict:
     }
 
 
-async def test_rotation_reencrypts_everything_and_revokes_the_old_key(
+async def test_password_change_rewraps_the_same_key_and_revokes_old_sessions(
     client: httpx.AsyncClient,
 ) -> None:
     token = await create_vault(client)
     old_key = await stored_vault_key()
     blob = await _seed_everything(client, auth(token))
     before = await _readable_state(client, auth(token))
+    ciphertext_before = (
+        await db_execute("SELECT id, document FROM entries ORDER BY id"),
+        await db_execute("SELECT id, meta, content FROM attachments ORDER BY id"),
+    )
     assert before["downloads"]["Preț ünïcode.bin"] == blob
     assert len(before["active"][0]["password_history"]) == 2
 
@@ -194,16 +198,20 @@ async def test_rotation_reencrypts_everything_and_revokes_the_old_key(
     assert resp.json()["valid"] is False
     fresh = await unlock(client, NEW_MASTER_PASSWORD)
     new_key = await stored_vault_key(NEW_MASTER_PASSWORD)
-    assert new_key != old_key
+    assert new_key == old_key
     assert await _accepts(new_key)
-    assert not await _accepts(old_key)
+    assert await _accepts(old_key)
 
     assert (await client.get("/passwords", headers=auth(token))).status_code == 401
     assert await _readable_state(client, auth(fresh)) == before
 
     assert await _sealed_values() > 0
     assert await _failures(new_key) == 0
-    assert await _failures(old_key) == await _sealed_values()
+    assert await _failures(old_key) == 0
+    assert ciphertext_before == (
+        await db_execute("SELECT id, document FROM entries ORDER BY id"),
+        await db_execute("SELECT id, meta, content FROM attachments ORDER BY id"),
+    )
 
 
 async def test_rotation_with_wrong_current_password_changes_nothing(
@@ -342,7 +350,7 @@ async def test_key_check_never_appears_in_api_responses(
         assert "key_check" not in json.dumps(resp.json())
 
 
-@pytest.mark.parametrize("damage", ["foreign key", "previous key"])
+@pytest.mark.parametrize("damage", ["foreign key", "zeroed check"])
 async def test_a_damaged_key_check_fails_closed_and_is_never_rewritten(
     client: httpx.AsyncClient, damage: str
 ) -> None:
@@ -354,13 +362,8 @@ async def test_a_damaged_key_check_fails_closed_and_is_never_rewritten(
     if damage == "foreign key":
         damaged = hkdf(os.urandom(32), "ciphermoth/v2/key-check")
     else:
-        damaged = await _key_check()
-        resp = await client.patch(
-            "/master_password/update", json=ROTATE, headers=auth(token)
-        )
-        assert resp.status_code == 200
-        token = await unlock(client, NEW_MASTER_PASSWORD)
-    password = MASTER_PASSWORD if damage == "foreign key" else NEW_MASTER_PASSWORD
+        damaged = bytes(32)
+    password = MASTER_PASSWORD
     await db_execute("UPDATE vault SET key_check = :token", token=damaged)
     before = await db_snapshot()
 

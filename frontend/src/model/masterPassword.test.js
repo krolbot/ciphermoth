@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client";
 import { routes } from "../test/adapter";
 import { stubBrowser } from "../test/globals";
-import { getSessionToken, isAuth } from "../utils";
+import { getCurrentUser, getSessionToken, isAuth } from "../utils";
 import MasterPassword from "./masterPassword";
 
 const KEY = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY=";
 const TOKEN = "kM3x1y8Qe0bWv7c2Z9pL4tR6sN5aH1jD0fG3uY8iO2w";
+const USER = { id: 7, username: "moth-admin", role: "admin", active: true };
 const originalAdapter = apiClient.defaults.adapter;
 
 let browser;
@@ -33,54 +34,67 @@ const build = (table) => {
   };
 };
 
-describe("unlock", () => {
-  it("stores only the session token and opens the vault on a valid password", async () => {
+const authenticate = (actions, endpoint = "/auth/login", password = "Moth-Test-Vault-2026!") =>
+  actions.authenticate({ endpoint, username: USER.username, password });
+
+describe("authenticate", () => {
+  it("stores the opaque session and current user, then opens the vault", async () => {
     const { actions, state: current } = build({
-      "POST /master_password/unlock": [200, { valid: true, session_token: TOKEN }],
+      "POST /auth/login": [
+        200,
+        { valid: true, session_token: TOKEN, user: USER, idle_timeout_ms: 180000 },
+      ],
     });
-    await actions.unlock({ master_password: "Moth-Test-Vault-2026!" });
+
+    await authenticate(actions);
+
     expect(getSessionToken()).toBe(TOKEN);
-    expect(browser.storage.entries()).toEqual({ ciphermothSession: TOKEN });
+    expect(getCurrentUser()).toEqual(USER);
+    expect(browser.storage.entries()).toEqual({
+      ciphermothSession: TOKEN,
+      ciphermothUser: JSON.stringify(USER),
+    });
     expect(browser.location.replace).toHaveBeenCalledWith("/passwords");
     expect(current().error).toBeNull();
     expect(current().loading).toBe(false);
-    expect(JSON.parse(seen[0].data)).toEqual({ master_password: "Moth-Test-Vault-2026!" });
+    expect(JSON.parse(seen[0].data)).toEqual({
+      username: USER.username,
+      password: "Moth-Test-Vault-2026!",
+    });
   });
 
-  it("never stores a vault key, even if a server sends one", async () => {
+  it("never stores vault key material even if a server sends it", async () => {
     const { actions } = build({
-      "POST /master_password/unlock": [
+      "POST /auth/login": [
         200,
-        { valid: true, session_token: TOKEN, key_derivation: KEY },
+        { valid: true, session_token: TOKEN, user: USER, key_derivation: KEY },
       ],
     });
-    await actions.unlock({ master_password: "Moth-Test-Vault-2026!" });
+
+    await authenticate(actions);
+
     expect(JSON.stringify(browser.storage.entries())).not.toContain(KEY);
   });
 
-  it("never asks the deprecated endpoint for the key", async () => {
-    const { actions } = build({
-      "POST /master_password/unlock": [200, { valid: true, session_token: TOKEN }],
-    });
-    await actions.unlock({ master_password: "x" });
-    expect(seen.map((config) => config.url)).toEqual(["/master_password/unlock"]);
-  });
-
-  it("stays locked on a wrong password", async () => {
+  it("stays locked when credentials are rejected", async () => {
     const { actions, state: current } = build({
-      "POST /master_password/unlock": [200, { valid: false, session_token: null }],
+      "POST /auth/login": [200, { valid: false, session_token: null, user: null }],
     });
-    await actions.unlock({ master_password: "wrong" });
+
+    await authenticate(actions, "/auth/login", "wrong");
+
     expect(isAuth()).toBe(false);
     expect(browser.location.replace).not.toHaveBeenCalled();
-    expect(current().error).toBe("Invalid master password.");
+    expect(current().error).toBe("Invalid username or password.");
   });
 
-  it("stays locked when the server answers valid without a session", async () => {
+  it("stays locked when the server omits either the session or user", async () => {
     const { actions } = build({
-      "POST /master_password/unlock": [200, { valid: true, key_derivation: KEY }],
+      "POST /auth/login": [200, { valid: true, session_token: TOKEN, user: null }],
     });
-    await actions.unlock({ master_password: "x" });
+
+    await authenticate(actions);
+
     expect(browser.storage.entries()).toEqual({});
     expect(isAuth()).toBe(false);
     expect(browser.location.replace).not.toHaveBeenCalled();
@@ -88,71 +102,73 @@ describe("unlock", () => {
 
   it("explains rate limiting", async () => {
     const { actions, state: current } = build({
-      "POST /master_password/unlock": [429, { detail: "Too many attempts." }],
+      "POST /auth/login": [429, { detail: "Too many attempts." }],
     });
-    await actions.unlock({ master_password: "x" });
+
+    await authenticate(actions, "/auth/login", "wrong");
+
     expect(isAuth()).toBe(false);
     expect(current().error).toBe("Too many attempts. Please try again in an hour.");
   });
 
   it("shows the server detail on other errors", async () => {
     const { actions, state: current } = build({
-      "POST /master_password/unlock": [404, { detail: "No master password found." }],
+      "POST /auth/login": [403, { detail: "Account disabled." }],
     });
-    await actions.unlock({ master_password: "x" });
-    expect(current().error).toBe("No master password found.");
+
+    await authenticate(actions);
+
+    expect(current().error).toBe("Account disabled.");
     expect(current().loading).toBe(false);
   });
-});
 
-describe("create", () => {
-  it("stores the returned session and opens the vault", async () => {
+  it("uses the closed-registration bootstrap endpoint for the first administrator", async () => {
     const { actions } = build({
-      "POST /master_password/create": [
+      "POST /auth/bootstrap": [
         200,
-        { created: true, detail: "ok", session_token: TOKEN, idle_timeout_ms: 180000 },
+        { valid: true, session_token: TOKEN, user: USER, idle_timeout_ms: 180000 },
       ],
     });
-    await actions.create({ master_password: "Moth-Test-Vault-2026!" });
-    expect(browser.storage.entries()).toEqual({ ciphermothSession: TOKEN });
+
+    await authenticate(actions, "/auth/bootstrap");
+
+    expect(getSessionToken()).toBe(TOKEN);
+    expect(getCurrentUser()).toEqual(USER);
+    expect(seen.map((config) => config.url)).toEqual(["/auth/bootstrap"]);
     expect(browser.location.replace).toHaveBeenCalledWith("/passwords");
   });
 
-  it("asks for an unlock instead of storing a key from an older server", async () => {
+  it("surfaces the backend password policy error and stays locked", async () => {
     const { actions, state: current } = build({
-      "POST /master_password/create": [200, { created: true, detail: "ok", key_derivation: KEY }],
-    });
-    await actions.create({ master_password: "Moth-Test-Vault-2026!" });
-    expect(browser.storage.entries()).toEqual({});
-    expect(browser.location.replace).not.toHaveBeenCalled();
-    expect(current().initialized).toBe(true);
-  });
-
-  it("surfaces the strength policy error and stays locked", async () => {
-    const { actions, state: current } = build({
-      "POST /master_password/create": [
+      "POST /auth/bootstrap": [
         422,
         { detail: [{ msg: "Value error, Master password must be at least 12 characters long." }] },
       ],
     });
-    await actions.create({ master_password: "short" });
+
+    await authenticate(actions, "/auth/bootstrap", "short");
+
     expect(isAuth()).toBe(false);
     expect(current().error).toBe("Master password must be at least 12 characters long.");
   });
 });
 
 describe("status", () => {
-  it("reports the vault status", async () => {
+  it("reports whether account bootstrap has completed", async () => {
     const { actions, state: current } = build({
-      "GET /master_password/status": [200, { initialized: false }],
+      "GET /auth/status": [200, { initialized: false }],
     });
+
     await actions.fetchStatus();
+
     expect(current().initialized).toBe(false);
   });
 
-  it("assumes an existing vault when the status call fails", async () => {
+  it("fails closed to the login screen when the status call fails", async () => {
     const { actions, state: current } = build({});
+
     await actions.fetchStatus();
+
     expect(current().initialized).toBe(true);
   });
 });

@@ -8,11 +8,13 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
 import { IS_DESKTOP } from "../../platform";
 
 const BackupDialog = ({ open, onClose, onBackup }) => {
+  const { t } = useTranslation();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,7 +28,7 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
 
   const handleBackup = async () => {
     if (!password.trim()) {
-      setError("Master password is required.");
+      setError(t("backup.passwordRequired"));
       return;
     }
     setLoading(true);
@@ -42,24 +44,18 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
 
   return (
     <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Create Backup</DialogTitle>
+      <DialogTitle>{t("backup.title")}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            A complete, encrypted copy of your vault: every entry, the trash, password history,
-            attachments and settings, in one <strong>.cmbackup</strong> file locked with your master
-            password.
+            {t("backup.descriptionFull")}
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Restore it here with Import, into this vault or a new one. Keep the file somewhere safe:
-            anyone who knows the master password used for this backup can open it, even after you
-            change your master password.{" "}
-            {IS_DESKTOP
-              ? "Choose a new filename in the Save dialog. Existing files are never replaced."
-              : "Check that your browser actually saves the file."}
+            {t("backup.restoreAdvice")}{" "}
+            {t(IS_DESKTOP ? "backup.desktopAdvice" : "backup.webAdvice")}
           </Typography>
           <PasswordField
-            label="Master Password"
+            label={t("auth.masterPassword")}
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
@@ -78,10 +74,10 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={loading}>
-          Cancel
+          {t("common.actions.cancel")}
         </Button>
         <Button variant="contained" onClick={handleBackup} loading={loading}>
-          Create Backup
+          {t("backup.title")}
         </Button>
       </DialogActions>
     </Dialog>

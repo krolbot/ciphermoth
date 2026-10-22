@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 export const API_URL_PLACEHOLDER = "__CIPHERMOTH_API_URL__";
 export const DEFAULT_API_URL = "http://localhost:8000/api";
-export const DEFAULT_GITHUB_REPO = "mr-grj/ciphermoth";
+export const DEFAULT_GITHUB_REPO = "krolbot/ciphermoth";
 
 const RELATIVE_PATH = /^(?!\/\/)[A-Za-z0-9._~\-/]+$/;
 const GITHUB_REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;

@@ -48,8 +48,16 @@ def data_dir() -> Path:
 async def reset_vault() -> None:
     """Return the shared test vault to the state of a fresh install."""
     async with engine.begin() as conn:
-        for table in ("attachments", "entries", "vault"):
+        for table in (
+            "attachments",
+            "entry_access",
+            "entries",
+            "vault",
+        ):
             await conn.execute(text(f"DELETE FROM {table}"))
+        # Service users reference their owning human account with RESTRICT.
+        await conn.execute(text("DELETE FROM users WHERE role = 'service'"))
+        await conn.execute(text("DELETE FROM users"))
         await conn.execute(text("DELETE FROM settings"))
         await conn.execute(text("DELETE FROM sqlite_sequence"))
         await conn.execute(insert(SettingsModel).values(**SETTINGS_DEFAULTS))
@@ -397,13 +405,15 @@ async def plant_entry(
     }
     uid = os.urandom(16)
     sealed = key.seal_entry(uid, json.dumps(document).encode())
+    [(owner_id,)] = await db_execute("SELECT owner_user_id FROM vault WHERE id = 1")
     await db_execute(
-        "INSERT INTO entries (uid, name_index, document, backed_up, deleted) "
-        "VALUES (:uid, :index, :document, 0, :deleted)",
+        "INSERT INTO entries (uid, name_index, document, backed_up, deleted, owner_id) "
+        "VALUES (:uid, :index, :document, 0, :deleted, :owner_id)",
         uid=uid,
         index=key.name_index(name),
         document=sealed,
         deleted=deleted,
+        owner_id=owner_id,
     )
     [(entry_id,)] = await db_execute("SELECT id FROM entries WHERE uid = :uid", uid=uid)
     return entry_id

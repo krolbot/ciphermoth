@@ -244,7 +244,7 @@ def main():
         "notes": "Disposable native update acceptance",
         "platforms": {
             native: {
-                "url": f"https://github.com/mr-grj/ciphermoth/releases/download/v3.0.99/{newer.name}",
+                "url": f"https://github.com/krolbot/ciphermoth/releases/download/v3.0.99/{newer.name}",
                 "signature": Path(str(newer) + ".sig").read_text().strip(),
             }
         },

@@ -160,20 +160,22 @@ async def test_a_damaged_row_is_isolated_reported_and_removable(
     damaged = await client.get("/vault/damaged", headers=headers)
     assert damaged.json() == {"entries": [planted], "attachments": []}
 
+    rotated = await client.patch(
+        "/master_password/update", json=ROTATE, headers=headers
+    )
+    assert rotated.status_code == 200, rotated.text
+    headers = auth(await unlock(client, NEW_MASTER_PASSWORD))
+
     before = await db_snapshot()
-    for request in (
-        client.patch("/master_password/update", json=ROTATE, headers=headers),
-        client.post(
-            "/passwords/backup",
-            json={"master_password": MASTER_PASSWORD},
-            headers=headers,
-        ),
-    ):
-        resp = await request
-        assert resp.status_code == 500
-        assert resp.json()["code"] == "vault_damaged"
-        assert f"Entry #{planted}" in resp.json()["detail"]
-        assert "ciphermoth damaged" in resp.json()["detail"]
+    backup = await client.post(
+        "/passwords/backup",
+        json={"master_password": NEW_MASTER_PASSWORD},
+        headers=headers,
+    )
+    assert backup.status_code == 500
+    assert backup.json()["code"] == "vault_damaged"
+    assert f"Entry #{planted}" in backup.json()["detail"]
+    assert "ciphermoth damaged" in backup.json()["detail"]
     [(good_id,)] = await db_execute(
         "SELECT id FROM entries WHERE id <> :id", id=planted
     )
@@ -192,8 +194,12 @@ async def test_a_damaged_row_is_isolated_reported_and_removable(
         "entries": [],
         "attachments": [],
     }
-    resp = await client.patch("/master_password/update", json=ROTATE, headers=headers)
-    assert resp.status_code == 200, resp.text
+    backup = await client.post(
+        "/passwords/backup",
+        json={"master_password": NEW_MASTER_PASSWORD},
+        headers=headers,
+    )
+    assert backup.status_code == 200, backup.text
 
 
 async def test_a_damaged_attachment_is_isolated_and_removable(

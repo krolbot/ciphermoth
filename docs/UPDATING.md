@@ -2,7 +2,7 @@
 
 ## Desktop updates
 
-Download from [GitHub Releases](https://github.com/mr-grj/ciphermoth/releases/latest), choosing your CPU architecture. The desktop app includes its own Python runtime. No development tools or account are needed.
+Download from [GitHub Releases](https://github.com/krolbot/ciphermoth/releases/latest), choosing your CPU architecture. The desktop app includes its own Python runtime. No development tools are needed.
 
 - **macOS:** open the DMG, drag CipherMoth to Applications, then launch the copied app. The app is ad-hoc signed for bundle integrity, but has no Apple Developer ID or notarization. Gatekeeper may block an internet download. After trying to open it, use **System Settings → Privacy & Security → Open Anyway** if macOS offers it and you trust the release. Managed Macs may disallow that exception. Do not disable Gatekeeper or remove quarantine globally. [Apple explains these exceptions](https://support.apple.com/en-us/102445).
 - **Windows:** run the NSIS installer for x64 or ARM64. It installs for the current user. There is no Authenticode verified publisher; SmartScreen may warn. Inspect **More info**, confirm the download source, and choose **Run anyway** only if offered and you trust it. Organizational policies, Smart App Control or antivirus may block it; do not disable them to install CipherMoth. [Microsoft explains Smart App Control](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
@@ -25,7 +25,7 @@ Docker updates are manual. The web app checks GitHub in the browser and shows th
 
 ## Update
 
-**Coming from 2.0? Follow [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1) first.** The general commands below do not convert a 2.0 vault; 3.0 refuses it unchanged. For a compatible 3.x vault, in your CipherMoth folder:
+**Coming from 2.0? Follow [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1) first. Coming from the single-user 3.1 release? Follow [Moving from schema 2](#moving-from-ciphermoth-31-schema-2) first.** For an already compatible schema-3 vault, in your CipherMoth folder:
 
 ```shell
 docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
@@ -38,8 +38,8 @@ The first command writes a consistent, integrity-checked copy of the vault into 
 To check that the images are CipherMoth's own before you start them, verify their signatures (see [SECURITY.md](../SECURITY.md)):
 
 ```shell
-cosign verify ghcr.io/mr-grj/ciphermoth-backend:3.1.0 \
-  --certificate-identity-regexp '^https://github.com/mr-grj/ciphermoth/\.github/workflows/release\.yml@refs/tags/v.*' \
+cosign verify ghcr.io/krolbot/ciphermoth-backend:3.1.0 \
+  --certificate-identity-regexp '^https://github.com/krolbot/ciphermoth/\.github/workflows/release\.yml@refs/tags/v.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -66,7 +66,7 @@ docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
 
 - **Consistent while CipherMoth runs.** The copy goes through SQLite's online backup API, so it includes every committed change, also those still in the write-ahead log (`vault.db-wal`), and never a half-written one. Copying `vault.db` with `cp` or `docker cp` while CipherMoth runs is **not** safe: the file alone can miss recent changes.
 - **Checked.** A snapshot is written to a temporary file, checked with SQLite's `integrity_check` and `foreign_key_check` and for the vault's identity, flushed to disk, and only then renamed into `/data/snapshots/vault-<time>.db` (mode `0600`). It is one self-contained file with no `-wal` or `-shm` next to it.
-- **As safe as the vault.** A snapshot holds the same ciphertext as the vault and opens only with the master password that was current when it was taken. Like the vault, it shows only counts, timestamps and sizes, never entry content (see [VAULT_FORMAT.md](VAULT_FORMAT.md#4-sqlite-layout-schema-2)).
+- **As safe as the vault.** A snapshot holds the same ciphertext as the vault and opens only through one of the account wrappers current when it was taken. It exposes account names, roles, ownership and grants as documented in [VAULT_FORMAT.md](VAULT_FORMAT.md#4-sqlite-layout-schema-3), but not entry content.
 - Snapshots stay in the volume until you delete them. To keep one elsewhere, copy it out (it is a finished file, so this is safe):
 
   ```shell
@@ -80,7 +80,7 @@ docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
   docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin check /data/snapshots/vault-<time>.db
   ```
 
-A **backup** (`.cmbackup`, from the web UI's Backup button or `cip backup`) is a different thing: a complete, portable, password-protected copy of everything in the vault (entries, trash, history, attachments, settings) that you can restore into this vault or any other one, also on another machine. A **snapshot** is a raw copy of this installation's vault file, for getting this installation back to an earlier state. Keep both: snapshots for local recovery, backups somewhere else.
+A **backup** (`.cmbackup`, from the web UI's Backup button or `cip backup`) is a different thing: a portable, password-protected copy of entries visible to the current account, including trash, history, attachments and settings. It does not carry users, roles or grants. A **snapshot** is a raw copy of this installation's vault file, including its account and grant configuration, for getting the installation back to an earlier state. Keep both: snapshots for local recovery, backups somewhere else.
 
 ## Restore a snapshot
 
@@ -120,7 +120,27 @@ The backend checks the vault before serving anything, through a read-only connec
 
 ## When entries cannot be read
 
-If part of the vault file is damaged (a failing disk) or was altered, the affected entries and attachments are left out of the vault and the web UI shows a warning (`cip damaged` lists them). Everything else keeps working, but backups and master password changes wait. Either restore a snapshot from before the damage (keeps everything), or intentionally remove the damaged items: the **Remove** button in the warning, or `cip damaged --remove`. Removing a damaged entry also permanently removes its attachments, including any that are still readable. Each requested row is checked again before removal; a readable entry cannot be removed through this recovery action.
+If part of the vault file is damaged (a failing disk) or was altered, the affected entries and attachments are left out of the vault and the web UI shows a warning (`cip damaged` lists them). Everything else keeps working, but a portable backup refuses to omit damaged visible rows. Either restore a snapshot from before the damage (keeps everything), or intentionally remove the damaged items: the **Remove** button in the warning, or `cip damaged --remove`. Removing a damaged entry also permanently removes its attachments, including any that are still readable. Each requested row is checked again before removal; a readable entry cannot be removed through this recovery action.
+
+## Moving from CipherMoth 3.1 (schema 2)
+
+CipherMoth 3.1 used the same encrypted entry and attachment format but had one master password and no account or grant tables. Docker migration is explicit and requires the backend to be stopped:
+
+```shell
+# Keep the old release pinned while making its final checked snapshot.
+docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
+# Stop the old backend, set CIPHERMOTH_VERSION to the new release, then pull it.
+docker compose -f docker-compose.prod.yml stop backend
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml run --rm backend ciphermoth-admin migrate-users --yes
+docker compose -f docker-compose.prod.yml up -d
+```
+
+`migrate-users` verifies schema 2, writes another checked `pre-users-<time>.db` rollback snapshot, then adds account, ownership and grant metadata in one SQLite transaction. No entry or attachment ciphertext is rewritten. Open the UI afterwards and create the first administrator with a username and the **existing** master password; all existing entries become owned by that administrator.
+
+The desktop app performs the same checked migration automatically during its first updated start because its private core exclusively owns the local data folder. It leaves the `pre-users-<time>.db` snapshot in the desktop snapshot folder, then asks for a username and the existing master password.
+
+To roll Docker back, stop the new backend, pin 3.1 again, and restore the `pre-users-<time>.db` snapshot with the 3.1 image's admin tool. Any changes made after migration are lost. The old 3.1 application cannot open schema 3 directly.
 
 ## Moving from CipherMoth 2.0 (vault format 1)
 
@@ -159,7 +179,33 @@ docker compose -f docker-compose.prod.yml run --rm --entrypoint sh backend -c 'm
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-## Moving from a PostgreSQL release (v1.6.0 and older)
+## Moving from the multi-user PostgreSQL fork
+
+The multi-user fork needs a two-stage migration because its PostgreSQL records are encrypted with account-held keys.
+The SQLite backend cannot decrypt them by itself. Do not replace the old backend until an owner has downloaded and
+checked the migration archive.
+
+1. Back up PostgreSQL and keep the old Compose file, image digests and environment file. Do not remove its data folder
+   or volume. Record non-secret totals for users by role, active and trashed entries, grants and attachments.
+2. While the old backend still runs, install the migration-export frontend built from the same legacy release. Sign in
+   as each human entry owner and create a backup. The migration archive includes that owner's active entries and trash,
+   history, attachments and grants. Shared entries are exported by their owner, not once per viewer. Keep the archive
+   off the server and verify that the browser actually downloaded it.
+3. Stop the old stack without deleting volumes. Start this release with a new SQLite data volume. Bootstrap the first
+   administrator with the exact legacy username and its existing password.
+4. Before importing, recreate every human and service share target with the exact legacy username and role. New service
+   tokens are issued here; old PostgreSQL service tokens do not carry over. Store and deploy the replacements before
+   retiring the old stack.
+5. Import each migration archive through **Import → CipherMoth backup**. Import is transactional: a wrong password,
+   missing owner/share target, role mismatch, duplicate legacy ID, damaged attachment or invalid grant writes nothing.
+6. Compare the new installation with the recorded totals and exercise login, read/write grants, trash, history,
+   attachments, encrypted backup/restore and MCP. Take a SQLite snapshot and a portable backup before switching traffic.
+
+Rollback is to stop the SQLite stack and restore the untouched legacy Compose file and PostgreSQL data. Do not run
+`down -v`, delete the PostgreSQL folder, or reuse it for SQLite. Keep both systems until the count and behavior checks
+have passed and the new service tokens are in use.
+
+## Moving from an upstream PostgreSQL release (v1.6.0 and older)
 
 Releases up to v1.6.0 stored the vault in PostgreSQL. CipherMoth 2.0 and later keep it in SQLite and **require a fresh installation**: it starts a new, empty vault, does not read or convert the old database, and never deletes it. You can always go back.
 

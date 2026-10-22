@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useStoreState } from "easy-peasy";
+import { useTranslation } from "react-i18next";
 
 import { GLOW } from "../lib/brand";
 import { MANUAL_UPDATE_COMMAND } from "../lib/updateCommands";
@@ -40,11 +41,12 @@ const Command = ({ children }) => (
 );
 
 const UpdateDialog = ({ open, onClose }) => {
+  const { t } = useTranslation();
   const { current, latest, releaseUrl } = useStoreState((s) => s.ciphermothModels.updates);
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>A new moult is ready</DialogTitle>
+      <DialogTitle>{t("updateDialog.title")}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.5 }}>
           <Stack direction="row" spacing={1} alignItems="center">
@@ -59,22 +61,20 @@ const UpdateDialog = ({ open, onClose }) => {
 
           {releaseUrl && (
             <Link href={releaseUrl} target="_blank" rel="noopener noreferrer" variant="body2">
-              Read the release notes on GitHub
+              {t("updateDialog.releaseNotes")}
             </Link>
           )}
 
           <Box>
             <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
-              Update from a terminal in your CipherMoth folder. The first command keeps a raw
-              snapshot of the encrypted vault file, so you can always go back. It opens only with
-              the master password you have today; for a portable copy, use Backup.
+              {t("updateDialog.manualBackupDescription")}
             </Typography>
             <Command>{MANUAL_UPDATE_COMMAND}</Command>
           </Box>
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>{t("common.actions.close")}</Button>
       </DialogActions>
     </Dialog>
   );

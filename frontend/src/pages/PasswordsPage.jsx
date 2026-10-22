@@ -19,6 +19,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
+import { Trans, useTranslation } from "react-i18next";
 
 import BackupDialog from "../components/vault/BackupDialog";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -26,20 +27,21 @@ import EmptyVault from "../components/vault/EmptyVault";
 import HealthDialog from "../components/vault/HealthDialog";
 import ImportDialog from "../components/vault/ImportDialog";
 import PasswordFormDialog from "../components/vault/PasswordFormDialog";
+import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
 import { createColumns } from "../components/vault/columns";
 import { gridBaseSx } from "../components/vault/gridStyles";
 import useClipboard from "../hooks/useClipboard";
 
-const buildSubtitle = (loading, passwords) => {
-  if (loading) return "Loading…";
+const buildSubtitle = (loading, passwords, t) => {
+  if (loading) return t("common.labels.loading");
   const n = passwords.length;
-  if (n === 0) return "Nothing here yet. Your secrets are waiting for the dark.";
-  const word = n === 1 ? "secret" : "secrets";
-  return `${n} ${word} in the dark.`;
+  if (n === 0) return t("vault.subtitle.empty");
+  return `${t("vault.subtitle.secretCount", { count: n })}.`;
 };
 
 const PasswordsPage = () => {
+  const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -65,6 +67,7 @@ const PasswordsPage = () => {
   const [visibleRows, setVisibleRows] = useState(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [shareTarget, setShareTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [backupOpen, setBackupOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -101,6 +104,7 @@ const PasswordsPage = () => {
   };
 
   const openEdit = useCallback((row) => {
+    if (row.access === "read") return;
     setEditTarget(row);
     setDialogOpen(true);
   }, []);
@@ -127,14 +131,20 @@ const PasswordsPage = () => {
         },
         new_password: entry,
       });
-      enqueueSnackbar(entry.kind === "note" ? "Secure note updated." : "Password updated.", {
-        variant: "success",
-      });
+      enqueueSnackbar(
+        t(entry.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"),
+        {
+          variant: "success",
+        }
+      );
     } else {
       await create(entry);
-      enqueueSnackbar(entry.kind === "note" ? "Secure note created." : "Password created.", {
-        variant: "success",
-      });
+      enqueueSnackbar(
+        t(entry.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"),
+        {
+          variant: "success",
+        }
+      );
     }
     setDialogOpen(false);
   };
@@ -142,7 +152,7 @@ const PasswordsPage = () => {
   const handleDelete = async () => {
     try {
       await remove(deleteTarget);
-      enqueueSnackbar("Moved to trash.", { variant: "success" });
+      enqueueSnackbar(t("vault.messages.movedToTrash"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     } finally {
@@ -153,7 +163,7 @@ const PasswordsPage = () => {
   const handleRestore = async (name) => {
     try {
       await restore(name);
-      enqueueSnackbar("Restored from trash.", { variant: "success" });
+      enqueueSnackbar(t("vault.messages.restored"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
@@ -163,7 +173,7 @@ const PasswordsPage = () => {
     setRemoveDamagedOpen(false);
     try {
       await removeDamaged(damaged);
-      enqueueSnackbar("Damaged rows removed.", { variant: "success" });
+      enqueueSnackbar(t("vault.damage.removed"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
@@ -172,7 +182,7 @@ const PasswordsPage = () => {
   const handlePurge = async (name) => {
     try {
       await purge(name);
-      enqueueSnackbar("Permanently deleted.", { variant: "success" });
+      enqueueSnackbar(t("vault.messages.permanentlyDeleted"), { variant: "success" });
     } catch (err) {
       enqueueSnackbar(err.message, { variant: "error" });
     }
@@ -180,7 +190,7 @@ const PasswordsPage = () => {
 
   const handleBackup = async (masterPassword) => {
     await backup(masterPassword);
-    enqueueSnackbar("Download requested. Check that the backup file was saved and keep it safe.", {
+    enqueueSnackbar(t("vault.messages.backupRequested"), {
       variant: "info",
     });
   };
@@ -194,8 +204,10 @@ const PasswordsPage = () => {
         onCopy: copy,
         onEdit: openEdit,
         onDelete: setDeleteTarget,
+        onShare: setShareTarget,
+        t,
       }),
-    [visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit]
+    [visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit, t]
   );
 
   const folderOptions = useMemo(
@@ -233,31 +245,41 @@ const PasswordsPage = () => {
     );
   }, [passwords, search, activeFolder]);
 
-  const subtitle = useMemo(() => buildSubtitle(loading, passwords), [loading, passwords]);
+  const subtitle = useMemo(() => buildSubtitle(loading, passwords, t), [loading, passwords, t]);
   const isEmpty = !loading && passwords.length === 0;
 
   return (
     <Box>
       <Stack
-        direction="row"
-        sx={{ justifyContent: "space-between", alignItems: "flex-start", mb: 2.5 }}
+        direction={{ xs: "column", md: "row" }}
+        spacing={2}
+        sx={{
+          justifyContent: "space-between",
+          alignItems: { xs: "stretch", md: "flex-start" },
+          mb: 2.5,
+        }}
       >
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-            The Vault
+            {t("vault.title")}
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
             {subtitle}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
+        <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{ flexWrap: "wrap", justifyContent: { xs: "flex-start", md: "flex-end" } }}
+        >
           <Button
             variant="outlined"
             startIcon={<HealthAndSafetyIcon />}
             onClick={() => setHealthOpen(true)}
             disabled={passwords.length === 0}
           >
-            Health
+            {t("vault.health")}
           </Button>
           <Button
             variant="outlined"
@@ -265,36 +287,40 @@ const PasswordsPage = () => {
             onClick={() => setBackupOpen(true)}
             disabled={passwords.length === 0}
           >
-            Backup
+            {t("vault.backup")}
           </Button>
           <Button
             variant="outlined"
             startIcon={<UploadFileIcon />}
             onClick={() => setImportOpen(true)}
           >
-            Import
+            {t("vault.import")}
           </Button>
           <Button
             variant="outlined"
             startIcon={<DeleteOutlineIcon />}
             onClick={() => setTrashOpen(true)}
           >
-            {trash.length ? `Trash (${trash.length})` : "Trash"}
+            {trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash")}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={openAdd}>
-            Add
+            {t("common.actions.add")}
           </Button>
         </Stack>
       </Stack>
 
       {!isEmpty && (
-        <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: "center" }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1.5}
+          sx={{ mb: 2, alignItems: { xs: "stretch", sm: "center" } }}
+        >
           <TextField
             size="small"
-            placeholder="Search name, username, website or tag…"
+            placeholder={t("vault.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            sx={{ width: 320 }}
+            sx={{ width: { xs: "100%", sm: 320 } }}
             slotProps={{
               input: {
                 startAdornment: (
@@ -309,12 +335,12 @@ const PasswordsPage = () => {
             <TextField
               select
               size="small"
-              label="Folder"
+              label={t("common.fields.folder")}
               value={activeFolder}
               onChange={(e) => setFolderFilter(e.target.value)}
-              sx={{ width: 200 }}
+              sx={{ width: { xs: "100%", sm: 200 } }}
             >
-              <MenuItem value="">All folders</MenuItem>
+              <MenuItem value="">{t("vault.allFolders")}</MenuItem>
               {folderOptions.map((f) => (
                 <MenuItem key={f} value={f}>
                   {f}
@@ -331,7 +357,7 @@ const PasswordsPage = () => {
           sx={{ mb: 2 }}
           action={
             <Button color="inherit" size="small" onClick={() => getDamaged()}>
-              Retry
+              {t("common.actions.retry")}
             </Button>
           }
         >
@@ -345,14 +371,11 @@ const PasswordsPage = () => {
           sx={{ mb: 2 }}
           action={
             <Button color="inherit" size="small" onClick={() => setRemoveDamagedOpen(true)}>
-              Remove
+              {t("common.actions.remove")}
             </Button>
           }
         >
-          {damagedCount} {damagedCount === 1 ? "item" : "items"} in the vault file cannot be read
-          (damaged or altered), so {damagedCount === 1 ? "it is" : "they are"} not shown. Backups
-          and master password changes wait until you restore a snapshot or remove{" "}
-          {damagedCount === 1 ? "it" : "them"}.
+          {t("vault.damage.message", { count: damagedCount })}
         </Alert>
       )}
 
@@ -388,7 +411,7 @@ const PasswordsPage = () => {
                 }}
               >
                 <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  No passwords match &ldquo;{search.trim()}&rdquo;.
+                  {t("vault.noSearchResults", { search: search.trim() })}
                 </Typography>
               </Box>
             ),
@@ -426,6 +449,11 @@ const PasswordsPage = () => {
         onSubmit={handleSubmit}
         onCopy={copy}
       />
+      <ShareDialog
+        open={Boolean(shareTarget)}
+        entry={shareTarget}
+        onClose={() => setShareTarget(null)}
+      />
       <BackupDialog
         open={backupOpen}
         onClose={() => setBackupOpen(false)}
@@ -448,25 +476,27 @@ const PasswordsPage = () => {
       />
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Move to Trash"
-        confirmText="Move to Trash"
+        title={t("vault.moveToTrash.title")}
+        confirmText={t("vault.moveToTrash.title")}
         confirmColor="error"
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
       >
-        Move <strong>{deleteTarget}</strong> to Trash? You can restore it later from the Trash.
+        <Trans
+          i18nKey="vault.moveToTrash.message"
+          values={{ name: deleteTarget }}
+          components={{ strong: <strong /> }}
+        />
       </ConfirmDialog>
       <ConfirmDialog
         open={removeDamagedOpen}
-        title="Remove damaged items"
-        confirmText="Remove"
+        title={t("vault.damage.removeTitle")}
+        confirmText={t("common.actions.remove")}
         confirmColor="error"
         onClose={() => setRemoveDamagedOpen(false)}
         onConfirm={handleRemoveDamaged}
       >
-        Permanently remove {damagedCount} unreadable {damagedCount === 1 ? "item" : "items"}? A
-        removed entry takes its attachments with it. If you have a snapshot from before the damage,
-        restoring it keeps them instead.
+        {t("vault.damage.removeMessage", { count: damagedCount })}
       </ConfirmDialog>
       <TrashDialog
         open={trashOpen}

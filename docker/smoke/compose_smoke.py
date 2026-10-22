@@ -1,7 +1,7 @@
 """
 End-to-end checks of the production images with the real docker-compose.prod.yml,
 in throwaway Compose projects named <prefix>-*. Needs the backend and frontend
-images tagged ghcr.io/mr-grj/ciphermoth-{backend,frontend}:<tag>.
+images tagged ghcr.io/krolbot/ciphermoth-{backend,frontend}:<tag>.
 
     python3 docker/smoke/compose_smoke.py --tag smoke
     python3 docker/smoke/compose_smoke.py --tag smoke --legacy-compose old.yml
@@ -643,7 +643,7 @@ def fresh_install(
         stack.dc("stop", "backend")
         stack.python(
             "import sqlite3; c = sqlite3.connect('/data/vault.db');"
-            "c.execute('PRAGMA user_version=3'); c.commit()"
+            "c.execute('PRAGMA user_version=4'); c.commit()"
         )
         before = stack.vault_sha256()
         stack.dc("start", "backend")
@@ -743,7 +743,7 @@ def fresh_install(
                         "docker",
                         "image",
                         "inspect",
-                        f"ghcr.io/mr-grj/ciphermoth-{image}:{tag}",
+                        f"ghcr.io/krolbot/ciphermoth-{image}:{tag}",
                     ).stdout
                 )[0]
                 labels = info["Config"]["Labels"] or {}
@@ -769,7 +769,7 @@ def bind_mounted(tag: str, prefix: str, workdir: Path) -> None:
         "services:\n  backend:\n    environment:\n      CIPHERMOTH_DATA_DIR: /srv/vault\n"
         f"    volumes:\n      - {host}:/srv/vault\n"
     )
-    image = f"ghcr.io/mr-grj/ciphermoth-backend:{tag}"
+    image = f"ghcr.io/krolbot/ciphermoth-backend:{tag}"
     stack = Stack(
         f"{prefix}-bind",
         folder / "docker-compose.prod.yml",
@@ -901,7 +901,7 @@ def legacy(tag: str, prefix: str, workdir: Path, old_compose: Path) -> None:
                 f"{mounts[0]['Name']}:/d",
                 "--entrypoint",
                 "ls",
-                f"ghcr.io/mr-grj/ciphermoth-backend:{tag}",
+                f"ghcr.io/krolbot/ciphermoth-backend:{tag}",
                 "-A",
                 "/d",
             ).stdout.split()

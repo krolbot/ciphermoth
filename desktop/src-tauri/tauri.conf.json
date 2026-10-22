@@ -77,9 +77,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFCRjg0QTc4NzBBMzYyMkMKUldRc1lxTndlRXI0RzQxeUt5N0l2TUVqRkNlbGRCUkdHTDRXUER4ZEgrdDJvQVpsTTd6ZDQrNWEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBFNzY1MTg1QjQyNTI1QzcKUldUSEpTVzBoVkYyRGxLSHU5V1NobXg3SkFQWGFRcFpZZUFjNFhJUDIrbVJKOU40a3JFMFR4amMK",
       "endpoints": [
-        "https://github.com/mr-grj/ciphermoth/releases/latest/download/latest.json"
+        "https://github.com/krolbot/ciphermoth/releases/latest/download/latest.json"
       ],
       "requireSignedVersion": true,
       "windows": {

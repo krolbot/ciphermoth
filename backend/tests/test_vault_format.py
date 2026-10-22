@@ -105,10 +105,17 @@ async def test_a_new_vault_is_format_2_with_a_wrapped_key_and_no_verifier(
             "SELECT name FROM sqlite_schema WHERE type = 'table'"
         )
     }
-    assert tables >= {"vault", "entries", "attachments", "settings"}
+    assert tables >= {
+        "vault",
+        "users",
+        "entry_access",
+        "entries",
+        "attachments",
+        "settings",
+    }
     assert not tables & {"master_password", "passwords", "password_attachments"}
     [(user_version,)] = await db_execute("PRAGMA user_version")
-    assert user_version == SCHEMA_VERSION == 2
+    assert user_version == SCHEMA_VERSION == 3
 
 
 async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
@@ -126,6 +133,7 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
             "password_check",
             "wrapped_key",
             "key_check",
+            "owner_user_id",
         },
         "entries": {
             "id",
@@ -136,6 +144,7 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
             "name_index",
             "document",
             "backed_up",
+            "owner_id",
         },
         "attachments": {
             "id",
@@ -157,7 +166,15 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
         )
         for row in [sql.split("(", 1)[1].split(")")[0].split(", ")]
     }
-    assert indexed <= {"name_index", "entry_id"}
+    assert indexed <= {
+        "name_index",
+        "entry_id",
+        "owner_id",
+        "username",
+        "service_token_hash",
+        "service_owner_id",
+        "user_id",
+    }
 
 
 async def test_entry_content_never_reaches_the_vault_files_snapshots_or_backups(
@@ -287,15 +304,22 @@ async def _rewrap(params: helpers.KdfParams, password: str = MASTER_PASSWORD) ->
     material = helpers.seal_key_material(
         helpers.argon2id(password, salt, params), raw, params, salt
     )
+    values = {
+        "m": params.memory_kib,
+        "t": params.iterations,
+        "p": params.lanes,
+        "salt": salt,
+        "check": material.password_check,
+        "wrapped": material.wrapped_key,
+    }
+    columns = (
+        "kdf_memory_kib = :m, kdf_iterations = :t, kdf_lanes = :p, "
+        "kdf_salt = :salt, password_check = :check, wrapped_key = :wrapped"
+    )
+    await db_execute(f"UPDATE vault SET {columns}", **values)
     await db_execute(
-        "UPDATE vault SET kdf_memory_kib = :m, kdf_iterations = :t, kdf_lanes = :p, "
-        "kdf_salt = :salt, password_check = :check, wrapped_key = :wrapped",
-        m=params.memory_kib,
-        t=params.iterations,
-        p=params.lanes,
-        salt=salt,
-        check=material.password_check,
-        wrapped=material.wrapped_key,
+        f"UPDATE users SET {columns} WHERE id = (SELECT owner_user_id FROM vault)",
+        **values,
     )
 
 
@@ -355,7 +379,8 @@ async def test_hostile_kdf_parameters_are_refused_before_deriving(
     assert resp.status_code == 400
     assert "Unsupported key derivation parameters" in resp.json()["detail"]
     resp = await client.patch("/master_password/update", json=ROTATE, headers=headers)
-    assert resp.status_code == 400
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "invalid_session"
     assert await db_snapshot() == before
 
 
@@ -607,22 +632,19 @@ async def test_the_key_record_binds_its_parameters_and_salt(
         resp = await client.post(
             "/master_password/unlock", json={"master_password": MASTER_PASSWORD}
         )
-        expected_damage = column == "wrapped_key"
-        assert resp.status_code == (400 if expected_damage else 200), column
-        if not expected_damage:
-            assert resp.json()["valid"] is False, column
+        assert resp.status_code == 400, column
         await db_execute(f"UPDATE vault SET {column} = :v", v=original)
     assert (await unlock(client)) is not None
 
 
-def test_session_keys_hold_no_raw_vault_key() -> None:
+def test_vault_keys_keep_raw_material_private_and_out_of_repr() -> None:
     raw = os.urandom(32)
     key = helpers.VaultKey(raw)
     assert "VaultKey(...)" == repr(key)
     assert not hasattr(key, "__dict__")
-    held = [getattr(key, name) for name in key.__slots__]
-    assert raw not in [h for h in held if isinstance(h, bytes)]
-    assert base64.urlsafe_b64encode(raw).decode() not in repr(held)
+    assert key._raw == raw
+    assert raw.hex() not in repr(key)
+    assert base64.urlsafe_b64encode(raw).decode() not in repr(key)
 
 
 async def test_the_api_refuses_a_document_whose_name_does_not_match_its_index(

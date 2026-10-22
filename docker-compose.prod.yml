@@ -5,7 +5,7 @@ name: ciphermoth
 
 services:
   backend:
-    image: ghcr.io/mr-grj/ciphermoth-backend:${CIPHERMOTH_VERSION:-latest}
+    image: ghcr.io/krolbot/ciphermoth-backend:${CIPHERMOTH_VERSION:-latest}
     restart: unless-stopped
     environment:
       # The browser origin that serves the UI; CORS must allow it.
@@ -19,7 +19,7 @@ services:
       - vault_data:/data
 
   frontend:
-    image: ghcr.io/mr-grj/ciphermoth-frontend:${CIPHERMOTH_VERSION:-latest}
+    image: ghcr.io/krolbot/ciphermoth-frontend:${CIPHERMOTH_VERSION:-latest}
     restart: unless-stopped
     environment:
       # The URL the browser uses to reach the API. Injected at container start.

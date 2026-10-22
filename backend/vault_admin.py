@@ -75,6 +75,33 @@ def restore(
 
 
 @app.command(
+    "migrate-users",
+    help=(
+        "Upgrade a stopped upstream CipherMoth 3.1 vault to the multi-user "
+        "schema. A rollback snapshot is created first."
+    ),
+)
+def migrate_users(
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask to confirm.")] = False,
+) -> None:
+    if not yes:
+        typer.confirm(
+            "Migrate the stopped schema-2 vault in "
+            f"{_data_dir()} for users and grants?",
+            abort=True,
+        )
+    try:
+        snapshot = storage.migrate_users(_data_dir())
+    except storage.StorageError as error:
+        raise _fail(error) from None
+    typer.echo(f"Migrated. Rollback snapshot: {snapshot}")
+    typer.echo(
+        "Start CipherMoth and create the first administrator with the vault's "
+        "current master password; existing entries will belong to that account."
+    )
+
+
+@app.command(
     "set-aside",
     help=(
         "Move the vault file (with its WAL) into a new folder in the snapshot "

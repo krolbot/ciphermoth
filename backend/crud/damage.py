@@ -32,6 +32,17 @@ class DamageCRUD(BaseCRUD):
     any remain.
     """
 
+    def __init__(
+        self,
+        session,
+        *,
+        entry_ids: list[int] | None = None,
+        owner_id: int | None = None,
+    ) -> None:
+        super().__init__(session)
+        self.entry_ids = entry_ids
+        self.owner_id = owner_id
+
     async def _attachment_is_damaged(
         self, key: VaultKey, attachment: AttachmentModel
     ) -> bool:
@@ -46,19 +57,20 @@ class DamageCRUD(BaseCRUD):
         return False
 
     async def find(self, key: VaultKey) -> DamagedRows:
+        entry_statement = select(EntryModel).order_by(EntryModel.id)
+        attachment_statement = select(AttachmentModel.id).order_by(AttachmentModel.id)
+        if self.entry_ids is not None:
+            entry_statement = entry_statement.where(EntryModel.id.in_(self.entry_ids))
+            attachment_statement = attachment_statement.where(
+                AttachmentModel.entry_id.in_(self.entry_ids)
+            )
         entries = [
             entry.id
-            for entry in (
-                await self.session.scalars(select(EntryModel).order_by(EntryModel.id))
-            )
+            for entry in (await self.session.scalars(entry_statement))
             if entry_is_damaged(key, entry)
         ]
         attachments = []
-        ids = (
-            await self.session.scalars(
-                select(AttachmentModel.id).order_by(AttachmentModel.id)
-            )
-        ).all()
+        ids = (await self.session.scalars(attachment_statement)).all()
         for attachment_id in ids:
             attachment = await self.session.get_one(AttachmentModel, attachment_id)
             if await self._attachment_is_damaged(key, attachment):
@@ -71,9 +83,26 @@ class DamageCRUD(BaseCRUD):
     ) -> PasswordDelete:
         if kind == "entries":
             row = await self.session.get(EntryModel, row_id)
+            if (
+                row is not None
+                and self.owner_id is not None
+                and row.owner_id != self.owner_id
+            ):
+                raise NotFound("No such row.")
             damaged = row is not None and entry_is_damaged(key, row)
         else:
             row = await self.session.get(AttachmentModel, row_id)
+            entry = (
+                await self.session.get(EntryModel, row.entry_id)
+                if row is not None
+                else None
+            )
+            if (
+                row is not None
+                and self.owner_id is not None
+                and (entry is None or entry.owner_id != self.owner_id)
+            ):
+                raise NotFound("No such row.")
             damaged = row is not None and await self._attachment_is_damaged(key, row)
         if row is None:
             raise NotFound("No such row.")

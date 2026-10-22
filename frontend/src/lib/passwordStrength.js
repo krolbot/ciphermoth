@@ -10,11 +10,11 @@ const charClasses = (password) => ({
 });
 
 const STRENGTH_LEVELS = [
-  { label: "Very Weak", color: "#d15b5b", recommend: true },
-  { label: "Weak", color: "#d15b5b", recommend: true },
-  { label: "Fair", color: "#e0982f", recommend: true },
-  { label: "Strong", color: "#1f8a5b", recommend: false },
-  { label: "Very Strong", color: "#1f8a5b", recommend: false },
+  { labelKey: "strength.veryWeak", color: "#d15b5b", recommend: true },
+  { labelKey: "strength.weak", color: "#d15b5b", recommend: true },
+  { labelKey: "strength.fair", color: "#e0982f", recommend: true },
+  { labelKey: "strength.strong", color: "#1f8a5b", recommend: false },
+  { labelKey: "strength.veryStrong", color: "#1f8a5b", recommend: false },
 ];
 
 // 5-level scale used across the vault (strength bar + row icons).
@@ -46,8 +46,10 @@ export const getMasterPasswordStrength = (password) => {
   const classes = charClasses(password);
   const variety = Object.values(classes).filter(Boolean).length;
 
-  if (password.length < 8) return { label: "Too short", value: 20, color: "error" };
-  if (password.length < 12 || variety < 2) return { label: "Weak", value: 40, color: "error" };
-  if (password.length < 16 || variety < 3) return { label: "Fair", value: 70, color: "warning" };
-  return { label: "Strong", value: 100, color: "success" };
+  if (password.length < 8) return { labelKey: "strength.tooShort", value: 20, color: "error" };
+  if (password.length < 12 || variety < 2)
+    return { labelKey: "strength.weak", value: 40, color: "error" };
+  if (password.length < 16 || variety < 3)
+    return { labelKey: "strength.fair", value: 70, color: "warning" };
+  return { labelKey: "strength.strong", value: 100, color: "success" };
 };

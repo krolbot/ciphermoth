@@ -4,7 +4,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import (
+    BearerAuthBackend,
+    RequireAuthMiddleware,
+)
+from mcp.server.transport_security import TransportSecuritySettings
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
@@ -17,6 +24,7 @@ from api.retired_clients import RETIRED_KEY_HEADER, RetiredClients
 from api.routes import make_api_exceptions, make_api_router
 from api.security_headers import SecurityHeaders
 from crud.engine import Database
+from mcp_server import MCP_SCOPE, ServiceTokenVerifier, build_mcp_server
 from models import SETTINGS_DEFAULTS
 from settings import get_api_settings
 from storage import VaultLock
@@ -59,11 +67,13 @@ async def _drop_expired_sessions(vault_sessions: VaultSessions) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     database: Database = app.state.database
     vault_sessions: VaultSessions = app.state.vault_sessions
+    mcp = app.state.mcp_server
     with VaultLock(database.data_dir):
         await database.prepare()
         sweeper = asyncio.create_task(_drop_expired_sessions(vault_sessions))
         try:
-            yield
+            async with mcp.session_manager.run():
+                yield
         finally:
             sweeper.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -83,6 +93,8 @@ def get_application(
         if vault_sessions is not None
         else VaultSessions(idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"])
     )
+    mcp = build_mcp_server(server.state.database, server.state.vault_sessions)
+    server.state.mcp_server = mcp
 
     server.state.limiter = limiter
     server.add_exception_handler(RateLimitExceeded, rate_limit_exceeded)
@@ -99,7 +111,11 @@ def get_application(
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=[
+            "Authorization",
             "Content-Type",
+            "MCP-Protocol-Version",
+            "Mcp-Session-Id",
+            "Last-Event-ID",
             "x-ciphermoth-session",
             RETIRED_KEY_HEADER,
             "x-ciphermoth-entry",
@@ -116,6 +132,20 @@ def get_application(
 
     server.include_router(make_api_router(), prefix="/api")
     make_api_exceptions(server)
+
+    mcp_app = mcp.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        max_request_body_size=settings.mcp_max_request_bytes,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        ),
+    )
+    mcp_app = AuthenticationMiddleware(
+        AuthContextMiddleware(RequireAuthMiddleware(mcp_app, [MCP_SCOPE])),
+        backend=BearerAuthBackend(ServiceTokenVerifier(server.state.database)),
+    )
+    server.mount("/", mcp_app)
 
     return server
 

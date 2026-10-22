@@ -3,6 +3,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,7 @@ class APISettings(BaseSettings):
     version: str = _package_version()
     disable_docs: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
+    mcp_max_request_bytes: int = Field(default=1_048_576, ge=1_024, le=4_194_304)
 
     @property
     def fastapi_kwargs(self) -> dict[str, Any]:

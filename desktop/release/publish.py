@@ -10,7 +10,7 @@ from pathlib import Path
 version = sys.argv[1]
 root = Path(sys.argv[2]).resolve()
 tag = f"v{version}"
-repo = "mr-grj/ciphermoth"
+repo = "krolbot/ciphermoth"
 
 
 def gh(*args):

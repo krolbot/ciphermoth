@@ -9,7 +9,7 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-const RELEASES: &str = "https://github.com/mr-grj/ciphermoth/releases";
+const RELEASES: &str = "https://github.com/krolbot/ciphermoth/releases";
 const CHECK_ERROR: &str = "Could not check GitHub for updates. Your vault is still available.";
 
 #[derive(Default)]

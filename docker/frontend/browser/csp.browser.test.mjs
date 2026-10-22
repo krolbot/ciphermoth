@@ -6,7 +6,7 @@ import { after, before, describe, test } from "node:test";
 import { chromium } from "playwright";
 
 const IMAGE = process.env.CIPHERMOTH_FRONTEND_IMAGE ?? "ciphermoth-frontend:browser-test";
-const RELEASES = "https://api.github.com/repos/mr-grj/ciphermoth/releases/latest";
+const RELEASES = "https://api.github.com/repos/krolbot/ciphermoth/releases/latest";
 
 const listen = (handler) =>
   new Promise((resolve) => {
@@ -21,7 +21,7 @@ const fakeApi = (seen) => (request, response) => {
   response.setHeader("Content-Type", "application/json");
   if (request.method === "OPTIONS") {
     response.end();
-  } else if (request.url.endsWith("/master_password/status")) {
+  } else if (request.url.endsWith("/auth/status")) {
     response.end(JSON.stringify({ initialized: true }));
   } else {
     response.end(JSON.stringify({ version: "test", features: [] }));
@@ -144,7 +144,7 @@ describe("API on another origin", () => {
     apiSeen.length = 0;
     await page.goto(frontend.url);
     await page.getByRole("button", { name: "Unlock Vault" }).waitFor();
-    assert.ok(apiSeen.includes("/api/master_password/status"), apiSeen.join());
+    assert.ok(apiSeen.includes("/api/auth/status"), apiSeen.join());
     assert.deepEqual(violations, []);
 
     const allowed = await attempt(page, "fetch", `${apiOrigin}/api/meta`);
@@ -221,7 +221,7 @@ describe("API on a protocol-relative URL", () => {
     apiSeen.length = 0;
     await page.goto(frontend.url);
     await page.getByRole("button", { name: "Unlock Vault" }).waitFor();
-    assert.ok(apiSeen.includes("/api/master_password/status"), apiSeen.join());
+    assert.ok(apiSeen.includes("/api/auth/status"), apiSeen.join());
     const blocked = await attempt(page, "fetch", `http://127.0.0.1:${elsewhere.address().port}/x`);
     assert.ok(blocked.violations.length > 0);
     await page.close();

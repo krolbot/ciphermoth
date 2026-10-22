@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 
+import crud.auth
 import crud.master_password
 from crud.password import PasswordCRUD
 from tests.support import (
@@ -221,29 +222,28 @@ async def test_an_import_failing_halfway_writes_nothing(
     assert await db_snapshot() == before
 
 
-async def test_a_rotation_failing_halfway_leaves_the_old_vault(
+async def test_a_password_rewrap_failure_leaves_the_old_vault(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     headers = await _populated_vault(client)
     for i in range(20):
         await client.post("/passwords/create", json=entry(f"e{i:02d}"), headers=headers)
     before = await db_snapshot()
-    original = crud.master_password.seal_entry
+    original = crud.auth.store_user_material
     calls = 0
 
-    def reencrypt_then_fail(*args, **kwargs):
+    def rewrap_then_fail(*args, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 10:
-            raise RuntimeError("simulated failure during rotation")
-        return original(*args, **kwargs)
+        original(*args, **kwargs)
+        raise RuntimeError("simulated failure during account rewrap")
 
-    monkeypatch.setattr(crud.master_password, "seal_entry", reencrypt_then_fail)
+    monkeypatch.setattr(crud.auth, "store_user_material", rewrap_then_fail)
     resp = await client.patch("/master_password/update", json=ROTATE, headers=headers)
     monkeypatch.undo()
 
     assert resp.status_code == 500
-    assert calls == 10
+    assert calls == 1
     assert await db_snapshot() == before
     assert (await client.get("/passwords", headers=headers)).status_code == 200
     assert (

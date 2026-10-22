@@ -46,7 +46,7 @@ def generate(root, version, commit, verifier, public_key):
                     check=True,
                 )
                 platforms[target] = {
-                    "url": f"https://github.com/mr-grj/ciphermoth/releases/download/v{version}/{path.name}",
+                    "url": f"https://github.com/krolbot/ciphermoth/releases/download/v{version}/{path.name}",
                     "signature": sig.read_text().strip(),
                 }
                 expected.add(sig.name)

@@ -28,6 +28,17 @@ _MAX_FIELD_VALUE = 4096
 _MAX_FOLDER_LENGTH = 200
 _MAX_DESCRIPTION_LENGTH = 10_000
 
+Username = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        to_lower=True,
+        min_length=2,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9._@-]*$",
+    ),
+]
+
 
 class SimpleDetailSchema(BaseModel):
     detail: str
@@ -36,6 +47,128 @@ class SimpleDetailSchema(BaseModel):
 class MetaResponse(BaseModel):
     version: str
     features: list[str] = Field(default_factory=list)
+
+
+class UserRole(StrEnum):
+    admin = "admin"
+    member = "member"
+    service = "service"
+
+
+class SharePermission(StrEnum):
+    read = "read"
+    write = "write"
+
+
+class EntryPermission(StrEnum):
+    owner = "owner"
+    read = "read"
+    write = "write"
+
+
+class AuthUser(BaseModel):
+    id: int
+    username: str
+    role: UserRole
+    active: bool
+    must_change_password: bool
+
+
+class AuthStatus(BaseModel):
+    initialized: bool
+
+
+class AuthPayload(BaseModel):
+    username: Username
+    password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("password")
+    @classmethod
+    def _unicode_password(cls, value: str) -> str:
+        require_unicode_text(value)
+        return value
+
+
+class AuthBootstrapPayload(AuthPayload):
+    @field_validator("password")
+    @classmethod
+    def _strong(cls, value: str) -> str:
+        return validate_master_password_strength(value)
+
+
+class AuthResponse(BaseModel):
+    valid: bool
+    user: AuthUser | None = None
+    session_token: str | None = None
+    idle_timeout_ms: int | None = None
+
+
+class UserCreatePayload(BaseModel):
+    username: Username
+    role: UserRole = UserRole.member
+    temporary_password: str | None = Field(default=None, min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def _human_password_required(self) -> "UserCreatePayload":
+        if self.role != UserRole.service:
+            if self.temporary_password is None:
+                raise ValueError("A temporary password is required for a human user.")
+            validate_master_password_strength(self.temporary_password)
+        elif self.temporary_password is not None:
+            raise ValueError("Service users do not use interactive passwords.")
+        return self
+
+
+class UserCreateResponse(AuthUser):
+    service_token: str | None = None
+
+
+class UserUpdatePayload(BaseModel):
+    role: UserRole | None = None
+    active: bool | None = None
+
+
+class UserPasswordResetPayload(BaseModel):
+    temporary_password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("temporary_password")
+    @classmethod
+    def _strong(cls, value: str) -> str:
+        return validate_master_password_strength(value)
+
+
+class PasswordChangePayload(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("new_password")
+    @classmethod
+    def _strong(cls, value: str) -> str:
+        return validate_master_password_strength(value)
+
+
+class ShareTarget(BaseModel):
+    id: int
+    username: str
+    role: UserRole
+
+
+class ShareUpdatePayload(BaseModel):
+    permission: SharePermission
+
+
+class ShareGrant(BaseModel):
+    user_id: int
+    username: str
+    role: UserRole
+    permission: SharePermission
+
+
+class EntryAccess(BaseModel):
+    entry_id: int
+    owner_id: int
+    owner_username: str
+    access: EntryPermission
 
 
 class MasterPassword(BaseModel):
@@ -249,6 +382,9 @@ class RestoredPassword(BaseModel):
 
 class PasswordResponse(BaseModel):
     id: int
+    owner_id: int | None = None
+    owner_username: str | None = None
+    access: EntryPermission | None = None
     password_name: str
     kind: str = "login"
     username: str | None = None
@@ -359,6 +495,7 @@ class PasswordImportResult(BaseModel):
     renamed_rows: list[ImportRowReport] = Field(default_factory=list)
     trashed: int = 0
     attachments: int = 0
+    grants_restored: int = 0
     settings_restored: bool = False
 
 

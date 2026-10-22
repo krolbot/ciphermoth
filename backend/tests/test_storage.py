@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import sqlite3
 import stat
 import time
@@ -76,6 +77,127 @@ async def _populate(client: httpx.AsyncClient, names: list[str]) -> str:
     )
     assert resp.status_code == 200, resp.text
     return token
+
+
+@pytest.mark.asyncio
+async def test_schema_two_user_migration_snapshot_bootstrap_and_rollback(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "legacy"
+    async with client_for_data_dir(folder) as client:
+        bootstrapped = await client.post(
+            "/auth/bootstrap",
+            json={"username": "owner", "password": MASTER_PASSWORD},
+        )
+        assert bootstrapped.status_code == 200, bootstrapped.text
+        headers = auth(bootstrapped.json()["session_token"])
+        created = await client.post(
+            "/passwords/create", json=entry("kept"), headers=headers
+        )
+        assert created.status_code == 200, created.text
+
+    vault = folder / VAULT_FILE
+    with closing(sqlite3.connect(vault)) as connection:
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        connection.executescript(
+            """
+            DROP TABLE entry_access;
+            DROP INDEX uq_entries_name_active;
+            DROP INDEX ix_entries_owner_id;
+            ALTER TABLE entries RENAME TO entries_v3;
+            CREATE TABLE entries (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                uid BLOB NOT NULL UNIQUE,
+                created TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                deleted TIMESTAMP,
+                name_index BLOB NOT NULL,
+                document BLOB NOT NULL,
+                backed_up BOOLEAN DEFAULT 0 NOT NULL,
+                CONSTRAINT ck_entries_uid CHECK (length(uid) = 16),
+                CONSTRAINT ck_entries_name_index CHECK (length(name_index) = 32)
+            );
+            INSERT INTO entries
+                (id, uid, created, updated, deleted, name_index, document, backed_up)
+            SELECT id, uid, created, updated, deleted, name_index, document, backed_up
+            FROM entries_v3;
+            DROP TABLE entries_v3;
+            CREATE UNIQUE INDEX uq_entries_name_active
+                ON entries (name_index) WHERE deleted IS NULL;
+
+            ALTER TABLE vault RENAME TO vault_v3;
+            CREATE TABLE vault (
+                id INTEGER NOT NULL PRIMARY KEY,
+                created TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                format_version INTEGER NOT NULL,
+                kdf VARCHAR NOT NULL,
+                kdf_memory_kib INTEGER NOT NULL,
+                kdf_iterations INTEGER NOT NULL,
+                kdf_lanes INTEGER NOT NULL,
+                kdf_salt BLOB NOT NULL,
+                password_check BLOB NOT NULL,
+                wrapped_key BLOB NOT NULL,
+                key_check BLOB NOT NULL,
+                CONSTRAINT ck_vault_singleton CHECK (id = 1),
+                CONSTRAINT ck_vault_salt CHECK (length(kdf_salt) = 16),
+                CONSTRAINT ck_vault_password_check CHECK (length(password_check) = 32),
+                CONSTRAINT ck_vault_key_check CHECK (length(key_check) = 32)
+            );
+            INSERT INTO vault
+                (id, created, updated, format_version, kdf, kdf_memory_kib,
+                 kdf_iterations, kdf_lanes, kdf_salt, password_check, wrapped_key,
+                 key_check)
+            SELECT id, created, updated, format_version, kdf, kdf_memory_kib,
+                   kdf_iterations, kdf_lanes, kdf_salt, password_check, wrapped_key,
+                   key_check
+            FROM vault_v3;
+            DROP TABLE vault_v3;
+            DROP INDEX ix_users_service_owner_id;
+            DROP TABLE users;
+            """
+        )
+        connection.execute(f"PRAGMA user_version={storage.PREVIOUS_SCHEMA_VERSION}")
+        connection.commit()
+
+    rollback = storage.migrate_users_if_needed(folder)
+    assert rollback is not None
+    assert rollback.is_file()
+    assert _pragma(rollback, "user_version") == storage.PREVIOUS_SCHEMA_VERSION
+    assert _pragma(vault, "user_version") == SCHEMA_VERSION
+    assert storage.migrate_users_if_needed(folder) is None
+    with closing(sqlite3.connect(rollback)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT count(*) FROM entries").fetchone() == (1,)
+    with closing(sqlite3.connect(vault)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT count(*) FROM users").fetchone() == (0,)
+        assert connection.execute("SELECT owner_id FROM entries").fetchone() == (None,)
+
+    async with client_for_data_dir(folder) as migrated:
+        status = await migrated.get("/auth/status")
+        assert status.json() == {"initialized": False}
+        bootstrapped = await migrated.post(
+            "/auth/bootstrap",
+            json={"username": "owner", "password": MASTER_PASSWORD},
+        )
+        assert bootstrapped.status_code == 200, bootstrapped.text
+        headers = auth(bootstrapped.json()["session_token"])
+        [restored] = (await migrated.get("/passwords", headers=headers)).json()
+        assert restored["password_name"] == "kept"
+        assert restored["owner_username"] == "owner"
+        assert restored["access"] == "owner"
+
+    rollback_folder = tmp_path / "rollback"
+    rollback_folder.mkdir()
+    shutil.copy2(rollback, rollback_folder / VAULT_FILE)
+    assert _pragma(rollback_folder / VAULT_FILE, "user_version") == (
+        storage.PREVIOUS_SCHEMA_VERSION
+    )
+    with closing(sqlite3.connect(rollback_folder / VAULT_FILE)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT count(*) FROM entries").fetchone() == (1,)
 
 
 async def _names(client: httpx.AsyncClient, password: str) -> list[str]:

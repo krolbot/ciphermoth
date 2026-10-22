@@ -7,6 +7,7 @@ import AttachFileIcon from "@mui/icons-material/AttachFile";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import ShareOutlinedIcon from "@mui/icons-material/ShareOutlined";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import StarIcon from "@mui/icons-material/Star";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
@@ -48,7 +49,7 @@ const ValueCell = ({ text, mono = false, masked = false, color = "text.primary",
 
 const CellActionButton = ({ title, onClick, children }) => (
   <Tooltip title={title}>
-    <IconButton size="small" onClick={onClick} sx={{ p: 0.375 }}>
+    <IconButton aria-label={title} size="small" onClick={onClick} sx={{ p: 0.375 }}>
       {children}
     </IconButton>
   </Tooltip>
@@ -66,7 +67,7 @@ const strengthIconFor = (level) => {
   return GppGoodIcon;
 };
 
-const StrengthIndicator = ({ password }) => {
+const StrengthIndicator = ({ password, t }) => {
   const strength = getPasswordStrength(password);
   if (!strength) return null;
   const Icon = strengthIconFor(strength.level);
@@ -75,12 +76,12 @@ const StrengthIndicator = ({ password }) => {
       title={
         <Box>
           <Typography variant="caption" sx={{ fontWeight: 700, color: strength.color }}>
-            {strength.label}
+            {t(strength.labelKey)}
           </Typography>
           <Typography variant="caption" sx={{ display: "block" }}>
             {strength.recommend
-              ? "We recommend updating this password."
-              : "This password looks good."}
+              ? t("vault.columns.updateRecommended")
+              : t("vault.columns.looksGood")}
           </Typography>
         </Box>
       }
@@ -99,6 +100,8 @@ export const createColumns = ({
   onCopy,
   onEdit,
   onDelete,
+  onShare,
+  t,
 }) => [
   {
     field: "favorite",
@@ -108,8 +111,17 @@ export const createColumns = ({
     align: "center",
     headerAlign: "center",
     renderCell: (params) => (
-      <Tooltip title={params.value ? "Remove from favorites" : "Mark as favorite"}>
-        <IconButton size="small" onClick={() => onToggleFavorite(params.row)}>
+      <Tooltip
+        title={t(params.value ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
+      >
+        <IconButton
+          aria-label={t(
+            params.value ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
+          )}
+          size="small"
+          disabled={params.row.access === "read"}
+          onClick={() => onToggleFavorite(params.row)}
+        >
           {params.value ? (
             <StarIcon fontSize="small" sx={{ color: GLOW }} />
           ) : (
@@ -121,13 +133,13 @@ export const createColumns = ({
   },
   {
     field: "password_name",
-    headerName: "Name",
+    headerName: t("common.fields.name"),
     flex: 1,
     minWidth: 130,
     renderCell: (params) => {
       const count = params.row.attachment_count ?? 0;
       const clip = count > 0 && (
-        <Tooltip title={`${count} attachment${count === 1 ? "" : "s"}`}>
+        <Tooltip title={t("vault.columns.attachment", { count })}>
           <Stack direction="row" spacing={0.25} sx={{ alignItems: "center", flexShrink: 0 }}>
             <AttachFileIcon sx={{ fontSize: 15, color: "text.disabled" }} />
             <Typography variant="caption" sx={{ color: "text.disabled" }}>
@@ -139,7 +151,7 @@ export const createColumns = ({
       return (
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
           {params.row.kind === "note" && (
-            <Tooltip title="Secure note">
+            <Tooltip title={t("vault.columns.secureNote")}>
               <StickyNote2OutlinedIcon fontSize="small" sx={{ color: "text.disabled" }} />
             </Tooltip>
           )}
@@ -156,7 +168,7 @@ export const createColumns = ({
   },
   {
     field: "folder",
-    headerName: "Folder",
+    headerName: t("common.fields.folder"),
     flex: 0.7,
     minWidth: 110,
     renderCell: (params) =>
@@ -180,7 +192,7 @@ export const createColumns = ({
   },
   {
     field: "username",
-    headerName: "Username / email",
+    headerName: t("common.fields.usernameEmail"),
     flex: 1,
     minWidth: 150,
     renderCell: (params) => {
@@ -191,7 +203,10 @@ export const createColumns = ({
           color={value ? "text.primary" : "text.disabled"}
           actions={
             value ? (
-              <CellActionButton title="Copy username" onClick={() => onCopy(value)}>
+              <CellActionButton
+                title={t("vault.columns.copyUsername")}
+                onClick={() => onCopy(value)}
+              >
                 <ContentCopyIcon fontSize="small" />
               </CellActionButton>
             ) : null
@@ -202,7 +217,7 @@ export const createColumns = ({
   },
   {
     field: "password_value",
-    headerName: "Password",
+    headerName: t("common.fields.password"),
     flex: 1,
     minWidth: 160,
     sortable: false,
@@ -218,7 +233,7 @@ export const createColumns = ({
           actions={
             <>
               <CellActionButton
-                title={visible ? "Hide password" : "Reveal password"}
+                title={t(visible ? "vault.columns.hidePassword" : "vault.columns.revealPassword")}
                 onClick={() => onToggleVisibility(name)}
               >
                 {visible ? (
@@ -227,7 +242,10 @@ export const createColumns = ({
                   <VisibilityIcon fontSize="small" />
                 )}
               </CellActionButton>
-              <CellActionButton title="Copy password" onClick={() => onCopy(params.value)}>
+              <CellActionButton
+                title={t("vault.columns.copyPassword")}
+                onClick={() => onCopy(params.value)}
+              >
                 <ContentCopyIcon fontSize="small" />
               </CellActionButton>
             </>
@@ -238,7 +256,7 @@ export const createColumns = ({
   },
   {
     field: "tags",
-    headerName: "Tags",
+    headerName: t("common.fields.tags"),
     flex: 1,
     minWidth: 120,
     sortable: false,
@@ -269,7 +287,7 @@ export const createColumns = ({
   },
   {
     field: "totp_secret",
-    headerName: "2FA",
+    headerName: t("vault.columns.twoFactor"),
     width: 118,
     sortable: false,
     renderCell: (params) =>
@@ -283,8 +301,8 @@ export const createColumns = ({
   },
   {
     field: "actions",
-    headerName: "Actions",
-    width: 180,
+    headerName: t("common.fields.actions"),
+    width: 220,
     sortable: false,
     align: "center",
     headerAlign: "center",
@@ -293,24 +311,66 @@ export const createColumns = ({
       return (
         <Stack direction="row" spacing={0} sx={{ alignItems: "center", height: "100%" }}>
           <Box sx={{ visibility: url ? "visible" : "hidden" }}>
-            <Tooltip title="Open website">
-              <IconButton size="small" onClick={() => url && openUrl(url)}>
+            <Tooltip title={t("vault.columns.openWebsite")}>
+              <IconButton
+                aria-label={t("vault.columns.openWebsite")}
+                size="small"
+                onClick={() => url && openUrl(url)}
+              >
                 <OpenInNewIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           </Box>
-          <Tooltip title="Edit">
-            <IconButton size="small" onClick={() => onEdit(params.row)}>
-              <EditIcon fontSize="small" />
-            </IconButton>
+          {params.row.access === "owner" && (
+            <Tooltip title={t("sharing.manage")}>
+              <IconButton
+                aria-label={t("sharing.manage")}
+                size="small"
+                onClick={() => onShare(params.row)}
+              >
+                <ShareOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          <Tooltip
+            title={t(
+              params.row.access === "read" ? "sharing.readOnlyAccess" : "common.actions.edit"
+            )}
+          >
+            <span>
+              <IconButton
+                aria-label={t(
+                  params.row.access === "read" ? "sharing.readOnlyAccess" : "common.actions.edit"
+                )}
+                size="small"
+                disabled={params.row.access === "read"}
+                onClick={() => onEdit(params.row)}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </span>
           </Tooltip>
-          <Tooltip title="Delete">
-            <IconButton size="small" color="error" onClick={() => onDelete(password_name)}>
-              <DeleteIcon fontSize="small" />
-            </IconButton>
+          <Tooltip
+            title={t(
+              params.row.access === "read" ? "sharing.readOnlyAccess" : "common.actions.delete"
+            )}
+          >
+            <span>
+              <IconButton
+                aria-label={t(
+                  params.row.access === "read" ? "sharing.readOnlyAccess" : "common.actions.delete"
+                )}
+                size="small"
+                color="error"
+                disabled={params.row.access === "read"}
+                onClick={() => onDelete(password_name)}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </span>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1 }} />
-          {kind !== "note" && <StrengthIndicator password={password_value} />}
+          {kind !== "note" && <StrengthIndicator password={password_value} t={t} />}
         </Stack>
       );
     },

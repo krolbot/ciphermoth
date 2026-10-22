@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 ENCRYPTED_COLUMNS = {
     "vault": ("wrapped_key",),
+    "users": ("wrapped_key",),
     "entries": ("document",),
     "attachments": ("meta", "content"),
 }
@@ -156,7 +157,7 @@ async def raw_rows(conn: AsyncConnection, table: str) -> dict[int, dict[str, Any
 async def raw_vault(conn: AsyncConnection) -> dict[str, dict[int, dict[str, Any]]]:
     return {
         table: await raw_rows(conn, table)
-        for table in ("vault", "entries", "attachments")
+        for table in ("vault", "users", "entries", "attachments")
     }
 
 

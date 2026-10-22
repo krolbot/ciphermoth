@@ -70,7 +70,7 @@ jobs:
       - name: Verify trusted release source
         if: inputs.release
         run: |
-          test "$GITHUB_REPOSITORY" = "mr-grj/ciphermoth"
+          test "$GITHUB_REPOSITORY" = "krolbot/ciphermoth"
           case "$GITHUB_REF" in refs/tags/v*|refs/heads/master|refs/heads/release/3.1.0) ;; *) exit 1 ;; esac
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             git merge-base --is-ancestor "$GITHUB_SHA" origin/master

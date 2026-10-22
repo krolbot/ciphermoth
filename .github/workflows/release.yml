@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
       - id: version
         run: |
-          test "$GITHUB_REPOSITORY" = "mr-grj/ciphermoth"
+          test "$GITHUB_REPOSITORY" = "krolbot/ciphermoth"
           [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           git merge-base --is-ancestor "$GITHUB_SHA" origin/master
           version="${GITHUB_REF#refs/tags/v}"

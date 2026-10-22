@@ -123,7 +123,7 @@ async def test_a_healthy_vault_scans_clean_and_matches_the_api(
 
     assert vault.key_check == "valid"
     assert vault.vault_rows == 1
-    assert vault.revision == 2
+    assert vault.revision == 3
     github = vault.active["GitHub"]
     assert github.value == "third-Value-3"
     assert [h[0] for h in github.history] == ["second-Value-2", "first-Value-1"]
@@ -276,7 +276,7 @@ async def test_orphaned_attachments_and_duplicate_rows_are_reported(
     assert any("does not authenticate" in r for r in reasons)
 
 
-async def test_rotation_keeps_every_plaintext_and_replaces_every_ciphertext(
+async def test_password_change_keeps_the_vault_key_and_rewraps_account_material(
     client: httpx.AsyncClient,
 ) -> None:
     key = await _rich_vault(client)
@@ -300,21 +300,16 @@ async def test_rotation_keeps_every_plaintext_and_replaces_every_ciphertext(
     assert after.key_check == "valid"
     async with engine.connect() as conn:
         tokens_after = await raw_vault(conn)
-    changed = diff_ciphertext(tokens_before, tokens_after)
-    expected = sum(
-        len(tokens_after[table]) * len(columns)
-        for table, columns in (
-            ("vault", ("wrapped_key",)),
-            ("entries", ("document",)),
-            ("attachments", ("meta", "content")),
-        )
-    )
-    assert len(changed) == expected
-    for table, column in (("entries", "name_index"), ("vault", "kdf_salt")):
-        for row_id, row in tokens_after[table].items():
-            assert row[column] != tokens_before[table][row_id][column]
-    with pytest.raises(VaultIntegrityError):
-        await _scan(key)
+    assert diff_ciphertext(tokens_before, tokens_after) == [
+        "vault[1].wrapped_key changed",
+        "users[1].wrapped_key changed",
+    ]
+    assert tokens_after["vault"][1]["kdf_salt"] != tokens_before["vault"][1]["kdf_salt"]
+    assert tokens_after["users"][1]["kdf_salt"] != tokens_before["users"][1]["kdf_salt"]
+    assert tokens_after["entries"] == tokens_before["entries"]
+    assert tokens_after["attachments"] == tokens_before["attachments"]
+    assert new_key == key
+    assert (await _scan(key)).key_check == "valid"
 
 
 PLAINTEXT = (

@@ -23,6 +23,9 @@ from tests.support import (
 Spec = Callable[[httpx.AsyncClient, Headers, dict], Awaitable[httpx.Response]]
 
 PUBLIC_ROUTES = {
+    ("GET", "/api/auth/status"),
+    ("POST", "/api/auth/bootstrap"),
+    ("POST", "/api/auth/login"),
     ("GET", "/api/master_password/status"),
     ("POST", "/api/master_password/unlock"),
     ("POST", "/api/master_password/lock"),
@@ -48,6 +51,13 @@ def _alpha() -> dict:
 
 
 PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
+    ("GET", "/api/auth/me"): lambda c, h, x: c.get("/auth/me", headers=h),
+    ("POST", "/api/auth/logout"): lambda c, h, x: c.post("/auth/logout", headers=h),
+    ("PUT", "/api/auth/password"): lambda c, h, x: c.put(
+        "/auth/password",
+        json={"current_password": "wrong", "new_password": NEW_MASTER_PASSWORD},
+        headers=h,
+    ),
     ("GET", "/api/master_password/session"): lambda c, h, x: c.get(
         "/master_password/session", headers=h
     ),
@@ -116,6 +126,23 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
     ("POST", "/api/passwords/backup"): lambda c, h, x: c.post(
         "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=h
     ),
+    ("GET", "/api/passwords/access"): lambda c, h, x: c.get(
+        "/passwords/access", headers=h
+    ),
+    ("GET", "/api/passwords/{entry_id}/shares"): lambda c, h, x: c.get(
+        f"/passwords/{x['entry_id']}/shares", headers=h
+    ),
+    ("PUT", "/api/passwords/{entry_id}/shares/{user_id}"): lambda c, h, x: c.put(
+        f"/passwords/{x['entry_id']}/shares/{x['member_id']}",
+        json={"permission": "write"},
+        headers=h,
+    ),
+    ("DELETE", "/api/passwords/{entry_id}/shares/{user_id}"): lambda c, h, x: c.delete(
+        f"/passwords/{x['entry_id']}/shares/{x['member_id']}", headers=h
+    ),
+    ("DELETE", "/api/passwords/{entry_id}/access"): lambda c, h, x: c.delete(
+        f"/passwords/{x['entry_id']}/access", headers=h
+    ),
     ("GET", "/api/settings"): lambda c, h, x: c.get("/settings", headers=h),
     ("PATCH", "/api/settings"): lambda c, h, x: c.patch(
         "/settings", json=SETTINGS_BODY, headers=h
@@ -132,13 +159,54 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
         },
         headers=h,
     ),
+    ("GET", "/api/users/share-targets"): lambda c, h, x: c.get(
+        "/users/share-targets", headers=h
+    ),
+    ("GET", "/api/users"): lambda c, h, x: c.get("/users", headers=h),
+    ("POST", "/api/users"): lambda c, h, x: c.post(
+        "/users",
+        json={
+            "username": "another-member",
+            "role": "member",
+            "temporary_password": NEW_MASTER_PASSWORD,
+        },
+        headers=h,
+    ),
+    ("PATCH", "/api/users/{user_id}"): lambda c, h, x: c.patch(
+        f"/users/{x['member_id']}", json={"active": True}, headers=h
+    ),
+    ("DELETE", "/api/users/{user_id}"): lambda c, h, x: c.delete(
+        f"/users/{x['member_id']}", headers=h
+    ),
+    ("POST", "/api/users/{user_id}/sessions/revoke"): lambda c, h, x: c.post(
+        f"/users/{x['member_id']}/sessions/revoke", headers=h
+    ),
+    (
+        "POST",
+        "/api/users/{user_id}/require-password-change",
+    ): lambda c, h, x: c.post(
+        f"/users/{x['member_id']}/require-password-change", headers=h
+    ),
+    ("POST", "/api/users/{user_id}/service-token"): lambda c, h, x: c.post(
+        f"/users/{x['service_id']}/service-token", headers=h
+    ),
+    ("PUT", "/api/users/{user_id}/password"): lambda c, h, x: c.put(
+        f"/users/{x['member_id']}/password",
+        json={"temporary_password": NEW_MASTER_PASSWORD},
+        headers=h,
+    ),
 }
 
 ROUTE_IDS = [f"{method} {path}" for method, path in PROTECTED_ROUTES]
-REACHED = {("DELETE", "/api/vault/damaged/{kind}/{row_id}"): 400}
+REACHED = {
+    ("PUT", "/api/auth/password"): 403,
+    ("DELETE", "/api/passwords/{entry_id}/access"): 403,
+    ("DELETE", "/api/vault/damaged/{kind}/{row_id}"): 400,
+}
 
 
 async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
+    entry_id = None
     for item in (
         _alpha(),
         entry("beta"),
@@ -146,6 +214,32 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
     ):
         resp = await client.post("/passwords/create", json=item, headers=headers)
         assert resp.status_code == 200, resp.text
+    listed = await client.get("/passwords", headers=headers)
+    assert listed.status_code == 200, listed.text
+    entry_id = next(
+        item["id"] for item in listed.json() if item["password_name"] == "alpha"
+    )
+    member = await client.post(
+        "/users",
+        json={
+            "username": "member",
+            "role": "member",
+            "temporary_password": NEW_MASTER_PASSWORD,
+        },
+        headers=headers,
+    )
+    assert member.status_code == 200, member.text
+    service = await client.post(
+        "/users", json={"username": "service", "role": "service"}, headers=headers
+    )
+    assert service.status_code == 200, service.text
+    assert entry_id is not None
+    shared = await client.put(
+        f"/passwords/{entry_id}/shares/{member.json()['id']}",
+        json={"permission": "read"},
+        headers=headers,
+    )
+    assert shared.status_code == 200, shared.text
     resp = await client.post(
         "/passwords/alpha/attachments",
         files={"file": ("doc.bin", b"\x00\xffbinary", "application/octet-stream")},
@@ -159,7 +253,13 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
     backup_zip = legacy_backup_zip(
         [{"name": "from-backup", "value": "restored-Value-1"}], MASTER_PASSWORD
     )
-    return {"attachment_id": attachment_id, "backup_zip": backup_zip}
+    return {
+        "attachment_id": attachment_id,
+        "backup_zip": backup_zip,
+        "entry_id": entry_id,
+        "member_id": member.json()["id"],
+        "service_id": service.json()["id"],
+    }
 
 
 def _expected_rejection(headers: Headers) -> tuple[int, str]:
@@ -284,7 +384,13 @@ async def test_sessions_and_keys_from_before_a_rotation_are_rejected(
 async def test_uninitialized_vault_rejects_everything(
     client: httpx.AsyncClient, route: tuple[str, str]
 ) -> None:
-    ctx = {"attachment_id": 1, "backup_zip": b"PK"}
+    ctx = {
+        "attachment_id": 1,
+        "backup_zip": b"PK",
+        "entry_id": 1,
+        "member_id": 1,
+        "service_id": 1,
+    }
     credentials = {
         **_as_key_headers(forged_keys("A" * 43 + "=")),
         "random token": auth("A" * 43),

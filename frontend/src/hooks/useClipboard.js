@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useSnackbar } from "notistack";
 import { useStoreState } from "easy-peasy";
+import { useTranslation } from "react-i18next";
 
 import { IS_DESKTOP, copySecret } from "../platform";
-import { formatDuration } from "../utils";
 
 const wipe = () => navigator.clipboard.writeText("").catch(() => {});
 
+const formatDuration = (ms, t) => {
+  const seconds = Math.round(ms / 1000);
+  if (seconds >= 60 && seconds % 60 === 0)
+    return t("common.duration.minutes", { count: seconds / 60 });
+  return t("common.duration.seconds", { count: seconds });
+};
+
 const useClipboard = () => {
+  const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const clearMs = useStoreState((s) => s.ciphermothModels.settings.settings.clipboard_clear_ms);
   const clearAtRef = useRef(null);
@@ -27,7 +35,7 @@ const useClipboard = () => {
   return useCallback(
     (value) => {
       (IS_DESKTOP ? copySecret(value, clearMs) : navigator.clipboard.writeText(value)).then(() => {
-        enqueueSnackbar(`Copied! Clipboard clears in ${formatDuration(clearMs)}.`, {
+        enqueueSnackbar(t("clipboard.copied", { duration: formatDuration(clearMs, t) }), {
           variant: "success",
         });
         if (IS_DESKTOP) return;
@@ -41,7 +49,7 @@ const useClipboard = () => {
         }, clearMs);
       });
     },
-    [enqueueSnackbar, clearMs]
+    [enqueueSnackbar, clearMs, t]
   );
 };
 

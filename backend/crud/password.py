@@ -128,6 +128,10 @@ def normalize_custom_fields(raw: object) -> list[dict[str, object]]:
 
 
 class PasswordCRUD(BaseCRUD):
+    def __init__(self, session, owner_id: int | None = None) -> None:
+        super().__init__(session)
+        self.owner_id = owner_id
+
     async def flush_or_conflict(self, conflict: str) -> None:
         try:
             await self.session.flush()
@@ -170,8 +174,14 @@ class PasswordCRUD(BaseCRUD):
         ).all()
         return {entry_id: count for entry_id, count in rows}
 
-    async def _listed(self, key: VaultKey, *, deleted: bool) -> list[PasswordResponse]:
+    async def _listed(
+        self, key: VaultKey, *, deleted: bool, entry_ids: list[int] | None = None
+    ) -> list[PasswordResponse]:
         stmt = select(EntryModel)
+        if entry_ids is not None:
+            if not entry_ids:
+                return []
+            stmt = stmt.where(EntryModel.id.in_(entry_ids))
         if deleted:
             stmt = stmt.where(EntryModel.deleted.is_not(None)).order_by(
                 EntryModel.deleted.desc(), EntryModel.id.desc()
@@ -206,7 +216,7 @@ class PasswordCRUD(BaseCRUD):
     async def create_password(
         self, password: Password, key: VaultKey
     ) -> PasswordCreate:
-        model = EntryModel()
+        model = EntryModel(owner_id=self.owner_id)
         seal_entry(key, model, document_from(password))
         self.session.add(model)
         await self.flush_or_conflict(_NAME_TAKEN)
@@ -305,7 +315,7 @@ class PasswordCRUD(BaseCRUD):
             current.deleted = utc_now()
             await self.session.flush()
             outcome = "overwritten"
-        model = EntryModel()
+        model = EntryModel(owner_id=self.owner_id)
         seal_entry(key, model, document_from(password))
         self.session.add(model)
         existing[index] = model
@@ -374,20 +384,33 @@ class PasswordCRUD(BaseCRUD):
         accounts for one site never collapse into one entry.
         """
         existing = await self.load_active()
-        taken = set(existing)
+        taken = {
+            bytes(index)
+            for index in await self.session.scalars(
+                select(EntryModel.name_index).where(EntryModel.deleted.is_(None))
+            )
+        }
         seen: set[bytes] = set()
         renamed: list[ImportRowReport] = []
         counts = {"imported": 0, "skipped": 0, "overwritten": 0}
         for where, password in passwords:
             name = password.password_name
-            if key.name_index(name) in seen:
+            index = key.name_index(name)
+            foreign_name = index in taken and index not in existing
+            if index in seen or foreign_name:
                 unique = self._unique_name(name, taken, key)
                 renamed.append(
                     ImportRowReport(
                         where=where,
                         name=name[:100],
-                        reason=f"imported as '{unique[:120]}' because the file "
-                        "has another entry with this name",
+                        reason=(
+                            f"imported as '{unique[:120]}' because "
+                            + (
+                                "that active name is already in use"
+                                if foreign_name
+                                else "the file has another entry with this name"
+                            )
+                        ),
                     )
                 )
                 password = password.model_copy(update={"password_name": unique})

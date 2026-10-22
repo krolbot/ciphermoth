@@ -1,6 +1,6 @@
 import apiClient from "../api/client";
 
-export const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO || "mr-grj/ciphermoth";
+export const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO || "krolbot/ciphermoth";
 
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 

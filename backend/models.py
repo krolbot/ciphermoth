@@ -13,6 +13,7 @@ from sqlalchemy import (
     false,
     func,
     text,
+    true,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -84,6 +85,54 @@ class VaultModel(BaseModel):
     )
 
     format_version: Mapped[int] = mapped_column(Integer)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    kdf: Mapped[str] = mapped_column(String)
+    kdf_memory_kib: Mapped[int] = mapped_column(Integer)
+    kdf_iterations: Mapped[int] = mapped_column(Integer)
+    kdf_lanes: Mapped[int] = mapped_column(Integer)
+    kdf_salt: Mapped[bytes] = mapped_column(LargeBinary)
+    password_check: Mapped[bytes] = mapped_column(LargeBinary)
+    wrapped_key: Mapped[bytes] = mapped_column(LargeBinary)
+    key_check: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class UserModel(BaseModel):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'member', 'service')", name="ck_users_role"),
+        CheckConstraint("length(kdf_salt) = 16", name="ck_users_salt"),
+        CheckConstraint("length(password_check) = 32", name="ck_users_password_check"),
+        CheckConstraint("length(key_check) = 32", name="ck_users_key_check"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+    updated: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
+    )
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    role: Mapped[str] = mapped_column(String(16))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    service_owner_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    service_token_hash: Mapped[bytes | None] = mapped_column(
+        LargeBinary, unique=True, nullable=True
+    )
     kdf: Mapped[str] = mapped_column(String)
     kdf_memory_kib: Mapped[int] = mapped_column(Integer)
     kdf_iterations: Mapped[int] = mapped_column(Integer)
@@ -125,10 +174,44 @@ class EntryModel(BaseModel):
     )
     deleted: Mapped[datetime | None] = mapped_column(RecordTimestamp, default=None)
 
+    owner_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+
     name_index: Mapped[bytes] = mapped_column(LargeBinary)
     document: Mapped[bytes] = mapped_column(LargeBinary)
     backed_up: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
+    )
+
+
+class EntryAccessModel(BaseModel):
+    __tablename__ = "entry_access"
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('read', 'write')", name="ck_entry_access_permission"
+        ),
+    )
+
+    entry_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("entries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    permission: Mapped[str] = mapped_column(String(16))
+    granted_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
     )
 
 

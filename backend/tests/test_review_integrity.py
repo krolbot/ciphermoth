@@ -54,7 +54,7 @@ def test_frozen_derivations_against_independent_hmac_construction() -> None:
             )
 
 
-async def test_rotation_refuses_orphan_attachment_and_keeps_old_key_and_session(
+async def test_password_rewrap_does_not_touch_orphan_attachment(
     client: httpx.AsyncClient,
 ) -> None:
     headers = auth(await create_vault(client))
@@ -68,7 +68,10 @@ async def test_rotation_refuses_orphan_attachment_and_keeps_old_key_and_session(
     with closing(sqlite3.connect(data_dir() / VAULT_FILE)) as unchecked:
         unchecked.execute("UPDATE attachments SET entry_id = 999")
         unchecked.commit()
-    before = await db_snapshot()
+    orphan_before = await db_execute(
+        "SELECT entry_id, meta, content FROM attachments WHERE id = :id",
+        id=attachment_id,
+    )
     response = await client.patch(
         "/master_password/update",
         json={
@@ -77,11 +80,21 @@ async def test_rotation_refuses_orphan_attachment_and_keeps_old_key_and_session(
         },
         headers=headers,
     )
-    assert response.status_code == 500
-    assert response.json()["code"] == "vault_damaged"
-    assert await db_snapshot() == before
-    assert (await client.get("/passwords/kept", headers=headers)).status_code == 200
-    assert (await client.get("/vault/damaged", headers=headers)).json() == {
+    assert response.status_code == 200, response.text
+    assert (
+        await db_execute(
+            "SELECT entry_id, meta, content FROM attachments WHERE id = :id",
+            id=attachment_id,
+        )
+        == orphan_before
+    )
+    assert (await client.get("/passwords/kept", headers=headers)).status_code == 401
+    login = await client.post(
+        "/master_password/unlock", json={"master_password": NEW_MASTER_PASSWORD}
+    )
+    fresh = auth(login.json()["session_token"])
+    assert (await client.get("/passwords/kept", headers=fresh)).status_code == 200
+    assert (await client.get("/vault/damaged", headers=fresh)).json() == {
         "entries": [],
         "attachments": [attachment_id],
     }

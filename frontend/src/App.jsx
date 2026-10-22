@@ -1,15 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Box, Container, CssBaseline, GlobalStyles, Toolbar } from "@mui/material";
 import { useStoreActions } from "easy-peasy";
 
 import DesktopGate from "./platform/DesktopGate";
+import apiClient from "./api/client";
+import PasswordChangeDialog from "./components/PasswordChangeDialog";
 import ThemeToggle from "./components/ThemeToggle";
 import TopMenu from "./components/TopMenu";
 import { ColorModeProvider } from "./hooks/useColorMode";
 import useAutoLogout from "./hooks/useAutoLogout";
 import routes from "./routes";
-import { isAuth } from "./utils";
+import { getCurrentUser, isAuth, setCurrentUser } from "./utils";
 import { GLOW, INFO, PAPER_DARK, TEXT_ON_DARK, WARN, WEAK } from "./lib/brand";
 
 const SANS = "'Space Grotesk Variable', system-ui, sans-serif";
@@ -19,9 +21,18 @@ const AppContent = () => {
   useAutoLogout();
 
   const authed = isAuth();
+  const [currentUser, setUser] = useState(getCurrentUser);
   const getSettings = useStoreActions((a) => a.ciphermothModels.settings.get);
   useEffect(() => {
-    if (authed) getSettings();
+    if (!authed) return;
+    getSettings();
+    apiClient
+      .get("/auth/me")
+      .then(({ data }) => {
+        setCurrentUser(data);
+        setUser(data);
+      })
+      .catch(() => {});
   }, [authed, getSettings]);
 
   const appRoutes = (
@@ -60,6 +71,12 @@ const AppContent = () => {
           {appRoutes}
         </Container>
       </Box>
+      <PasswordChangeDialog
+        open={Boolean(currentUser?.must_change_password)}
+        required
+        onClose={() => {}}
+        onChanged={setUser}
+      />
       <ThemeToggle />
     </Box>
   );

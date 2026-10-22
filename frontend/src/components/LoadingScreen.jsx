@@ -1,9 +1,11 @@
 import { Box, Typography, useTheme } from "@mui/material";
+import { useTranslation } from "react-i18next";
 
 import MothIcon from "./MothIcon";
 import { GLOW, TOTP } from "../lib/brand";
 
-const LoadingScreen = ({ label = "UNLOCKING" }) => {
+const LoadingScreen = ({ label }) => {
+  const { t } = useTranslation();
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
 
@@ -94,7 +96,7 @@ const LoadingScreen = ({ label = "UNLOCKING" }) => {
           color: dark ? GLOW : TOTP,
         }}
       >
-        {label}
+        {label ?? t("auth.unlocking")}
         <Box component="span" sx={{ animation: "cmBlink 1.4s steps(1) infinite" }}>
           …
         </Box>

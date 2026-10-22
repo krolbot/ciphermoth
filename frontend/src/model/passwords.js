@@ -4,12 +4,11 @@ import { IS_DESKTOP, nativeBackup, nativeRestore } from "../platform";
 import { getSessionToken } from "../utils";
 import apiClient from "../api/client";
 import { errorDetail, triggerDownload } from "../lib/http";
+import i18n from "../i18n";
 
 export const entryPath = (passwordName, suffix = "") => {
   if (passwordName === "." || passwordName === "..") {
-    throw new Error(
-      `Browsers can't address an entry named "${passwordName}". Edit the entry to rename it, then try again.`
-    );
+    throw new Error(i18n.t("errors.invalidEntryName", { name: passwordName }));
   }
   return `/passwords/${encodeURIComponent(passwordName)}${suffix}`;
 };
@@ -51,9 +50,7 @@ const Passwords = {
       actions.setDamaged(data);
       actions.setDamageCheckError(null);
     } catch {
-      actions.setDamageCheckError(
-        "The vault damage check failed. Some entries or attachments may be missing from this view. Retry the check before relying on this list."
-      );
+      actions.setDamageCheckError(i18n.t("errors.damageCheck"));
     }
   }),
 
@@ -65,7 +62,7 @@ const Passwords = {
         }
       }
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to remove the damaged rows."));
+      throw new Error(await errorDetail(err, i18n.t("errors.removeDamaged")));
     } finally {
       await actions.get();
       await actions.getTrash();
@@ -80,7 +77,7 @@ const Passwords = {
       const { data } = await apiClient.get("/passwords");
       actions.setPasswords(data);
     } catch (err) {
-      actions.setError(await errorDetail(err, "Failed to load passwords."));
+      actions.setError(await errorDetail(err, i18n.t("errors.loadPasswords")));
     } finally {
       actions.setLoading(false);
     }
@@ -91,7 +88,7 @@ const Passwords = {
       await apiClient.post("/passwords/create", payload);
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to create password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.createPassword")));
     }
   }),
 
@@ -100,7 +97,7 @@ const Passwords = {
       await apiClient.patch("/passwords/update", payload);
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to update password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.updatePassword")));
     }
   }),
 
@@ -112,7 +109,7 @@ const Passwords = {
       await actions.get();
       await actions.getTrash();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to delete password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.deletePassword")));
     }
   }),
 
@@ -121,7 +118,7 @@ const Passwords = {
       const { data } = await apiClient.get("/passwords/trash");
       actions.setTrash(data);
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to load trash."));
+      throw new Error(await errorDetail(err, i18n.t("errors.loadTrash")));
     }
   }),
 
@@ -135,7 +132,7 @@ const Passwords = {
       await actions.get();
       await actions.getTrash();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to restore password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.restorePassword")));
     }
   }),
 
@@ -148,7 +145,7 @@ const Passwords = {
       await apiClient.delete(path, { headers, params: { entry_id: entryId } });
       await actions.getTrash();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to delete password."));
+      throw new Error(await errorDetail(err, i18n.t("errors.deletePassword")));
     }
   }),
 
@@ -159,7 +156,7 @@ const Passwords = {
       await apiClient.patch(path, { favorite }, { headers });
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to update favorite."));
+      throw new Error(await errorDetail(err, i18n.t("errors.updateFavorite")));
     }
   }),
 
@@ -170,7 +167,7 @@ const Passwords = {
       const { data } = await apiClient.get(path, { headers });
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to load attachments."));
+      throw new Error(await errorDetail(err, i18n.t("errors.loadAttachments")));
     }
   }),
 
@@ -184,7 +181,7 @@ const Passwords = {
       await actions.get();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to upload attachment."));
+      throw new Error(await errorDetail(err, i18n.t("errors.uploadAttachment")));
     }
   }),
 
@@ -195,7 +192,7 @@ const Passwords = {
       const response = await apiClient.get(path, { responseType: "blob", headers });
       await triggerDownload(response.data, filename || "attachment");
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to download attachment."));
+      throw new Error(await errorDetail(err, i18n.t("errors.downloadAttachment")));
     }
   }),
 
@@ -206,7 +203,35 @@ const Passwords = {
       await apiClient.delete(path, { headers });
       await actions.get();
     } catch (err) {
-      throw new Error(await errorDetail(err, "Failed to delete attachment."));
+      throw new Error(await errorDetail(err, i18n.t("errors.deleteAttachment")));
+    }
+  }),
+
+  listShares: thunk(async (_actions, entryId) => {
+    try {
+      const { data } = await apiClient.get(`/passwords/${entryId}/shares`);
+      return data;
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.loadShares")));
+    }
+  }),
+
+  setShare: thunk(async (_actions, { entryId, userId, permission }) => {
+    try {
+      const { data } = await apiClient.put(`/passwords/${entryId}/shares/${userId}`, {
+        permission,
+      });
+      return data;
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.saveShare")));
+    }
+  }),
+
+  revokeShare: thunk(async (_actions, { entryId, userId }) => {
+    try {
+      await apiClient.delete(`/passwords/${entryId}/shares/${userId}`);
+    } catch (err) {
+      throw new Error(await errorDetail(err, i18n.t("errors.revokeShare")));
     }
   }),
 
@@ -234,7 +259,9 @@ const Passwords = {
       await actions.getTrash();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, IS_DESKTOP ? err.message : "Import failed."));
+      throw new Error(
+        await errorDetail(err, IS_DESKTOP ? err.message : i18n.t("errors.importFailed"))
+      );
     }
   }),
 
@@ -247,7 +274,9 @@ const Passwords = {
       await actions.get();
       return data;
     } catch (err) {
-      throw new Error(await errorDetail(err, IS_DESKTOP ? err.message : "Import failed."));
+      throw new Error(
+        await errorDetail(err, IS_DESKTOP ? err.message : i18n.t("errors.importFailed"))
+      );
     }
   }),
 
@@ -265,7 +294,9 @@ const Passwords = {
       const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
       triggerDownload(response.data, `ciphermoth_backup_${stamp}.cmbackup`);
     } catch (err) {
-      throw new Error(await errorDetail(err, IS_DESKTOP ? err.message : "Backup failed."));
+      throw new Error(
+        await errorDetail(err, IS_DESKTOP ? err.message : i18n.t("errors.backupFailed"))
+      );
     }
   }),
 };

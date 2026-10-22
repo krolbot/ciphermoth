@@ -18,7 +18,7 @@ describe("desktop update checks", () => {
       notes: "Fixes",
       updateAvailable: true,
       canInstall: true,
-      releaseUrl: "https://github.com/mr-grj/ciphermoth/releases/tag/v3.2.0",
+      releaseUrl: "https://github.com/krolbot/ciphermoth/releases/tag/v3.2.0",
     };
     invoke.mockResolvedValue(status);
     const store = createStore(Updates);

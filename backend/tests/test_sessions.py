@@ -634,6 +634,7 @@ async def test_a_session_does_not_survive_a_vault_recreated_from_scratch(
     await db_execute("DELETE FROM vault")
     resp = await client.get("/passwords", headers=auth(token))
     assert resp.status_code == 403
+    await db_execute("DELETE FROM users")
     await create_vault(client, NEW_MASTER_PASSWORD)
     resp = await client.get("/passwords", headers=auth(token))
     assert resp.status_code == 401
@@ -987,7 +988,7 @@ async def test_browsers_may_send_the_session_header(client: httpx.AsyncClient) -
     assert resp.status_code == 200
     allowed = resp.headers["access-control-allow-headers"].lower()
     assert "x-ciphermoth-session" in allowed
-    assert "authorization" not in allowed
+    assert "authorization" in allowed
     assert resp.headers.get("access-control-allow-credentials") is None
 
 
@@ -1048,7 +1049,13 @@ async def test_the_server_no_longer_advertises_the_vault_key_protocol(
     client: httpx.AsyncClient,
 ) -> None:
     features = (await client.get("/meta")).json()["features"]
-    assert features == ["entry-names-with-slash", "vault-sessions"]
+    assert features == [
+        "entry-names-with-slash",
+        "vault-sessions",
+        "multi-user",
+        "entry-grants",
+        "mcp",
+    ]
     paths = app.openapi()["paths"]
     assert "/api/master_password/check" not in paths
     assert "key-derivation" not in str(app.openapi()).lower()

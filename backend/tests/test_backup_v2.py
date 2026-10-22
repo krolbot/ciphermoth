@@ -497,6 +497,7 @@ async def test_a_complete_backup_restores_everything_byte_for_byte(
         "renamed_rows": [],
         "trashed": 1,
         "attachments": 2,
+        "grants_restored": 0,
         "settings_restored": True,
     }
     restored = await read_current_vault(NEW_MASTER_PASSWORD)

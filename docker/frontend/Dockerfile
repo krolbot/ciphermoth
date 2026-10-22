@@ -1,7 +1,7 @@
 FROM node:20-alpine AS builder
 
 ARG VITE_API_URL=http://localhost:8000/api
-ARG VITE_GITHUB_REPO=mr-grj/ciphermoth
+ARG VITE_GITHUB_REPO=krolbot/ciphermoth
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_GITHUB_REPO=$VITE_GITHUB_REPO
 
@@ -20,7 +20,7 @@ FROM node:20-alpine AS runtime
 
 LABEL io.ciphermoth.min-updater-protocol="3"
 
-ARG VITE_GITHUB_REPO=mr-grj/ciphermoth
+ARG VITE_GITHUB_REPO=krolbot/ciphermoth
 ENV CIPHERMOTH_GITHUB_REPO=$VITE_GITHUB_REPO
 
 RUN addgroup -S ciphermoth && adduser -S ciphermoth -G ciphermoth

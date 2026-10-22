@@ -44,7 +44,13 @@ async def test_vault_lifecycle_and_unlock(client: httpx.AsyncClient) -> None:
     assert resp.json() == {"initialized": False}
     assert (await client.get("/meta")).json() == {
         "version": get_api_settings().version,
-        "features": ["entry-names-with-slash", "vault-sessions"],
+        "features": [
+            "entry-names-with-slash",
+            "vault-sessions",
+            "multi-user",
+            "entry-grants",
+            "mcp",
+        ],
     }
 
     resp = await client.post(
@@ -236,6 +242,7 @@ async def test_csv_import_skip_and_overwrite(client: httpx.AsyncClient) -> None:
         "renamed_rows": [],
         "trashed": 0,
         "attachments": 0,
+        "grants_restored": 0,
         "settings_restored": False,
     }
     assert (await _get(client, key, "mail"))["password_value"] == "old-1"

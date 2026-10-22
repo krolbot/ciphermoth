@@ -3,12 +3,12 @@
 # SQLite file in a Docker volume). Safe to read before you run it. It does not
 # verify the images' signatures; docs/UPDATING.md shows how to.
 #
-#   curl -fsSL https://raw.githubusercontent.com/mr-grj/ciphermoth/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/krolbot/ciphermoth/master/install.sh | sh
 #
 # Overridable with env vars: CIPHERMOTH_REPO, CIPHERMOTH_REF, CIPHERMOTH_DIR.
 set -eu
 
-REPO="${CIPHERMOTH_REPO:-mr-grj/ciphermoth}"
+REPO="${CIPHERMOTH_REPO:-krolbot/ciphermoth}"
 REF="${CIPHERMOTH_REF:-master}"
 BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 DIR="${CIPHERMOTH_DIR:-ciphermoth}"

@@ -174,16 +174,18 @@ def _padded(document: bytes) -> bytes:
 
 class VaultKey:
     """
-    The keys derived from one vault key. The raw vault key is not kept: a
-    session holds this object, which can encrypt, decrypt and index records
-    and prove which vault key it came from (``check``), and nothing else.
+    The keys derived from one vault key. The raw vault key remains private to
+    this object so it can be wrapped for another explicitly provisioned account;
+    callers can only encrypt, decrypt, index, wrap account material and prove
+    which vault key it came from (``check``).
     """
 
-    __slots__ = ("_records", "_index", "check")
+    __slots__ = ("_raw", "_records", "_index", "check")
 
     def __init__(self, raw: bytes) -> None:
         if len(raw) != KEY_BYTES:
             raise ValueError("A vault key is 32 bytes.")
+        self._raw = raw
         self._records = AESGCM(_hkdf(raw, _RECORD_ENCRYPTION))
         self._index = _hkdf(raw, _NAME_INDEX)
         self.check = _hkdf(raw, _KEY_CHECK)
@@ -313,6 +315,15 @@ async def create_key_material(
     raw_key = os.urandom(KEY_BYTES)
     derived = await derive(password, salt, params)
     return seal_key_material(derived, raw_key, params, salt), VaultKey(raw_key)
+
+
+async def wrap_key_material(
+    password: str, key: VaultKey, params: KdfParams = DEFAULT_KDF
+) -> KeyMaterial:
+    """Wrap an existing vault key for another account credential."""
+    salt = os.urandom(SALT_BYTES)
+    derived = await derive(password, salt, params)
+    return seal_key_material(derived, key._raw, params, salt)
 
 
 async def unlock_key_material(password: str, material: KeyMaterial) -> VaultKey | None:

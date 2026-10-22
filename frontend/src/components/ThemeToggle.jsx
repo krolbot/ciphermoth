@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { IconButton, Tooltip } from "@mui/material";
+import { useTranslation } from "react-i18next";
 
 import { useColorMode } from "../hooks/useColorMode";
 import MothIcon from "./MothIcon";
@@ -8,6 +9,7 @@ import { GLOW } from "../lib/brand";
 const FLIGHT_MS = 1050;
 
 const ThemeToggle = ({ zIndex = 1200 }) => {
+  const { t } = useTranslation();
   const { mode, toggle } = useColorMode();
   const [flying, setFlying] = useState(false);
   const timer = useRef();
@@ -23,12 +25,9 @@ const ThemeToggle = ({ zIndex = 1200 }) => {
   };
 
   return (
-    <Tooltip
-      placement="left"
-      title={dark ? "Coax the moth into the light" : "Send the moth back into the dark"}
-    >
+    <Tooltip placement="left" title={t(dark ? "theme.toLight" : "theme.toDark")}>
       <IconButton
-        aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+        aria-label={t(dark ? "theme.switchToLight" : "theme.switchToDark")}
         onClick={handleClick}
         className={flying ? "cmFlying" : undefined}
         sx={{

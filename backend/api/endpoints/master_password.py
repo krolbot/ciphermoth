@@ -6,8 +6,9 @@ from fastapi import (
 )
 
 from api.endpoints.deps import (
+    AuthContextDep,
+    AuthCRUDDep,
     CredentialDep,
-    MasterPasswordCRUDDep,
     SessionTokenHeader,
     VaultAccessDep,
     VaultSessionsDep,
@@ -39,9 +40,9 @@ router = APIRouter(tags=["master-password"])
     response_model=MasterPasswordStatus,
 )
 async def get_status(
-    crud: MasterPasswordCRUDDep,
+    crud: AuthCRUDDep,
 ) -> MasterPasswordStatus:
-    return MasterPasswordStatus(initialized=await crud.is_initialized())
+    return MasterPasswordStatus(initialized=(await crud.status()).initialized)
 
 
 @router.post(
@@ -59,9 +60,14 @@ async def get_status(
 async def unlock(
     request: Request,
     body: MasterPassword,
-    access: VaultAccessDep,
+    crud: AuthCRUDDep,
 ) -> VaultUnlock:
-    return await access.unlock(body.master_password)
+    result = await crud.login_primary(body.master_password)
+    return VaultUnlock(
+        valid=result.valid,
+        session_token=result.session_token,
+        idle_timeout_ms=result.idle_timeout_ms,
+    )
 
 
 @router.post(
@@ -117,9 +123,17 @@ async def record_session_activity(
 async def create_master_password(
     request: Request,
     body: MasterPasswordCreatePayload,
-    access: VaultAccessDep,
+    crud: AuthCRUDDep,
 ) -> MasterPasswordCreate:
-    return await access.create(body.master_password)
+    result = await crud.bootstrap("admin", body.master_password)
+    if result.session_token is None or result.idle_timeout_ms is None:
+        raise RuntimeError("A newly created vault did not open a session.")
+    return MasterPasswordCreate(
+        created=True,
+        detail="Master password created successfully.",
+        session_token=result.session_token,
+        idle_timeout_ms=result.idle_timeout_ms,
+    )
 
 
 @router.patch(
@@ -140,11 +154,15 @@ async def create_master_password(
 async def update_master_password(
     request: Request,
     body: MasterPasswordUpdatePayload,
-    access: VaultAccessDep,
-    credential: CredentialDep,
+    context: AuthContextDep,
+    crud: AuthCRUDDep,
 ) -> MasterPasswordUpdate:
-    return await access.change_master_password(
-        credential,
-        master_password=body.master_password,
-        new_master_password=body.new_master_password,
+    await crud.change_password(
+        context,
+        body.master_password,
+        body.new_master_password,
+        open_session=False,
+    )
+    return MasterPasswordUpdate(
+        updated=True, detail="Master password updated successfully."
     )

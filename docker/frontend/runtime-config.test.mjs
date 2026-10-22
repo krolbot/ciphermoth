@@ -15,7 +15,7 @@ import {
   writeErrorSite,
 } from "./runtime-config.mjs";
 
-const RELEASES = "https://api.github.com/repos/mr-grj/ciphermoth/releases/latest";
+const RELEASES = "https://api.github.com/repos/krolbot/ciphermoth/releases/latest";
 const SERVE_JSON = new URL("../../frontend/serve.json", import.meta.url);
 
 test("absolute API URLs allow exactly their origin", () => {
@@ -35,7 +35,7 @@ test("relative API paths, with or without a leading slash, use the UI's own orig
   for (const url of ["/api", "api", "ciphermoth/api/", "/"]) {
     assert.deepEqual(parseApiUrl(url), { url, sources: [], warnings: [] });
   }
-  assert.deepEqual(connectSources({ apiSources: [], githubRepo: "mr-grj/ciphermoth" }), [
+  assert.deepEqual(connectSources({ apiSources: [], githubRepo: "krolbot/ciphermoth" }), [
     "'self'",
     RELEASES,
   ]);
@@ -88,7 +88,7 @@ test("unsafe or unusable API URLs are refused", () => {
 });
 
 test("the GitHub repository must be owner/name", () => {
-  assert.equal(parseGithubRepo(undefined), "mr-grj/ciphermoth");
+  assert.equal(parseGithubRepo(undefined), "krolbot/ciphermoth");
   assert.equal(parseGithubRepo("someone/fork.of-moth"), "someone/fork.of-moth");
   for (const repo of ["mr-grj", "a/b/c", "a/b releases", "*/*", "a/b;x"]) {
     assert.throws(() => parseGithubRepo(repo), ConfigError, repo);

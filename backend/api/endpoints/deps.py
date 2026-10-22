@@ -7,12 +7,12 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.path_guard import entry_name
-from crud.attachment import AttachmentCRUD
+from crud.access import AuthorizedAttachmentCRUD, AuthorizedPasswordCRUD, EntryACL
+from crud.auth import AuthContext, AuthCRUD
 from crud.backup import BackupCRUD
 from crud.damage import DamageCRUD
 from crud.engine import Database
 from crud.master_password import MasterPasswordCRUD
-from crud.password import PasswordCRUD
 from crud.settings import SettingsCRUD
 from crud.vault_access import SessionToken, VaultAccess
 from errors import Forbidden, InvalidRequest, SessionRequired
@@ -66,8 +66,10 @@ async def get_master_password_crud(session: SessionDep) -> MasterPasswordCRUD:
     return MasterPasswordCRUD(session)
 
 
-async def get_password_crud(session: SessionDep) -> PasswordCRUD:
-    return PasswordCRUD(session)
+async def get_auth_crud(
+    session: SessionDep, vault_sessions: VaultSessionsDep
+) -> AuthCRUD:
+    return AuthCRUD(session, vault_sessions)
 
 
 async def get_settings_crud(
@@ -76,18 +78,7 @@ async def get_settings_crud(
     return SettingsCRUD(session, vault_sessions)
 
 
-async def get_attachment_crud(session: SessionDep) -> AttachmentCRUD:
-    return AttachmentCRUD(session)
-
-
-async def get_backup_crud(
-    session: SessionDep, vault_sessions: VaultSessionsDep
-) -> BackupCRUD:
-    return BackupCRUD(session, vault_sessions)
-
-
-async def get_damage_crud(session: SessionDep) -> DamageCRUD:
-    return DamageCRUD(session)
+AuthCRUDDep = Annotated[AuthCRUD, Depends(get_auth_crud)]
 
 
 async def get_vault_access(
@@ -97,11 +88,8 @@ async def get_vault_access(
 
 
 MasterPasswordCRUDDep = Annotated[MasterPasswordCRUD, Depends(get_master_password_crud)]
-PasswordCRUDDep = Annotated[PasswordCRUD, Depends(get_password_crud)]
 SettingsCRUDDep = Annotated[SettingsCRUD, Depends(get_settings_crud)]
-AttachmentCRUDDep = Annotated[AttachmentCRUD, Depends(get_attachment_crud)]
-BackupCRUDDep = Annotated[BackupCRUD, Depends(get_backup_crud)]
-DamageCRUDDep = Annotated[DamageCRUD, Depends(get_damage_crud)]
+
 VaultAccessDep = Annotated[VaultAccess, Depends(get_vault_access)]
 SessionTokenHeader = Annotated[str | None, Depends(_session_header)]
 
@@ -125,14 +113,91 @@ async def get_credential(
 CredentialDep = Annotated[SessionToken, Depends(get_credential)]
 
 
-async def get_vault_key(access: VaultAccessDep, credential: CredentialDep) -> VaultKey:
-    return await access.authorize(credential)
+async def get_auth_context(crud: AuthCRUDDep, credential: CredentialDep) -> AuthContext:
+    return await crud.context(credential.token)
+
+
+async def get_auth_context_quietly(
+    crud: AuthCRUDDep, credential: CredentialDep
+) -> AuthContext:
+    return await crud.context(credential.token, refresh=False)
+
+
+AuthContextDep = Annotated[AuthContext, Depends(get_auth_context)]
+
+
+async def get_damage_crud(
+    session: SessionDep,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+) -> DamageCRUD:
+    if context.user.role == "admin":
+        return DamageCRUD(session)
+    acl = EntryACL(session, context)
+    entry_ids = [
+        *await acl.visible_ids(deleted=False),
+        *await acl.visible_ids(deleted=True),
+    ]
+    return DamageCRUD(session, entry_ids=entry_ids, owner_id=context.owner_id)
+
+
+DamageCRUDDep = Annotated[DamageCRUD, Depends(get_damage_crud)]
+
+
+async def get_backup_crud(
+    session: SessionDep,
+    vault_sessions: VaultSessionsDep,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+) -> BackupCRUD:
+    acl = EntryACL(session, context)
+    entry_ids = [
+        *await acl.visible_ids(deleted=False),
+        *await acl.visible_ids(deleted=True),
+    ]
+    return BackupCRUD(
+        session,
+        vault_sessions,
+        owner_id=context.owner_id,
+        entry_ids=entry_ids,
+        restore_settings=context.user.role == "admin",
+    )
+
+
+BackupCRUDDep = Annotated[BackupCRUD, Depends(get_backup_crud)]
+
+
+async def require_admin(context: AuthContextDep) -> AuthContext:
+    if context.user.role != "admin":
+        raise Forbidden("Administrator access is required.")
+    return context
+
+
+AdminContextDep = Annotated[AuthContext, Depends(require_admin)]
+
+
+async def get_password_crud(
+    session: SessionDep, context: AuthContextDep
+) -> AuthorizedPasswordCRUD:
+    return AuthorizedPasswordCRUD(session, context)
+
+
+async def get_attachment_crud(
+    session: SessionDep, context: AuthContextDep
+) -> AuthorizedAttachmentCRUD:
+    return AuthorizedAttachmentCRUD(session, context)
+
+
+PasswordCRUDDep = Annotated[AuthorizedPasswordCRUD, Depends(get_password_crud)]
+AttachmentCRUDDep = Annotated[AuthorizedAttachmentCRUD, Depends(get_attachment_crud)]
+
+
+async def get_vault_key(context: AuthContextDep) -> VaultKey:
+    return context.key
 
 
 async def get_vault_key_quietly(
-    access: VaultAccessDep, credential: CredentialDep
+    context: Annotated[AuthContext, Depends(get_auth_context_quietly)],
 ) -> VaultKey:
-    return await access.authorize(credential, refresh=False)
+    return context.key
 
 
 VaultKeyDep = Annotated[VaultKey, Depends(get_vault_key)]

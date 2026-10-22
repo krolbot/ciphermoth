@@ -14,11 +14,11 @@ if git rev-parse "refs/tags/v$version" >/dev/null 2>&1; then echo 'Tag already e
 # Require completed successful standard and native desktop validation
 # on this exact commit. Native QA uses separate disposable app identities.
 for workflow in ci.yml desktop.yml; do
-  gh run list --repo mr-grj/ciphermoth --workflow "$workflow" --commit "$head" --status success --json headSha --jq 'length' | python3 -c 'import sys; assert int(sys.stdin.read()) > 0, "Missing successful final-source CI"'
+  gh run list --repo krolbot/ciphermoth --workflow "$workflow" --commit "$head" --status success --json headSha --jq 'length' | python3 -c 'import sys; assert int(sys.stdin.read()) > 0, "Missing successful final-source CI"'
 done
 if [ "${2:-}" = '--dry-run' ]; then echo "Verified source $head; would tag v$version. No files changed."; exit 0; fi
-test "$(git var GIT_AUTHOR_IDENT | cut -d '>' -f 1)>" = 'Alexandru Grajdeanu <grajdeanu.alex@gmail.com>'
-test "$(git var GIT_COMMITTER_IDENT | cut -d '>' -f 1)>" = 'Alexandru Grajdeanu <grajdeanu.alex@gmail.com>'
+test "$(git var GIT_AUTHOR_IDENT | cut -d '>' -f 1)>" = 'krolbot <krolbot@users.noreply.github.com>'
+test "$(git var GIT_COMMITTER_IDENT | cut -d '>' -f 1)>" = 'krolbot <krolbot@users.noreply.github.com>'
 git tag -a "v$version" -m "CipherMoth v$version"
 git push origin "refs/tags/v$version"
 echo 'Release CI will build, verify, stage and publish only after all gates pass. Monitor the run through publication.'

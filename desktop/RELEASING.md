@@ -14,7 +14,7 @@ To recover on an owner-controlled machine, restore the key directory with restri
 
 ```sh
 gh secret set TAURI_SIGNING_PRIVATE_KEY --env desktop-release \
-  --repo mr-grj/ciphermoth < ~/.config/ciphermoth/release-signing/updater.key
+  --repo krolbot/ciphermoth < ~/.config/ciphermoth/release-signing/updater.key
 ```
 
 Verify continuity by signing a disposable file using `tauri signer sign --app-version X.Y.Z` and checking it with the `verify_update` example and committed public key. Do not rotate just because a new runner or computer is used. If a key is compromised, stop publication and assess recovery for installed users before changing trust.
@@ -28,7 +28,7 @@ Use the existing maintainer Git identity, normal commits, and no bot co-author t
 3. Create an annotated `vX.Y.Z` tag on the verified commit and push it once. `scripts/release.sh` validates this sequence; it does not publish an unchecked release.
 4. The single Release workflow builds/signs the existing multi-architecture GHCR images and invokes the Desktop workflow. Published Docker smoke checks verify cosign identities/digests and exercise isolated Compose installs.
 5. `artifacts.py` collects actual bundle output, assigns canonical names `CipherMoth_VERSION_OS-ARCH.EXT`, signs updater artifacts with the official CLI and verifies the signature, trusted filename and signed version. Production package provenance records the commit, version, target, byte sizes and hashes. Tauri `createUpdaterArtifacts` produces macOS `.app.tar.gz`, Windows NSIS `.exe` and Linux AppImage update bundles; DMGs and Debian packages remain regular downloads.
-6. `manifest.py` refuses missing/duplicate targets, wrong commits/versions, missing packages or invalid signatures. It builds `latest.json` from the six actual signatures and generates `SHA256SUMS`. The endpoint is permanently `https://github.com/mr-grj/ciphermoth/releases/latest/download/latest.json`.
+6. `manifest.py` refuses missing/duplicate targets, wrong commits/versions, missing packages or invalid signatures. It builds `latest.json` from the six actual signatures and generates `SHA256SUMS`. The endpoint is permanently `https://github.com/krolbot/ciphermoth/releases/latest/download/latest.json`.
 7. Only after all gates pass, `publish.py` creates one draft, uploads the complete set, downloads it again and checks every hash, then publishes it as a normal stable Latest release. Existing releases are never silently overwritten. If a failed upload leaves a draft, inspect the draft and failure before resuming; do not replace the tag.
 8. Verify the public release and downloads without authentication, the Latest manifest, and a released app's no-update result. Keep the CI run and commit in the release validation report. Do not call the release complete while a platform or Docker gate is failing.
 

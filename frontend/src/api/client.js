@@ -4,7 +4,7 @@ import { ipcAdapter } from "../platform/axiosAdapter";
 
 import { LOGOUT_NOTICE, clearSession, getSessionToken, isAuth } from "../utils";
 
-export const SESSION_ENDED = "Your vault was locked. Unlock it to continue.";
+export const SESSION_ENDED = "auth.sessionEnded";
 export const SESSION_HEADER = "x-ciphermoth-session";
 
 const apiClient = axios.create({

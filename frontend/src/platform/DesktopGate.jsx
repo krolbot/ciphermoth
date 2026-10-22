@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
 import { listen } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
 import { IS_DESKTOP, openExternal, clearClipboard } from "./index";
 import { coreStatus, coreRestart, onCoreStatus } from "./core";
 import { clearSession, isAuth } from "../utils";
 import LoadingScreen from "../components/LoadingScreen";
 
 export default function DesktopGate({ children }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState(null);
   useEffect(() => {
     if (!IS_DESKTOP) return;
@@ -59,13 +61,10 @@ export default function DesktopGate({ children }) {
   if (status?.state === "failed")
     return (
       <Box sx={{ minHeight: "100vh", display: "grid", placeContent: "center", gap: 2, p: 4 }}>
-        <Typography variant="h5">Your vault could not be opened</Typography>
-        <Typography>
-          Close other CipherMoth windows and check that this application is complete. Your vault has
-          not been replaced.
-        </Typography>
-        <Button onClick={() => coreRestart()}>Try again</Button>
+        <Typography variant="h5">{t("desktopGate.openFailedTitle")}</Typography>
+        <Typography>{t("desktopGate.openFailedDescription")}</Typography>
+        <Button onClick={() => coreRestart()}>{t("common.actions.retry")}</Button>
       </Box>
     );
-  return <LoadingScreen label="OPENING CIPHERMOTH" />;
+  return <LoadingScreen label={t("desktopGate.opening")} />;
 }

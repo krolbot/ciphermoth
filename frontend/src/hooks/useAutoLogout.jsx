@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
+import { useTranslation } from "react-i18next";
 
 import { endSession, readSession, touchSession } from "../api/session";
 import {
@@ -13,13 +14,14 @@ import {
 import { isAuth } from "../utils";
 
 const CountdownMessage = ({ seconds }) => {
+  const { t } = useTranslation();
   const [remaining, setRemaining] = useState(seconds);
   useEffect(() => {
     if (remaining <= 0) return;
-    const t = setTimeout(() => setRemaining((s) => s - 1), 1000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setRemaining((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
   }, [remaining]);
-  return `You'll be logged out in ${Math.max(0, remaining)}s due to inactivity.`;
+  return t("autoLogout.countdown", { seconds: Math.max(0, remaining) });
 };
 
 const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
@@ -55,7 +57,7 @@ const useAutoLogout = () => {
     clearTimeout(warnTimerRef.current);
     clearTimeout(hiddenTimerRef.current);
     clearWarning();
-    endSession("Logged out due to inactivity.");
+    endSession("autoLogout.loggedOut");
   }, [clearWarning]);
 
   const schedule = useCallback(() => {

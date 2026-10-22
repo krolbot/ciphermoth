@@ -11,11 +11,13 @@ import {
   Typography,
 } from "@mui/material";
 import { useStoreState } from "easy-peasy";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openExternal } from "../platform";
 
 export default function DesktopUpdateDialog({ open, onClose }) {
+  const { t } = useTranslation();
   const { current, latest, notes, canInstall, releaseUrl } = useStoreState(
     (s) => s.ciphermothModels.updates
   );
@@ -62,7 +64,7 @@ export default function DesktopUpdateDialog({ open, onClose }) {
   };
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>A new moult is ready</DialogTitle>
+      <DialogTitle>{t("updateDialog.title")}</DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
           <Typography>
@@ -75,8 +77,8 @@ export default function DesktopUpdateDialog({ open, onClose }) {
           )}
           <Typography variant="body2" color="text.secondary">
             {canInstall
-              ? "Download from GitHub and verify its signature, then lock your vault and restart CipherMoth. Your local vault stays in place."
-              : "This Debian installation updates through your package manager. Download the new .deb from GitHub and install it over this version. Your local vault stays in place."}
+              ? t("desktopUpdate.installDescription")
+              : t("desktopUpdate.debianDescription")}
           </Typography>
           {busy && (
             <>
@@ -85,25 +87,27 @@ export default function DesktopUpdateDialog({ open, onClose }) {
                 value={progress ?? 0}
               />
               <Typography variant="body2">
-                {installing ? "Installing…" : "Downloading and verifying…"}
+                {t(installing ? "desktopUpdate.installing" : "desktopUpdate.downloading")}
               </Typography>
             </>
           )}
           {error && <Alert severity="info">{error}</Alert>}
-          <Button onClick={() => openExternal(releaseUrl)}>Release notes and downloads</Button>
+          <Button onClick={() => openExternal(releaseUrl)}>
+            {t("desktopUpdate.releaseNotes")}
+          </Button>
         </Stack>
       </DialogContent>
       <DialogActions>
         {busy ? (
           <Button onClick={cancel} disabled={installing}>
-            Cancel download
+            {t("desktopUpdate.cancelDownload")}
           </Button>
         ) : (
-          <Button onClick={onClose}>Later</Button>
+          <Button onClick={onClose}>{t("common.actions.later")}</Button>
         )}
         {canInstall && (
           <Button variant="contained" onClick={install} disabled={busy}>
-            Download and install
+            {t("desktopUpdate.downloadInstall")}
           </Button>
         )}
       </DialogActions>

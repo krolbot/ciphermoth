@@ -20,9 +20,13 @@ async def serve(proto_in, proto_out, data_dir, applied, started):
     from vault_sessions import VaultSessions
     from models import SETTINGS_DEFAULTS
     from settings import get_api_settings
+    from storage import migrate_users_if_needed
 
     from .server import CoreServer
 
+    # Desktop startup is single-process. Upgrade an upstream 3.1 vault here so
+    # an installed app never needs an external administration CLI.
+    migrate_users_if_needed(data_dir)
     get_api_settings().disable_docs = True
     app = get_application(
         database=Database(data_dir),

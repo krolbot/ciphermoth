@@ -42,7 +42,7 @@ jobs:
       - name: Pull the published images
         run: |
           for image in backend frontend; do
-            reference="ghcr.io/mr-grj/ciphermoth-$image:$RELEASE_VERSION"
+            reference="ghcr.io/krolbot/ciphermoth-$image:$RELEASE_VERSION"
             docker pull "$reference"
             digest="$(docker image inspect "$reference" --format '{{index .RepoDigests 0}}')"
             cosign verify "$digest" \

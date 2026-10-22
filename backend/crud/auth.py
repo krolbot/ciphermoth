@@ -1,0 +1,667 @@
+import hashlib
+import logging
+import secrets
+from dataclasses import dataclass, field
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from crud.base import BaseCRUD
+from crud.engine import after_commit, after_rollback
+from crud.master_password import _store, fetch_vault, key_material
+from crud.settings import SettingsCRUD
+from errors import Forbidden, InvalidRequest, NotFound, SessionRequired
+from helpers import (
+    KDF_NAME,
+    DecryptionFailed,
+    KdfParams,
+    KeyMaterial,
+    UnsupportedKdf,
+    VaultKey,
+    create_key_material,
+    unlock_key_material,
+    wrap_key_material,
+)
+from models import AttachmentModel, EntryAccessModel, EntryModel, UserModel, VaultModel
+from schemas import (
+    AuthResponse,
+    AuthStatus,
+    AuthUser,
+    UserCreateResponse,
+    UserRole,
+)
+from vault_sessions import VaultSessions
+
+logger = logging.getLogger(__name__)
+
+_INVALID_LOGIN = "Invalid username or password."
+_SESSION_ENDED = "Your session expired, was revoked, or the account was disabled."
+_DAMAGED = (
+    "An account key record failed to verify. The vault file may be damaged; "
+    "restore a snapshot (docs/UPDATING.md)."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AuthContext:
+    user: UserModel
+    key: VaultKey = field(repr=False)
+    token: str | None = field(default=None, repr=False)
+
+    @property
+    def owner_id(self) -> int:
+        return self.user.service_owner_id or self.user.id
+
+
+def token_digest(token: str) -> bytes:
+    return hashlib.sha256(token.encode()).digest()
+
+
+def user_key_material(model: UserModel) -> KeyMaterial:
+    for value, length in (
+        (model.kdf_salt, 16),
+        (model.password_check, 32),
+        (model.wrapped_key, 61),
+        (model.key_check, 32),
+    ):
+        if not isinstance(value, bytes) or len(value) != length:
+            raise InvalidRequest(_DAMAGED)
+    if model.kdf != KDF_NAME:
+        raise InvalidRequest("The account uses a key format this release cannot read.")
+    params = KdfParams(model.kdf_memory_kib, model.kdf_iterations, model.kdf_lanes)
+    try:
+        params.require_supported()
+    except UnsupportedKdf as error:
+        raise InvalidRequest(str(error)) from None
+    return KeyMaterial(
+        params=params,
+        salt=model.kdf_salt,
+        password_check=model.password_check,
+        wrapped_key=model.wrapped_key,
+        key_check=model.key_check,
+    )
+
+
+def store_user_material(model: UserModel, material: KeyMaterial) -> None:
+    model.kdf = KDF_NAME
+    model.kdf_memory_kib = material.params.memory_kib
+    model.kdf_iterations = material.params.iterations
+    model.kdf_lanes = material.params.lanes
+    model.kdf_salt = material.salt
+    model.password_check = material.password_check
+    model.wrapped_key = material.wrapped_key
+    model.key_check = material.key_check
+
+
+async def fetch_user(session: AsyncSession, user_id: int) -> UserModel | None:
+    statement = (
+        select(UserModel)
+        .where(UserModel.id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    return await session.scalar(statement)
+
+
+def credential_fingerprint(model: UserModel) -> bytes:
+    material = user_key_material(model)
+    digest = hashlib.sha256()
+    for value in (
+        model.kdf.encode(),
+        material.params.memory_kib.to_bytes(8, "big"),
+        material.params.iterations.to_bytes(8, "big"),
+        material.params.lanes.to_bytes(8, "big"),
+        material.salt,
+        material.password_check,
+        material.wrapped_key,
+        material.key_check,
+    ):
+        digest.update(len(value).to_bytes(4, "big"))
+        digest.update(value)
+    return digest.digest()
+
+
+async def validate_vault_material(
+    session: AsyncSession, vault: VaultModel
+) -> KeyMaterial:
+    material = key_material(vault)
+    if vault.owner_user_id is None:
+        return material
+    owner = await fetch_user(session, vault.owner_user_id)
+    if owner is None or user_key_material(owner) != material:
+        raise InvalidRequest(_DAMAGED)
+    return material
+
+
+async def open_material(password: str, material: KeyMaterial) -> VaultKey | None:
+    try:
+        return await unlock_key_material(password, material)
+    except UnsupportedKdf as error:
+        raise InvalidRequest(str(error)) from None
+    except DecryptionFailed:
+        logger.error("An account key record failed to verify.")
+        raise InvalidRequest(_DAMAGED) from None
+
+
+class AuthCRUD(BaseCRUD):
+    def __init__(self, session: AsyncSession, vault_sessions: VaultSessions) -> None:
+        super().__init__(session)
+        self.vault_sessions = vault_sessions
+
+    @staticmethod
+    def to_user(model: UserModel) -> AuthUser:
+        return AuthUser(
+            id=model.id,
+            username=model.username,
+            role=UserRole(model.role),
+            active=model.active,
+            must_change_password=model.must_change_password,
+        )
+
+    async def status(self) -> AuthStatus:
+        count = await self.session.scalar(select(func.count()).select_from(UserModel))
+        return AuthStatus(initialized=bool(count))
+
+    async def _refresh_timeout(self) -> None:
+        inactivity_ms = await SettingsCRUD(
+            self.session, self.vault_sessions
+        ).inactivity_ms()
+        self.vault_sessions.set_idle_timeout(inactivity_ms)
+
+    def _open_session(self, user: UserModel, key: VaultKey) -> AuthResponse:
+        token = self.vault_sessions.open(key, user.id, credential_fingerprint(user))
+        after_rollback(self.session, lambda: self.vault_sessions.revoke(token))
+        return AuthResponse(
+            valid=True,
+            user=self.to_user(user),
+            session_token=token,
+            idle_timeout_ms=self.vault_sessions.idle_timeout_ms,
+        )
+
+    async def bootstrap(self, username: str, password: str) -> AuthResponse:
+        vault = await fetch_vault(self.session)
+        if await self.session.scalar(select(UserModel.id).limit(1)) is not None:
+            if vault is None:
+                raise InvalidRequest(_DAMAGED)
+            raise Forbidden("CipherMoth is already initialized.")
+        if vault is None:
+            if (
+                await self.session.scalar(select(EntryModel.id).limit(1)) is not None
+                or await self.session.scalar(select(AttachmentModel.id).limit(1))
+                is not None
+            ):
+                raise InvalidRequest(
+                    "The vault file holds records but no key record, so it is damaged. "
+                    "Restore a snapshot, or move it aside with 'ciphermoth-admin "
+                    "set-aside' to start a new vault (docs/UPDATING.md)."
+                )
+            await self.session.commit()
+            material, key = await create_key_material(password)
+            if await self.session.scalar(select(UserModel.id).limit(1)) is not None:
+                raise Forbidden("CipherMoth is already initialized.")
+            if await fetch_vault(self.session) is not None:
+                raise Forbidden("CipherMoth is already initialized.")
+            user = UserModel(
+                username=username,
+                role=UserRole.admin,
+                active=True,
+                must_change_password=False,
+            )
+            store_user_material(user, material)
+            self.session.add(user)
+            await self.session.flush()
+            vault = VaultModel(id=1, owner_user_id=user.id)
+            _store(vault, material)
+            self.session.add(vault)
+        else:
+            observed = key_material(vault)
+            await self.session.commit()
+            key = await open_material(password, observed)
+            if key is None:
+                return AuthResponse(valid=False)
+            if await self.session.scalar(select(UserModel.id).limit(1)) is not None:
+                raise Forbidden("CipherMoth is already initialized.")
+            current = await fetch_vault(self.session)
+            if current is None or key_material(current) != observed:
+                raise Forbidden("The vault changed while the account was created.")
+            user = UserModel(
+                username=username,
+                role=UserRole.admin,
+                active=True,
+                must_change_password=False,
+            )
+            store_user_material(user, observed)
+            self.session.add(user)
+            await self.session.flush()
+            current.owner_user_id = user.id
+        await self.session.execute(
+            update(EntryModel)
+            .where(EntryModel.owner_id.is_(None))
+            .values(owner_id=user.id)
+        )
+        await self._refresh_timeout()
+        return self._open_session(user, key)
+
+    async def login(self, username: str, password: str) -> AuthResponse:
+        user = await self.session.scalar(
+            select(UserModel).where(
+                UserModel.username == username,
+                UserModel.active.is_(True),
+                UserModel.role != UserRole.service,
+            )
+        )
+        if user is None:
+            await self.session.commit()
+            # Keep invalid-user and invalid-password requests on the same KDF path.
+            await create_key_material(password)
+            return AuthResponse(valid=False)
+        observed = user_key_material(user)
+        user_id = user.id
+        vault = await fetch_vault(self.session)
+        if vault is None:
+            raise InvalidRequest(_DAMAGED)
+        key_material(vault)
+        await self.session.commit()
+        key = await open_material(password, observed)
+        if key is None:
+            return AuthResponse(valid=False)
+        current = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        if vault is None:
+            raise InvalidRequest(_DAMAGED)
+        canonical = await validate_vault_material(self.session, vault)
+        if (
+            current is None
+            or not current.active
+            or current.role == UserRole.service
+            or user_key_material(current) != observed
+        ):
+            return AuthResponse(valid=False)
+        if not key.matches(canonical.key_check):
+            raise InvalidRequest(_DAMAGED)
+        await self._refresh_timeout()
+        return self._open_session(current, key)
+
+    async def login_primary(self, password: str) -> AuthResponse:
+        vault = await fetch_vault(self.session)
+        if vault is None:
+            raise NotFound("No master password found.")
+        if vault.owner_user_id is None:
+            return await self.bootstrap("admin", password)
+        user = await fetch_user(self.session, vault.owner_user_id)
+        if user is None:
+            raise InvalidRequest(_DAMAGED)
+        return await self.login(user.username, password)
+
+    async def context(self, token: str, *, refresh: bool = True) -> AuthContext:
+        key = self.vault_sessions.resolve(token, refresh=refresh)
+        user_id = self.vault_sessions.user_id(token)
+        session_fingerprint = self.vault_sessions.credential_fingerprint(token)
+        user = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        try:
+            current_fingerprint = (
+                credential_fingerprint(user) if user is not None else None
+            )
+        except InvalidRequest:
+            current_fingerprint = None
+        if (
+            user is None
+            or not user.active
+            or user.role == UserRole.service
+            or vault is None
+            or session_fingerprint != current_fingerprint
+        ):
+            self.vault_sessions.revoke(token)
+            raise SessionRequired(_SESSION_ENDED)
+        try:
+            canonical = await validate_vault_material(self.session, vault)
+        except InvalidRequest:
+            self.vault_sessions.revoke(token)
+            raise SessionRequired(_SESSION_ENDED) from None
+        if not key.matches(canonical.key_check):
+            self.vault_sessions.revoke(token)
+            raise SessionRequired(_SESSION_ENDED)
+        return AuthContext(user=user, key=key, token=token)
+
+    async def create_user(
+        self,
+        actor: AuthContext,
+        *,
+        username: str,
+        role: UserRole,
+        temporary_password: str | None,
+    ) -> UserCreateResponse:
+        self.require_admin(actor)
+        if (
+            await self.session.scalar(
+                select(UserModel.id).where(UserModel.username == username)
+            )
+            is not None
+        ):
+            raise InvalidRequest("A user with that username already exists.")
+        credential = secrets.token_urlsafe(32) if role == UserRole.service else None
+        password = credential if credential is not None else temporary_password
+        if password is None:
+            raise InvalidRequest("A temporary password is required.")
+        actor_id = actor.user.id
+        key = actor.key
+        await self.session.commit()
+        material = await wrap_key_material(password, key)
+        current_actor = await fetch_user(self.session, actor_id)
+        vault = await fetch_vault(self.session)
+        if (
+            current_actor is None
+            or not current_actor.active
+            or current_actor.role != UserRole.admin
+            or vault is None
+            or not key.matches(vault.key_check)
+        ):
+            raise Forbidden("Administrator access is required.")
+        if (
+            await self.session.scalar(
+                select(UserModel.id).where(UserModel.username == username)
+            )
+            is not None
+        ):
+            raise InvalidRequest("A user with that username already exists.")
+        user = UserModel(
+            username=username,
+            role=role,
+            active=True,
+            must_change_password=role != UserRole.service,
+            service_owner_id=actor_id if role == UserRole.service else None,
+            service_token_hash=token_digest(credential) if credential else None,
+        )
+        store_user_material(user, material)
+        self.session.add(user)
+        await self.session.flush()
+        return UserCreateResponse(
+            **self.to_user(user).model_dump(), service_token=credential
+        )
+
+    @staticmethod
+    def require_admin(actor: AuthContext) -> None:
+        if not actor.user.active or actor.user.role != UserRole.admin:
+            raise Forbidden("Administrator access is required.")
+
+    async def list_users(self, actor: AuthContext) -> list[AuthUser]:
+        self.require_admin(actor)
+        users = (
+            await self.session.scalars(select(UserModel).order_by(UserModel.username))
+        ).all()
+        return [self.to_user(user) for user in users]
+
+    async def _target(self, actor: AuthContext, user_id: int) -> UserModel:
+        self.require_admin(actor)
+        user = await fetch_user(self.session, user_id)
+        if user is None:
+            raise NotFound("User not found.")
+        return user
+
+    async def update_user(
+        self,
+        actor: AuthContext,
+        user_id: int,
+        *,
+        role: UserRole | None,
+        active: bool | None,
+    ) -> AuthUser:
+        user = await self._target(actor, user_id)
+        current_role = UserRole(user.role)
+        next_role = role or current_role
+        if (current_role == UserRole.service) != (next_role == UserRole.service):
+            raise Forbidden("Service user type cannot be changed.")
+        removes_admin = (
+            user.active
+            and current_role == UserRole.admin
+            and (active is False or next_role != UserRole.admin)
+        )
+        if removes_admin:
+            others = await self.session.scalar(
+                select(func.count())
+                .select_from(UserModel)
+                .where(
+                    UserModel.id != user.id,
+                    UserModel.active.is_(True),
+                    UserModel.role == UserRole.admin,
+                )
+            )
+            if not others:
+                raise Forbidden("Cannot remove the last active administrator.")
+        if role is not None:
+            user.role = role
+        if active is not None:
+            user.active = active
+        if role is not None or active is False:
+            after_commit(
+                self.session,
+                lambda user_id=user.id: self.vault_sessions.revoke_user(user_id),
+            )
+        await self.session.flush()
+        return self.to_user(user)
+
+    async def revoke_user_sessions(self, actor: AuthContext, user_id: int) -> int:
+        await self._target(actor, user_id)
+        after_commit(self.session, lambda: self.vault_sessions.revoke_user(user_id))
+        return sum(
+            1
+            for session_user_id in self.vault_sessions.user_ids()
+            if session_user_id == user_id
+        )
+
+    async def require_password_change(
+        self, actor: AuthContext, user_id: int
+    ) -> AuthUser:
+        user = await self._target(actor, user_id)
+        if user.role == UserRole.service:
+            raise Forbidden("Service users do not use interactive passwords.")
+        user.must_change_password = True
+        await self.session.flush()
+        return self.to_user(user)
+
+    async def rotate_service_token(
+        self, actor: AuthContext, user_id: int
+    ) -> UserCreateResponse:
+        target = await self._target(actor, user_id)
+        if target.role != UserRole.service:
+            raise Forbidden("Only service users have service tokens.")
+        token = secrets.token_urlsafe(32)
+        actor_id = actor.user.id
+        key = actor.key
+        await self.session.commit()
+        material = await wrap_key_material(token, key)
+        current_actor = await fetch_user(self.session, actor_id)
+        current = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        if (
+            current_actor is None
+            or not current_actor.active
+            or current_actor.role != UserRole.admin
+            or current is None
+            or current.role != UserRole.service
+            or vault is None
+            or not key.matches(vault.key_check)
+        ):
+            raise Forbidden("Administrator access is required.")
+        store_user_material(current, material)
+        current.service_token_hash = token_digest(token)
+        await self.session.flush()
+        return UserCreateResponse(
+            **self.to_user(current).model_dump(), service_token=token
+        )
+
+    async def reset_password(
+        self, actor: AuthContext, user_id: int, temporary_password: str
+    ) -> AuthUser:
+        target = await self._target(actor, user_id)
+        if target.role == UserRole.service:
+            raise Forbidden("Service users do not use interactive passwords.")
+        actor_id = actor.user.id
+        key = actor.key
+        await self.session.commit()
+        material = await wrap_key_material(temporary_password, key)
+        current_actor = await fetch_user(self.session, actor_id)
+        current = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        if (
+            current_actor is None
+            or not current_actor.active
+            or current_actor.role != UserRole.admin
+            or current is None
+            or current.role == UserRole.service
+            or vault is None
+            or not key.matches(vault.key_check)
+        ):
+            raise Forbidden("Administrator access is required.")
+        store_user_material(current, material)
+        current.must_change_password = True
+        if vault.owner_user_id == current.id:
+            _store(vault, material)
+        await self.session.flush()
+        after_commit(self.session, lambda: self.vault_sessions.revoke_user(user_id))
+        return self.to_user(current)
+
+    async def delete_user(self, actor: AuthContext, user_id: int) -> None:
+        user = await self._target(actor, user_id)
+        if user.id == actor.user.id:
+            raise Forbidden("Administrators cannot delete their own account.")
+        vault = await fetch_vault(self.session)
+        if vault is not None and vault.owner_user_id == user.id:
+            raise Forbidden("The primary vault owner cannot be deleted.")
+        if (
+            await self.session.scalar(
+                select(EntryModel.id).where(EntryModel.owner_id == user.id).limit(1)
+            )
+            is not None
+        ):
+            raise Forbidden("User owns vault entries and cannot be deleted.")
+        if (
+            await self.session.scalar(
+                select(UserModel.id)
+                .where(UserModel.service_owner_id == user.id)
+                .limit(1)
+            )
+            is not None
+        ):
+            raise Forbidden("User owns service accounts and cannot be deleted.")
+        await self.session.execute(
+            delete(EntryAccessModel).where(EntryAccessModel.user_id == user.id)
+        )
+        await self.session.delete(user)
+        after_commit(self.session, lambda: self.vault_sessions.revoke_user(user_id))
+
+    async def change_password(
+        self,
+        context: AuthContext,
+        current_password: str,
+        new_password: str,
+        *,
+        open_session: bool = True,
+    ) -> AuthResponse:
+        if context.user.role == UserRole.service:
+            raise Forbidden("Service users do not use interactive passwords.")
+        observed = user_key_material(context.user)
+        user_id = context.user.id
+        key = context.key
+        await self.session.commit()
+        opened = await open_material(current_password, observed)
+        if opened is None or not opened.matches(key.check):
+            raise Forbidden("Current password is incorrect.")
+        replacement = await wrap_key_material(new_password, key)
+        user = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        canonical = (
+            await validate_vault_material(self.session, vault)
+            if vault is not None
+            else None
+        )
+        if (
+            user is None
+            or not user.active
+            or user_key_material(user) != observed
+            or vault is None
+            or canonical is None
+            or not key.matches(canonical.key_check)
+        ):
+            raise SessionRequired(_SESSION_ENDED)
+        store_user_material(user, replacement)
+        user.must_change_password = False
+        if vault.owner_user_id == user.id:
+            _store(vault, replacement)
+        await self._refresh_timeout()
+        if not open_session:
+            after_commit(self.session, lambda: self.vault_sessions.revoke_user(user_id))
+            return AuthResponse(valid=True)
+        response = self._open_session(user, key)
+        token = response.session_token
+        assert token is not None
+        after_commit(
+            self.session,
+            lambda: self.vault_sessions.revoke_user_except(user_id, token),
+        )
+        return response
+
+    async def verify_current_password(
+        self, context: AuthContext, current_password: str
+    ) -> None:
+        observed = user_key_material(context.user)
+        user_id = context.user.id
+        key = context.key
+        await self.session.commit()
+        opened = await open_material(current_password, observed)
+        if opened is None or not opened.matches(key.check):
+            raise Forbidden("Current password is incorrect.")
+        user = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        canonical = (
+            await validate_vault_material(self.session, vault)
+            if vault is not None
+            else None
+        )
+        if (
+            user is None
+            or not user.active
+            or user_key_material(user) != observed
+            or vault is None
+            or canonical is None
+            or not key.matches(canonical.key_check)
+        ):
+            raise SessionRequired(_SESSION_ENDED)
+
+    async def resolve_service_token(self, token: str) -> AuthContext:
+        user = await self.session.scalar(
+            select(UserModel).where(
+                UserModel.service_token_hash == token_digest(token),
+                UserModel.role == UserRole.service,
+                UserModel.active.is_(True),
+            )
+        )
+        if user is None:
+            raise SessionRequired("Invalid service token.")
+        material = user_key_material(user)
+        user_id = user.id
+        vault = await fetch_vault(self.session)
+        if vault is None:
+            raise SessionRequired("Invalid service token.")
+        key_material(vault)
+        await self.session.commit()
+        key = await open_material(token, material)
+        current = await fetch_user(self.session, user_id)
+        vault = await fetch_vault(self.session)
+        canonical = (
+            await validate_vault_material(self.session, vault)
+            if vault is not None
+            else None
+        )
+        if (
+            key is None
+            or current is None
+            or not current.active
+            or current.role != UserRole.service
+            or user_key_material(current) != material
+            or vault is None
+            or canonical is None
+            or not key.matches(canonical.key_check)
+        ):
+            raise SessionRequired("Invalid service token.")
+        return AuthContext(user=current, key=key)

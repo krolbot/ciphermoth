@@ -10,5 +10,11 @@ router = APIRouter(tags=["meta"])
 def get_meta() -> MetaResponse:
     return MetaResponse(
         version=get_api_settings().version,
-        features=["entry-names-with-slash", "vault-sessions"],
+        features=[
+            "entry-names-with-slash",
+            "vault-sessions",
+            "multi-user",
+            "entry-grants",
+            "mcp",
+        ],
     )

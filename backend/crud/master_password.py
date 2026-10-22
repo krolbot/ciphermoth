@@ -58,8 +58,15 @@ def key_material(model: VaultModel) -> KeyMaterial:
     ):
         if not isinstance(value, bytes) or len(value) != length:
             raise InvalidRequest(_DAMAGED)
+    if model.kdf != KDF_NAME:
+        raise InvalidRequest("The vault uses a key format this release cannot read.")
+    params = KdfParams(model.kdf_memory_kib, model.kdf_iterations, model.kdf_lanes)
+    try:
+        params.require_supported()
+    except UnsupportedKdf as error:
+        raise InvalidRequest(str(error)) from None
     return KeyMaterial(
-        params=KdfParams(model.kdf_memory_kib, model.kdf_iterations, model.kdf_lanes),
+        params=params,
         salt=model.kdf_salt,
         password_check=model.password_check,
         wrapped_key=model.wrapped_key,
@@ -87,7 +94,7 @@ class MasterPasswordCRUD(BaseCRUD):
         model = await fetch_vault(self.session)
         if not model:
             raise NotFound("No master password found.")
-        if model.format_version != FORMAT_VERSION or model.kdf != KDF_NAME:
+        if model.format_version != FORMAT_VERSION:
             raise InvalidRequest(
                 "The vault uses a key format this release cannot read."
             )

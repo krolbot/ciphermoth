@@ -17,18 +17,18 @@ import {
   Typography,
 } from "@mui/material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import { Trans, useTranslation } from "react-i18next";
 
 import { IS_DESKTOP, chooseBackup } from "../../platform";
 import PasswordField from "../PasswordField";
 
-const plural = (n) => (n !== 1 ? "s" : "");
-
-const ReportedRows = ({ rows = [], count, title, color }) => {
+const ReportedRows = ({ rows = [], count, titleKey, color }) => {
+  const { t } = useTranslation();
   const hidden = count - rows.length;
   return (
     <>
       <Typography variant="body2" sx={{ color, mt: 1 }}>
-        <strong>{count}</strong> {title}
+        <strong>{count}</strong> {t(titleKey, { count })}
       </Typography>
       <Box component="ul" sx={{ m: 0, pl: 2.5, maxHeight: 160, overflowY: "auto" }}>
         {rows.map((row) => (
@@ -39,7 +39,7 @@ const ReportedRows = ({ rows = [], count, title, color }) => {
         ))}
         {hidden > 0 && (
           <Typography component="li" variant="body2">
-            and {hidden} more
+            {t("importDialog.andMore", { count: hidden })}
           </Typography>
         )}
       </Box>
@@ -47,19 +47,23 @@ const ReportedRows = ({ rows = [], count, title, color }) => {
   );
 };
 
-const restoredExtras = (result) =>
+const restoredExtras = (result, t) =>
   [
-    result.trashed > 0 && `${result.trashed} in the trash`,
-    result.attachments > 0 && `${result.attachments} attachment${plural(result.attachments)}`,
-    result.settings_restored && "your settings",
+    result.trashed > 0 && t("importDialog.restoredExtras.trash", { count: result.trashed }),
+    result.attachments > 0 &&
+      t("importDialog.restoredExtras.attachments", { count: result.attachments }),
+    result.grants_restored > 0 &&
+      t("importDialog.restoredExtras.grants", { count: result.grants_restored }),
+    result.settings_restored && t("importDialog.restoredExtras.settings"),
   ].filter(Boolean);
 
 const ImportResult = ({ result }) => {
-  const extras = restoredExtras(result);
+  const { t } = useTranslation();
+  const extras = restoredExtras(result, t);
   if (result.total === 0 && !result.ignored && extras.length === 0) {
     return (
       <Typography variant="body2" sx={{ color: "text.secondary" }}>
-        No passwords found in the file.
+        {t("importDialog.noPasswords")}
       </Typography>
     );
   }
@@ -67,27 +71,44 @@ const ImportResult = ({ result }) => {
     <>
       {result.imported > 0 && (
         <Typography variant="body2">
-          <strong>{result.imported}</strong> item{plural(result.imported)} added.
+          <Trans
+            i18nKey="importDialog.imported"
+            count={result.imported}
+            values={{ count: result.imported }}
+            components={{ strong: <strong /> }}
+          />
         </Typography>
       )}
       {result.overwritten > 0 && (
         <Typography variant="body2">
-          <strong>{result.overwritten}</strong> item{plural(result.overwritten)} overwritten.
+          <Trans
+            i18nKey="importDialog.overwritten"
+            count={result.overwritten}
+            values={{ count: result.overwritten }}
+            components={{ strong: <strong /> }}
+          />
         </Typography>
       )}
       {extras.length > 0 && (
-        <Typography variant="body2">Also restored: {extras.join(", ")}.</Typography>
+        <Typography variant="body2">
+          {t("importDialog.alsoRestored", { items: extras.join(", ") })}
+        </Typography>
       )}
       {result.skipped > 0 && (
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          <strong>{result.skipped}</strong> item{plural(result.skipped)} skipped (already exist).
+          <Trans
+            i18nKey="importDialog.skipped"
+            count={result.skipped}
+            values={{ count: result.skipped }}
+            components={{ strong: <strong /> }}
+          />
         </Typography>
       )}
       {result.renamed > 0 && (
         <ReportedRows
           rows={result.renamed_rows}
           count={result.renamed}
-          title={`item${plural(result.renamed)} renamed:`}
+          titleKey="importDialog.renamed"
           color="text.secondary"
         />
       )}
@@ -95,7 +116,7 @@ const ImportResult = ({ result }) => {
         <ReportedRows
           rows={result.ignored_rows}
           count={result.ignored}
-          title={`record${plural(result.ignored)} not imported:`}
+          titleKey="importDialog.ignored"
           color="warning.main"
         />
       )}
@@ -104,6 +125,7 @@ const ImportResult = ({ result }) => {
 };
 
 const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
+  const { t } = useTranslation();
   const [mode, setMode] = useState("ciphermoth");
   const [file, setFile] = useState(null);
   const [password, setPassword] = useState("");
@@ -134,11 +156,11 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
   const handleImport = async () => {
     if (!file) {
-      setError(`Please select a ${isCsv ? "CSV" : "backup"} file.`);
+      setError(t(isCsv ? "importDialog.selectCsv" : "importDialog.selectBackup"));
       return;
     }
     if (!isCsv && !password.trim()) {
-      setError("Enter the backup's password.");
+      setError(t("importDialog.enterBackupPassword"));
       return;
     }
     setLoading(true);
@@ -158,7 +180,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
   return (
     <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{result ? "Import Complete" : "Import Passwords"}</DialogTitle>
+      <DialogTitle>{t(result ? "importDialog.completeTitle" : "importDialog.title")}</DialogTitle>
       <DialogContent>
         {result ? (
           <Stack spacing={1} sx={{ mt: 1 }}>
@@ -168,17 +190,15 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
           <Stack spacing={2} sx={{ mt: 1 }}>
             <ToggleButtonGroup value={mode} exclusive onChange={changeMode} size="small" fullWidth>
               <ToggleButton value="ciphermoth" sx={{ textTransform: "none" }}>
-                CipherMoth backup
+                {t("importDialog.backupMode")}
               </ToggleButton>
               <ToggleButton value="csv" sx={{ textTransform: "none" }}>
-                CSV from another app
+                {t("importDialog.csvMode")}
               </ToggleButton>
             </ToggleButtonGroup>
 
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              {isCsv
-                ? "Upload a CSV exported from Chrome, Bitwarden, KeePass, Proton Pass and similar. Columns are matched automatically."
-                : "Restore a CipherMoth backup (.cmbackup), or a backup ZIP from CipherMoth 2.0 or earlier."}
+              {isCsv ? t("importDialog.csvDescription") : t("importDialog.backupDescription")}
             </Typography>
 
             <Button
@@ -190,7 +210,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
                         setFile(await chooseBackup());
                         setError("");
                       } catch {
-                        setError("Could not open the file picker.");
+                        setError(t("importDialog.filePickerError"));
                       }
                     }
                   : undefined
@@ -200,7 +220,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               fullWidth
               sx={{ justifyContent: "flex-start", textTransform: "none" }}
             >
-              {file ? file.name : isCsv ? "Choose CSV file (.csv)" : "Choose backup file"}
+              {file ? file.name : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
               {(!IS_DESKTOP || isCsv) && (
                 <input
                   type="file"
@@ -216,14 +236,14 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
             {!isCsv && (
               <PasswordField
-                label="Backup Password"
+                label={t("importDialog.backupPassword")}
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setError("");
                 }}
                 error={!!error}
-                helperText={error || "The master password the vault had when the backup was made."}
+                helperText={error || t("importDialog.backupPasswordHelp")}
                 required
                 autoFocus
                 autoComplete="current-password"
@@ -240,17 +260,17 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
             )}
 
             <FormControl>
-              <FormLabel sx={{ fontSize: "0.875rem" }}>If a password already exists</FormLabel>
+              <FormLabel sx={{ fontSize: "0.875rem" }}>{t("importDialog.existingLabel")}</FormLabel>
               <RadioGroup value={onConflict} onChange={(e) => setOnConflict(e.target.value)}>
                 <FormControlLabel
                   value="skip"
                   control={<Radio size="small" />}
-                  label="Keep existing (skip)"
+                  label={t("importDialog.keepExisting")}
                 />
                 <FormControlLabel
                   value="overwrite"
                   control={<Radio size="small" />}
-                  label="Replace it (the current one moves to the trash)"
+                  label={t("importDialog.overwrite")}
                 />
               </RadioGroup>
             </FormControl>
@@ -260,15 +280,15 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
       <DialogActions>
         {result ? (
           <Button variant="contained" onClick={onClose}>
-            Done
+            {t("common.actions.done")}
           </Button>
         ) : (
           <>
             <Button onClick={onClose} disabled={loading}>
-              Cancel
+              {t("common.actions.cancel")}
             </Button>
             <Button variant="contained" onClick={handleImport} loading={loading}>
-              Import
+              {t("common.actions.import")}
             </Button>
           </>
         )}

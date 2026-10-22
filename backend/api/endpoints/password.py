@@ -1,5 +1,6 @@
 import io
 from datetime import UTC, datetime
+from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import (
@@ -18,16 +19,24 @@ from starlette.types import Receive, Scope, Send
 
 from api.endpoints.deps import (
     AttachmentCRUDDep,
+    AuthContextDep,
+    AuthCRUDDep,
     BackupCRUDDep,
+    CredentialDep,
     EntryName,
     PasswordCRUDDep,
-    SessionKeyDep,
     VaultKeyDep,
+    VaultSessionsDep,
+    get_database,
     require_master_password,
 )
 from api.rate_limit import limiter, rate
 from api.responses import inject_responses
 from backup_format import MAX_BACKUP_BYTES
+from crud.access import EntryACL
+from crud.auth import AuthCRUD
+from crud.backup import BackupCRUD
+from crud.engine import Database
 from errors import InvalidRequest
 from schemas import (
     AttachmentResponse,
@@ -419,8 +428,9 @@ _IMPORT_FORM = {
 @limiter.limit(rate("5/hour"))
 async def import_passwords(
     request: Request,
-    crud: BackupCRUDDep,
-    key: SessionKeyDep,
+    credential: CredentialDep,
+    vault_sessions: VaultSessionsDep,
+    database: Annotated[Database, Depends(get_database)],
 ) -> PasswordImportResult:
     """
     The body is read only after the session check (no form parameters, so
@@ -440,12 +450,28 @@ async def import_passwords(
             raise InvalidRequest("on_conflict must be 'skip' or 'overwrite'.")
         if file.size is not None and file.size > MAX_BACKUP_BYTES:
             raise InvalidRequest("File exceeds the backup format's maximum size.")
-        return await crud.import_backup(
-            upload=file.file,
-            password=_backup_password(master_password),
-            key=key,
-            on_conflict=OnConflict(on_conflict),
-        )
+        password = _backup_password(master_password)
+        async with database.transaction() as session:
+            context = await AuthCRUD(session, vault_sessions).context(credential.token)
+            acl = EntryACL(session, context)
+            entry_ids = [
+                *await acl.visible_ids(deleted=False),
+                *await acl.visible_ids(deleted=True),
+            ]
+            crud = BackupCRUD(
+                session,
+                vault_sessions,
+                owner_id=context.owner_id,
+                entry_ids=entry_ids,
+                restore_settings=context.user.role == "admin",
+            )
+            return await crud.import_backup(
+                upload=file.file,
+                password=password,
+                key=context.key,
+                on_conflict=OnConflict(on_conflict),
+                session_token=credential.token,
+            )
 
 
 @router.post(
@@ -482,7 +508,6 @@ async def import_passwords_csv(
 @router.post(
     "/backup",
     name="passwords:backup",
-    dependencies=[Depends(require_master_password)],
     responses=inject_responses(
         {
             status.HTTP_403_FORBIDDEN: SimpleDetailSchema,
@@ -497,8 +522,13 @@ async def backup_passwords(
     body: MasterPassword,
     crud: BackupCRUDDep,
     key: VaultKeyDep,
+    auth_crud: AuthCRUDDep,
+    context: AuthContextDep,
+    credential: CredentialDep,
 ) -> StreamingResponse:
-    backup = await crud.create_backup(body.master_password, key)
+    await auth_crud.verify_current_password(context, body.master_password)
+    backup = await crud.create_backup(body.master_password, key, verify_current=False)
+    await auth_crud.context(credential.token, refresh=False)
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     filename = f"ciphermoth_backup_{stamp}.cmbackup"
     return BackupResponse(backup, filename)

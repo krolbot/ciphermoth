@@ -50,7 +50,7 @@ json() {
 }
 
 mkdir -p "$WORK"
-curl -fsSL "https://raw.githubusercontent.com/mr-grj/ciphermoth/${REF}/install.sh" -o "$INSTALLER"
+curl -fsSL "https://raw.githubusercontent.com/krolbot/ciphermoth/${REF}/install.sh" -o "$INSTALLER"
 git show "${REF}:install.sh" >"$WORK/install.tagged.sh"
 cmp -s "$INSTALLER" "$WORK/install.tagged.sh" || fail "the published install.sh differs from the ${REF} source"
 pass "install.sh fetched from the ${REF} release source"
@@ -64,7 +64,7 @@ git show "${REF}:docker-compose.prod.yml" | cmp -s "$DIR/docker-compose.prod.yml
 pass "fresh install through the published installer: $health"
 
 running="$(docker compose -f "$DIR/docker-compose.prod.yml" images -q backend)"
-tagged="$(docker image inspect "ghcr.io/mr-grj/ciphermoth-backend:${VERSION}" --format '{{.Id}}')"
+tagged="$(docker image inspect "ghcr.io/krolbot/ciphermoth-backend:${VERSION}" --format '{{.Id}}')"
 [ "$running" = "${tagged#sha256:}" ] || [ "$running" = "$tagged" ] ||
   fail "latest ($running) is not the ${VERSION} image ($tagged)"
 pass "latest resolves to the ${VERSION} images"

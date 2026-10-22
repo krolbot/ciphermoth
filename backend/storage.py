@@ -15,7 +15,8 @@ from models import SETTINGS_DEFAULTS, BaseModel, SettingsModel
 
 MIN_SQLITE_VERSION = (3, 51, 3)
 APPLICATION_ID = 0x434D5448
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+PREVIOUS_SCHEMA_VERSION = 2
 FORMAT_1_SCHEMA = 1
 BUSY_TIMEOUT_MS = 15_000
 RESTORE_BUSY_TIMEOUT_MS = 2_000
@@ -161,6 +162,11 @@ def identity_problem(application_id: int, user_version: int) -> str | None:
         return "is not a CipherMoth vault"
     if user_version == FORMAT_1_SCHEMA:
         return FORMAT_1_VAULT
+    if user_version == PREVIOUS_SCHEMA_VERSION:
+        return (
+            "uses the single-user schema from CipherMoth 3.1; stop CipherMoth "
+            "and run 'ciphermoth-admin migrate-users'"
+        )
     if user_version > SCHEMA_VERSION:
         return (
             f"was written by a newer CipherMoth (vault schema {user_version}, this "
@@ -379,6 +385,154 @@ def snapshot(data_dir: Path, destination: Path | None = None) -> Path:
     except OSError as error:
         raise StorageError(f"Could not write the snapshot: {error}") from error
     return target
+
+
+def migrate_users(data_dir: Path) -> Path:
+    """Upgrade an upstream schema-2 vault for account ownership and grants.
+
+    The backend must be stopped. A checked schema-2 snapshot is written before
+    the single SQLite transaction changes anything; its path is returned.
+    Existing entries remain unreadable until the owner bootstraps the first
+    administrator with the vault's current master password.
+    """
+    require_supported_sqlite()
+    live = vault_file(data_dir)
+    folder = snapshot_dir(data_dir)
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = folder / timestamped("pre-users")
+    with VaultLock(data_dir):
+        try:
+            with contextlib.closing(_connect_existing(live)) as source:
+                application_id = source.execute("PRAGMA application_id").fetchone()[0]
+                user_version = source.execute("PRAGMA user_version").fetchone()[0]
+                problems = [
+                    str(row[0])
+                    for row in source.execute("PRAGMA integrity_check")
+                    if str(row[0]) != "ok"
+                ]
+                problems += [
+                    f"{row[0]} row {row[1]} references a missing row of {row[2]}"
+                    for row in source.execute("PRAGMA foreign_key_check")
+                ]
+                if (
+                    application_id != APPLICATION_ID
+                    or user_version != PREVIOUS_SCHEMA_VERSION
+                ):
+                    raise StorageError(
+                        "Expected a CipherMoth schema-"
+                        f"{PREVIOUS_SCHEMA_VERSION} vault; "
+                        f"found application {application_id}, schema {user_version}."
+                    )
+                format_issue = format_problem(_formats(source))
+                if format_issue:
+                    problems.append(f"the file {format_issue}")
+                if problems:
+                    raise StorageError(
+                        "The vault cannot be migrated: " + "; ".join(problems[:5])
+                    )
+                if target.exists():
+                    raise StorageError(f"{target} already exists.")
+                os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                try:
+                    with contextlib.closing(sqlite3.connect(target)) as destination:
+                        source.backup(destination)
+                        destination.execute("PRAGMA journal_mode=DELETE")
+                except BaseException:
+                    _discard(target)
+                    raise
+            _fsync(target)
+            _fsync_dir(folder)
+
+            with contextlib.closing(
+                _connect_existing(live, writable=True)
+            ) as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute(f"PRAGMA busy_timeout={RESTORE_BUSY_TIMEOUT_MS}")
+                connection.execute("BEGIN EXCLUSIVE")
+                try:
+                    for statement in """
+                        CREATE TABLE users (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            username VARCHAR(64) NOT NULL UNIQUE,
+                            role VARCHAR(16) NOT NULL,
+                            active BOOLEAN NOT NULL DEFAULT 1,
+                            must_change_password BOOLEAN NOT NULL DEFAULT 0,
+                            service_owner_id INTEGER
+                                REFERENCES users(id) ON DELETE RESTRICT,
+                            service_token_hash BLOB UNIQUE,
+                            kdf VARCHAR NOT NULL,
+                            kdf_memory_kib INTEGER NOT NULL,
+                            kdf_iterations INTEGER NOT NULL,
+                            kdf_lanes INTEGER NOT NULL,
+                            kdf_salt BLOB NOT NULL,
+                            password_check BLOB NOT NULL,
+                            wrapped_key BLOB NOT NULL,
+                            key_check BLOB NOT NULL,
+                            CONSTRAINT ck_users_role
+                                CHECK (role IN ('admin', 'member', 'service')),
+                            CONSTRAINT ck_users_salt CHECK (length(kdf_salt) = 16),
+                            CONSTRAINT ck_users_password_check
+                                CHECK (length(password_check) = 32),
+                            CONSTRAINT ck_users_key_check CHECK (length(key_check) = 32)
+                        );
+                        CREATE INDEX ix_users_service_owner_id
+                            ON users(service_owner_id);
+                        ALTER TABLE vault ADD COLUMN owner_user_id INTEGER
+                            REFERENCES users(id) ON DELETE RESTRICT;
+                        ALTER TABLE entries ADD COLUMN owner_id INTEGER
+                            REFERENCES users(id) ON DELETE RESTRICT;
+                        CREATE INDEX ix_entries_owner_id ON entries(owner_id);
+                        CREATE TABLE entry_access (
+                            entry_id INTEGER NOT NULL
+                                REFERENCES entries(id) ON DELETE CASCADE,
+                            user_id INTEGER NOT NULL
+                                REFERENCES users(id) ON DELETE CASCADE,
+                            permission VARCHAR(16) NOT NULL,
+                            granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                            created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (entry_id, user_id),
+                            CONSTRAINT ck_entry_access_permission
+                                CHECK (permission IN ('read', 'write'))
+                        );
+                        """.split(";"):
+                        if statement.strip():
+                            connection.execute(statement)
+                    connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+        except sqlite3.DatabaseError as error:
+            raise StorageError(f"Could not migrate the vault: {error}") from error
+    problems = check_file(live)
+    if problems:
+        raise StorageError(
+            "The migrated vault failed verification; restore the pre-users snapshot: "
+            + "; ".join(problems[:5])
+        )
+    return target
+
+
+def migrate_users_if_needed(data_dir: Path) -> Path | None:
+    """Migrate schema 2 when a single-process host owns startup.
+
+    Docker operators use the explicit admin command. The desktop core calls this
+    before it opens the application, when no other core can own its data folder.
+    """
+    live = vault_file(data_dir)
+    if not live.is_file() or live.stat().st_size == 0:
+        return None
+    try:
+        with contextlib.closing(_connect_existing(live)) as connection:
+            application_id = connection.execute("PRAGMA application_id").fetchone()[0]
+            user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    except sqlite3.DatabaseError:
+        return None
+    if application_id != APPLICATION_ID or user_version != PREVIOUS_SCHEMA_VERSION:
+        return None
+    return migrate_users(data_dir)
 
 
 class VaultLock:
