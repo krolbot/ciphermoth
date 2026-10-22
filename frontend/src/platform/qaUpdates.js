@@ -35,9 +35,10 @@ async function unlock() {
       document.querySelector('input[type="checkbox"]')
   );
   const fresh = !!document.querySelector('input[type="checkbox"]');
-  input("Master Password", password);
+  input(fresh ? "Administrator username" : "Username", "admin");
+  input("Password", password);
   if (fresh) {
-    input("Confirm Master Password", password);
+    input("Confirm password", password);
     document.querySelector('input[type="checkbox"]').click();
   }
   await pause(100);
