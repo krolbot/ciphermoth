@@ -38,9 +38,10 @@ try {
     });
   }
   const fresh = !!document.querySelector('input[type="checkbox"]');
-  input("Master Password", sessionStorage.getItem("qa-password") || "Desktop-GUI-Canary-2026!");
+  input(fresh ? "Administrator username" : "Username", "admin");
+  input("Password", sessionStorage.getItem("qa-password") || "Desktop-GUI-Canary-2026!");
   if (fresh) {
-    input("Confirm Master Password", "Desktop-GUI-Canary-2026!");
+    input("Confirm password", "Desktop-GUI-Canary-2026!");
     document.querySelector('input[type="checkbox"]').click();
   }
   await pause(100);
