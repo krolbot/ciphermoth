@@ -127,8 +127,9 @@ async def list_shares(
     password_id: int,
     crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
+    deleted: bool = False,
 ) -> list[ShareGrant]:
-    return await crud.list_shares(context, password_id)
+    return await crud.list_shares(context, password_id, deleted=deleted)
 
 
 @router.put("/{password_id}/shares/{user_id}", response_model=ShareGrant)
@@ -166,8 +167,9 @@ async def list_attachments(
     password_id: int,
     crud: EncryptedPasswordCRUDDep,
     context: VaultContextDep,
+    deleted: bool = False,
 ) -> list[EncryptedAttachmentResponse]:
-    return await crud.list_attachments(context, password_id)
+    return await crud.list_attachments(context, password_id, deleted=deleted)
 
 
 @router.post("/{password_id}/attachments", response_model=EncryptedAttachmentResponse)

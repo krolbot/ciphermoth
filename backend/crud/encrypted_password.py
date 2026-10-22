@@ -412,9 +412,11 @@ class EncryptedPasswordCRUD:
         )
 
     async def list_shares(
-        self, context: AuthContext, password_id: int
+        self, context: AuthContext, password_id: int, *, deleted: bool = False
     ) -> list[ShareGrant]:
-        _, actor_access = await self._entry_and_access(context, password_id)
+        _, actor_access = await self._entry_and_access(
+            context, password_id, deleted=deleted
+        )
         if actor_access.permission != EntryPermission.owner:
             raise Forbidden("Only the owner can manage sharing.")
         rows = await self.session.execute(
@@ -464,9 +466,9 @@ class EncryptedPasswordCRUD:
         )
 
     async def list_attachments(
-        self, context: AuthContext, password_id: int
+        self, context: AuthContext, password_id: int, *, deleted: bool = False
     ) -> list[EncryptedAttachmentResponse]:
-        await self._entry_and_access(context, password_id)
+        await self._entry_and_access(context, password_id, deleted=deleted)
         attachments = (
             await self.session.execute(
                 select(PasswordAttachmentModel)

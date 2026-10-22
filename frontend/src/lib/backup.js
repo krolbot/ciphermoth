@@ -17,6 +17,12 @@ export const verifyCurrentVaultPassword = async (password) =>
 export const createBackupArchive = async (passwords, password) => {
   const entries = await Promise.all(
     passwords.map(async (entry) => ({
+      legacy_id: entry.legacy_id ?? entry.id,
+      owner_username: entry.owner_username ?? null,
+      access: entry.access ?? null,
+      created: entry.created ?? null,
+      updated: entry.updated ?? null,
+      deleted: entry.deleted ?? null,
       name: entry.password_name,
       kind: entry.kind,
       username: entry.username,
@@ -29,10 +35,16 @@ export const createBackupArchive = async (passwords, password) => {
       folder: entry.folder,
       favorite: entry.favorite,
       password_history: entry.password_history ?? [],
+      shares: (entry.shares ?? []).map(({ username, role, permission }) => ({
+        username,
+        role,
+        permission,
+      })),
       attachments: await Promise.all(
         (entry.attachments ?? []).map(async (attachment) => ({
           filename: attachment.filename,
           content_type: attachment.content_type,
+          created: attachment.created,
           data: toBase64Url(new Uint8Array(await attachment.blob.arrayBuffer())),
         }))
       ),
@@ -40,6 +52,7 @@ export const createBackupArchive = async (passwords, password) => {
   );
   const payload = JSON.stringify(
     {
+      migration_version: 1,
       exported_at: new Date().toISOString(),
       passwords: entries,
     },

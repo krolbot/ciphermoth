@@ -268,24 +268,51 @@ const Passwords = {
       if (!(await verifyCurrentVaultPassword(masterPassword))) {
         throw new Error(i18n.t("errors.backupFailed"));
       }
-      const passwords = await Promise.all(
-        getState().passwords.map(async (password) => {
-          const [{ data: record }, { data: attachments }] = await Promise.all([
+      const owned = getState().passwords.filter((password) => password.access === "owner");
+      const active = await Promise.all(
+        owned.map(async (password) => {
+          const requests = [
             apiClient.get(`/passwords/${password.id}`),
             apiClient.get(`/passwords/${password.id}/attachments`),
-          ]);
+          ];
+          if (password.access === "owner") {
+            requests.push(apiClient.get(`/passwords/${password.id}/shares`));
+          }
+          const [{ data: record }, { data: attachments }, sharesResponse] =
+            await Promise.all(requests);
           return {
             ...password,
+            legacy_id: password.id,
+            shares: sharesResponse?.data ?? [],
             attachments: await Promise.all(
               attachments.map((attachment) => decryptAttachment(record, attachment))
             ),
           };
         })
       );
+      const { data: trashRecords } = await apiClient.get("/passwords/trash");
+      const ownedTrash = trashRecords.filter((record) => record.access === "owner");
+      const trash = await Promise.all(
+        ownedTrash.map(async (record) => {
+          const [{ data: attachments }, { data: shares }] = await Promise.all([
+            apiClient.get(`/passwords/${record.id}/attachments?deleted=true`),
+            apiClient.get(`/passwords/${record.id}/shares?deleted=true`),
+          ]);
+          return {
+            ...(await decryptPasswordRecord(record)),
+            legacy_id: record.id,
+            shares,
+            attachments: await Promise.all(
+              attachments.map((attachment) => decryptAttachment(record, attachment))
+            ),
+          };
+        })
+      );
+      const passwords = [...active, ...trash];
       const archive = await createBackupArchive(passwords, masterPassword);
       const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
       triggerDownload(archive, `ciphermoth_backup_${stamp}.zip`);
-      for (const password of passwords) {
+      for (const password of active) {
         const { data: record } = await apiClient.get(`/passwords/${password.id}`);
         await apiClient.put(
           `/passwords/${password.id}`,

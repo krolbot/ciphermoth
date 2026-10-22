@@ -166,6 +166,9 @@ async def test_multi_user_ciphertext_sharing_http_flow() -> None:
                     "encrypted_preferences": encrypt(
                         entry_key, b"owner preferences"
                     ).decode(),
+                    "encrypted_attachments": [
+                        encrypt(entry_key, b"migration attachment").decode()
+                    ],
                 },
             )
             assert created.status_code == 200
@@ -276,6 +279,28 @@ async def test_multi_user_ciphertext_sharing_http_flow() -> None:
             )
             assert changed.status_code == 200
             assert changed.json()["encrypted_payload"] == changed_ciphertext.decode()
+
+            trashed = await client.delete(
+                f"/api/passwords/{entry_id}", headers=owner_headers
+            )
+            assert trashed.status_code == 200
+            assert (
+                await client.get(
+                    f"/api/passwords/{entry_id}/shares", headers=owner_headers
+                )
+            ).status_code == 404
+            trash_shares = await client.get(
+                f"/api/passwords/{entry_id}/shares?deleted=true",
+                headers=owner_headers,
+            )
+            assert trash_shares.status_code == 200
+            assert [grant["username"] for grant in trash_shares.json()] == ["member"]
+            trash_attachments = await client.get(
+                f"/api/passwords/{entry_id}/attachments?deleted=true",
+                headers=owner_headers,
+            )
+            assert trash_attachments.status_code == 200
+            assert len(trash_attachments.json()) == 1
     finally:
         app.dependency_overrides.clear()
         await engine.dispose()
