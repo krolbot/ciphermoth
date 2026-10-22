@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backup_format import (
+    MAX_ATTACHMENT_FRAME_BYTES,
     MAX_BACKUP_BYTES,
     MAX_ENTRY_FRAME_BYTES,
     MAX_FRAMES,
@@ -28,9 +29,7 @@ from backup_format import (
     BackupWriter,
 )
 from crud.attachment import (
-    MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS_PER_ENTRY,
-    MAX_TOTAL_BYTES,
 )
 from crud.engine import after_rollback
 from crud.master_password import MasterPasswordCRUD
@@ -80,8 +79,9 @@ from settings import get_api_settings
 from validators import require_unicode_text
 from vault_sessions import VaultSessions
 
-MAX_LEGACY_FILE_BYTES = 10 * 1024 * 1024
-MAX_LEGACY_JSON_BYTES = 50 * 1024 * 1024
+MAX_LEGACY_JSON_BYTES = 64 * 1024 * 1024
+MAX_LEGACY_FILE_BYTES = MAX_LEGACY_JSON_BYTES + 1024 * 1024
+MAX_MIGRATED_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024
 _SPOOL_BYTES = 16 * 1024 * 1024
 _LEGACY_MAGIC = b"PK\x03\x04"
 
@@ -139,7 +139,7 @@ class _Strict(BaseModel):
 class BackupAttachment(_Strict):
     filename: str
     content_type: str | None
-    size: int = Field(ge=1, le=MAX_ATTACHMENT_BYTES)
+    size: int = Field(ge=1, le=MAX_ATTACHMENT_FRAME_BYTES)
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
     created: datetime
 
@@ -205,7 +205,7 @@ class LegacyMigrationShare(_Strict):
 class LegacyMigrationAttachment(_Strict):
     filename: str
     content_type: str | None
-    data: str = Field(max_length=8_000_000)
+    data: str = Field(max_length=4 * ((MAX_ATTACHMENT_FRAME_BYTES + 2) // 3))
     created: datetime
 
     @field_validator("created")
@@ -558,10 +558,10 @@ class BackupCRUD(PasswordCRUD):
             raise InvalidRequest(
                 f"Nothing was imported. {ignored[0].where}: {ignored[0].reason}."
             )
-        if sum(a.size for a in entry.attachments) > MAX_TOTAL_BYTES:
+        if sum(a.size for a in entry.attachments) > MAX_MIGRATED_TOTAL_ATTACHMENT_BYTES:
             raise InvalidRequest(
                 f"Nothing was imported. entry {index}: its attachments exceed "
-                "the 25 MB limit."
+                "the 50 MB migration limit."
             )
         _, password = restored[0]
         return password, [
@@ -645,7 +645,9 @@ class BackupCRUD(PasswordCRUD):
                 document, entry, active, trashed, key, on_conflict, moved_at, counts
             )
             for described in entry.attachments:
-                content = await _work(reader.read, backup_key, MAX_ATTACHMENT_BYTES)
+                content = await _work(
+                    reader.read, backup_key, MAX_ATTACHMENT_FRAME_BYTES
+                )
                 if (
                     len(content) != described.size
                     or hashlib.sha256(content).hexdigest() != described.sha256
@@ -760,9 +762,7 @@ class BackupCRUD(PasswordCRUD):
     ) -> PasswordImportResult:
         data = upload.read(MAX_LEGACY_FILE_BYTES + 1)
         if len(data) > MAX_LEGACY_FILE_BYTES:
-            raise InvalidRequest(
-                "Backup ZIP files larger than 10 MB are not supported."
-            )
+            raise InvalidRequest("The backup ZIP exceeds the legacy migration limit.")
         await self.session.commit()
         try:
             raw = read_legacy_backup(data, password, MAX_LEGACY_JSON_BYTES)
@@ -804,9 +804,9 @@ class BackupCRUD(PasswordCRUD):
             raise InvalidRequest(
                 "Nothing was imported. Invalid attachment data."
             ) from None
-        if not content or len(content) > MAX_ATTACHMENT_BYTES:
+        if not content or len(content) > MAX_ATTACHMENT_FRAME_BYTES:
             raise InvalidRequest(
-                "Nothing was imported. An attachment exceeds the 5 MB limit."
+                "Nothing was imported. An attachment exceeds the migration limit."
             )
         return content
 
@@ -935,10 +935,10 @@ class BackupCRUD(PasswordCRUD):
             contents = [
                 self._migration_attachment_data(item) for item in source.attachments
             ]
-            if sum(map(len, contents)) > MAX_TOTAL_BYTES:
+            if sum(map(len, contents)) > MAX_MIGRATED_TOTAL_ATTACHMENT_BYTES:
                 raise InvalidRequest(
                     f"Nothing was imported. entry {index}: its attachments exceed "
-                    "the 25 MB limit."
+                    "the 50 MB migration limit."
                 )
             backup_entry = BackupEntry(
                 name=source.name,

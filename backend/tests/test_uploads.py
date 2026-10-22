@@ -315,7 +315,7 @@ async def test_largest_backup_zip_v145_accepted_still_imports(
     assert disk_spills == []
 
 
-async def test_imports_between_the_old_cap_and_the_limit_keep_the_old_error(
+async def test_oversized_csv_and_malformed_large_backup_are_rejected(
     client: httpx.AsyncClient,
 ) -> None:
     headers = await _vault_with_entry(client)
@@ -333,7 +333,7 @@ async def test_imports_between_the_old_cap_and_the_limit_keep_the_old_error(
         headers=headers,
     )
     assert resp.status_code == 400, resp.text
-    assert "larger than 10 MB" in resp.json()["detail"]
+    assert "valid CipherMoth backup" in resp.json()["detail"]
 
 
 async def test_imports_over_the_route_limit_are_refused(

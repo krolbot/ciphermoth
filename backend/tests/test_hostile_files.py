@@ -9,6 +9,7 @@ import httpx
 import pytest
 import pyzipper
 
+from crud.backup import MAX_LEGACY_JSON_BYTES
 from storage import VAULT_FILE
 from tests.support import (
     MASTER_PASSWORD,
@@ -96,7 +97,11 @@ HOSTILE_BACKUPS = {
         {MEMBER: b'{"passwords": [{"name": "\xff", "value": "y"}]}'}
     ),
     "zip-bomb": _zip(
-        {MEMBER: b'{"passwords": [], "pad": "' + b" " * (51 * MIB) + b'"}'}
+        {
+            MEMBER: b'{"passwords": [], "pad": "'
+            + b" " * (MAX_LEGACY_JSON_BYTES + MIB)
+            + b'"}'
+        }
     ),
 }
 

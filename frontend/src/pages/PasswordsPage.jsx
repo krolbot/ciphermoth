@@ -320,12 +320,18 @@ const PasswordsPage = () => {
             placeholder={t("vault.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            sx={{ width: { xs: "100%", sm: 320 } }}
+            sx={{
+              width: { xs: "100%", sm: 320 },
+              "& .MuiInputBase-input::placeholder": {
+                color: "text.secondary",
+                opacity: 1,
+              },
+            }}
             slotProps={{
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
-                    <SearchIcon fontSize="small" sx={{ color: "text.disabled" }} />
+                    <SearchIcon fontSize="small" sx={{ color: "text.secondary" }} />
                   </InputAdornment>
                 ),
               },
@@ -386,6 +392,15 @@ const PasswordsPage = () => {
       )}
 
       {isEmpty && <EmptyVault onAdd={openAdd} />}
+
+      {!loading && !isEmpty && (
+        <Typography
+          variant="caption"
+          sx={{ display: { xs: "block", md: "none" }, color: "text.secondary", mb: 1 }}
+        >
+          {t("vault.scrollHint")}
+        </Typography>
+      )}
 
       {!loading && !isEmpty && (
         <DataGrid

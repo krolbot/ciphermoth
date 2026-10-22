@@ -292,7 +292,13 @@ class AuthCRUD(BaseCRUD):
             raise InvalidRequest(_DAMAGED)
         return await self.login(user.username, password)
 
-    async def context(self, token: str, *, refresh: bool = True) -> AuthContext:
+    async def context(
+        self,
+        token: str,
+        *,
+        refresh: bool = True,
+        allow_password_change: bool = False,
+    ) -> AuthContext:
         key = self.vault_sessions.resolve(token, refresh=refresh)
         user_id = self.vault_sessions.user_id(token)
         session_fingerprint = self.vault_sessions.credential_fingerprint(token)
@@ -321,6 +327,8 @@ class AuthCRUD(BaseCRUD):
         if not key.matches(canonical.key_check):
             self.vault_sessions.revoke(token)
             raise SessionRequired(_SESSION_ENDED)
+        if user.must_change_password and not allow_password_change:
+            raise Forbidden("Password change is required before accessing the vault.")
         return AuthContext(user=user, key=key, token=token)
 
     async def create_user(
@@ -567,6 +575,10 @@ class AuthCRUD(BaseCRUD):
         opened = await open_material(current_password, observed)
         if opened is None or not opened.matches(key.check):
             raise Forbidden("Current password is incorrect.")
+        if new_password == current_password:
+            raise InvalidRequest(
+                "New password must be different from the current password."
+            )
         replacement = await wrap_key_material(new_password, key)
         user = await fetch_user(self.session, user_id)
         vault = await fetch_vault(self.session)

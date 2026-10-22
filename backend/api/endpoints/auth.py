@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Request
 
 from api.endpoints.deps import (
-    AuthContextDep,
     AuthCRUDDep,
     CredentialDep,
+    PasswordChangeContextDep,
     VaultSessionsDep,
 )
 from api.rate_limit import limiter, rate
@@ -40,7 +40,7 @@ async def login(request: Request, body: AuthPayload, crud: AuthCRUDDep) -> AuthR
 
 
 @router.get("/me", response_model=AuthUser)
-async def me(context: AuthContextDep, crud: AuthCRUDDep) -> AuthUser:
+async def me(context: PasswordChangeContextDep, crud: AuthCRUDDep) -> AuthUser:
     return crud.to_user(context.user)
 
 
@@ -57,7 +57,7 @@ async def logout(
 async def change_password(
     request: Request,
     body: PasswordChangePayload,
-    context: AuthContextDep,
+    context: PasswordChangeContextDep,
     crud: AuthCRUDDep,
 ) -> AuthResponse:
     return await crud.change_password(context, body.current_password, body.new_password)

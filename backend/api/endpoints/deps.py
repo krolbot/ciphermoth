@@ -117,6 +117,12 @@ async def get_auth_context(crud: AuthCRUDDep, credential: CredentialDep) -> Auth
     return await crud.context(credential.token)
 
 
+async def get_password_change_context(
+    crud: AuthCRUDDep, credential: CredentialDep
+) -> AuthContext:
+    return await crud.context(credential.token, allow_password_change=True)
+
+
 async def get_auth_context_quietly(
     crud: AuthCRUDDep, credential: CredentialDep
 ) -> AuthContext:
@@ -124,6 +130,7 @@ async def get_auth_context_quietly(
 
 
 AuthContextDep = Annotated[AuthContext, Depends(get_auth_context)]
+PasswordChangeContextDep = Annotated[AuthContext, Depends(get_password_change_context)]
 
 
 async def get_damage_crud(

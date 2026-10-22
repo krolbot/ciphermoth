@@ -125,7 +125,10 @@ export const createColumns = ({
           {params.value ? (
             <StarIcon fontSize="small" sx={{ color: GLOW }} />
           ) : (
-            <StarBorderIcon fontSize="small" sx={{ color: "text.disabled" }} />
+            <StarBorderIcon
+              fontSize="small"
+              sx={{ color: params.row.access === "read" ? "text.disabled" : "text.secondary" }}
+            />
           )}
         </IconButton>
       </Tooltip>
@@ -141,8 +144,8 @@ export const createColumns = ({
       const clip = count > 0 && (
         <Tooltip title={t("vault.columns.attachment", { count })}>
           <Stack direction="row" spacing={0.25} sx={{ alignItems: "center", flexShrink: 0 }}>
-            <AttachFileIcon sx={{ fontSize: 15, color: "text.disabled" }} />
-            <Typography variant="caption" sx={{ color: "text.disabled" }}>
+            <AttachFileIcon sx={{ fontSize: 15, color: "text.secondary" }} />
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               {count}
             </Typography>
           </Stack>
@@ -152,7 +155,7 @@ export const createColumns = ({
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
           {params.row.kind === "note" && (
             <Tooltip title={t("vault.columns.secureNote")}>
-              <StickyNote2OutlinedIcon fontSize="small" sx={{ color: "text.disabled" }} />
+              <StickyNote2OutlinedIcon fontSize="small" sx={{ color: "text.secondary" }} />
             </Tooltip>
           )}
           <Typography
@@ -185,7 +188,7 @@ export const createColumns = ({
           {params.value}
         </Typography>
       ) : (
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
           -
         </Typography>
       ),
@@ -200,7 +203,7 @@ export const createColumns = ({
       return (
         <ValueCell
           text={value || "-"}
-          color={value ? "text.primary" : "text.disabled"}
+          color={value ? "text.primary" : "text.secondary"}
           actions={
             value ? (
               <CellActionButton
@@ -264,7 +267,7 @@ export const createColumns = ({
       const tags = params.value ?? [];
       if (tags.length === 0) {
         return (
-          <Typography variant="body2" sx={{ color: "text.disabled" }}>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
             -
           </Typography>
         );
@@ -294,7 +297,7 @@ export const createColumns = ({
       params.value ? (
         <TotpCell secret={params.value} onCopy={onCopy} />
       ) : (
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
           -
         </Typography>
       ),

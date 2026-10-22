@@ -22,9 +22,10 @@ const AppContent = () => {
 
   const authed = isAuth();
   const [currentUser, setUser] = useState(getCurrentUser);
+  const passwordChangeRequired = Boolean(currentUser?.must_change_password);
   const getSettings = useStoreActions((a) => a.ciphermothModels.settings.get);
   useEffect(() => {
-    if (!authed) return;
+    if (!authed || passwordChangeRequired) return;
     getSettings();
     apiClient
       .get("/auth/me")
@@ -33,7 +34,7 @@ const AppContent = () => {
         setUser(data);
       })
       .catch(() => {});
-  }, [authed, getSettings]);
+  }, [authed, passwordChangeRequired, getSettings]);
 
   const appRoutes = (
     <Routes>
@@ -68,11 +69,11 @@ const AppContent = () => {
       >
         <Toolbar />
         <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-          {appRoutes}
+          {!passwordChangeRequired && appRoutes}
         </Container>
       </Box>
       <PasswordChangeDialog
-        open={Boolean(currentUser?.must_change_password)}
+        open={passwordChangeRequired}
         required
         onClose={() => {}}
         onChanged={setUser}

@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import random
 
 import httpx
 import pytest
@@ -11,6 +12,7 @@ from tests.support import auth, entry
 
 ADMIN_PASSWORD = "Moth-Admin-Password-2026!"
 MEMBER_PASSWORD = "Moth-Member-Password-2026!"
+MIB = 1024 * 1024
 
 
 async def bootstrap(
@@ -25,7 +27,7 @@ async def bootstrap(
     return body["user"], auth(body["session_token"])
 
 
-async def login(
+async def raw_login(
     client: httpx.AsyncClient, username: str, password: str
 ) -> tuple[dict, list[tuple[bytes, bytes]]]:
     response = await client.post(
@@ -35,6 +37,201 @@ async def login(
     body = response.json()
     assert body["valid"] is True
     return body["user"], auth(body["session_token"])
+
+
+async def login(
+    client: httpx.AsyncClient, username: str, password: str
+) -> tuple[dict, list[tuple[bytes, bytes]]]:
+    user, headers = await raw_login(client, username, password)
+    if not user["must_change_password"]:
+        return user, headers
+    changed_password = f"{password}-changed"
+    response = await client.put(
+        "/auth/password",
+        json={"current_password": password, "new_password": changed_password},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return body["user"], auth(body["session_token"])
+
+
+def legacy_migration_archive(attachments: list[bytes]) -> bytes:
+    stamp = "2026-10-20T12:00:00Z"
+    payload = json.dumps(
+        {
+            "migration_version": 1,
+            "exported_at": stamp,
+            "passwords": [
+                {
+                    "legacy_id": 41,
+                    "owner_username": "owner",
+                    "access": "owner",
+                    "created": stamp,
+                    "updated": stamp,
+                    "deleted": None,
+                    "name": "attachment migration",
+                    "kind": "login",
+                    "username": "legacy-user",
+                    "value": "legacy-value",
+                    "url": None,
+                    "totp_secret": None,
+                    "description": None,
+                    "tags": [],
+                    "custom_fields": [],
+                    "folder": None,
+                    "favorite": False,
+                    "password_history": [],
+                    "shares": [],
+                    "attachments": [
+                        {
+                            "filename": f"legacy-{index}.bin",
+                            "content_type": "application/octet-stream",
+                            "created": stamp,
+                            "data": base64.urlsafe_b64encode(content)
+                            .decode()
+                            .rstrip("="),
+                        }
+                        for index, content in enumerate(attachments)
+                    ],
+                }
+            ],
+        }
+    ).encode()
+    archive = io.BytesIO()
+    with pyzipper.AESZipFile(
+        archive,
+        "w",
+        compression=pyzipper.ZIP_DEFLATED,
+        encryption=pyzipper.WZ_AES,
+    ) as backup:
+        backup.setpassword(ADMIN_PASSWORD.encode())
+        backup.setencryption(pyzipper.WZ_AES, nbits=256)
+        backup.writestr("ciphermoth_backup.json", payload)
+    return archive.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_required_password_change_gates_vault_until_completed(
+    client: httpx.AsyncClient,
+) -> None:
+    _owner, owner_headers = await bootstrap(client)
+    created = await client.post(
+        "/users",
+        json={
+            "username": "member",
+            "role": "member",
+            "temporary_password": MEMBER_PASSWORD,
+        },
+        headers=owner_headers,
+    )
+    assert created.status_code == 200, created.text
+
+    member, temporary_headers = await raw_login(client, "member", MEMBER_PASSWORD)
+    assert member["must_change_password"] is True
+    assert (await client.get("/auth/me", headers=temporary_headers)).status_code == 200
+
+    blocked = await client.get("/passwords", headers=temporary_headers)
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"] == (
+        "Password change is required before accessing the vault."
+    )
+
+    unchanged = await client.put(
+        "/auth/password",
+        json={"current_password": MEMBER_PASSWORD, "new_password": MEMBER_PASSWORD},
+        headers=temporary_headers,
+    )
+    assert unchanged.status_code == 400
+    assert (
+        await client.get("/passwords", headers=temporary_headers)
+    ).status_code == 403
+
+    changed = await client.put(
+        "/auth/password",
+        json={
+            "current_password": MEMBER_PASSWORD,
+            "new_password": f"{MEMBER_PASSWORD}-changed",
+        },
+        headers=temporary_headers,
+    )
+    assert changed.status_code == 200, changed.text
+    changed_body = changed.json()
+    assert changed_body["user"]["must_change_password"] is False
+    changed_headers = auth(changed_body["session_token"])
+    assert (await client.get("/passwords", headers=changed_headers)).status_code == 200
+
+    required = await client.post(
+        f"/users/{created.json()['id']}/require-password-change",
+        headers=owner_headers,
+    )
+    assert required.status_code == 200, required.text
+    assert required.json()["must_change_password"] is True
+    assert (await client.get("/auth/me", headers=changed_headers)).status_code == 200
+    assert (await client.get("/passwords", headers=changed_headers)).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_legacy_migration_accepts_exporter_archive_over_ten_mib(
+    client: httpx.AsyncClient,
+) -> None:
+    _owner, owner_headers = await bootstrap(client)
+    rng = random.Random(0)
+    archive = legacy_migration_archive([rng.randbytes(4 * MIB) for _ in range(3)])
+    assert len(archive) > 10 * MIB
+
+    imported = await client.post(
+        "/passwords/import",
+        files={"file": ("migration.zip", archive, "application/zip")},
+        data={"master_password": ADMIN_PASSWORD, "on_conflict": "skip"},
+        headers=owner_headers,
+    )
+
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["attachments"] == 3
+
+
+@pytest.mark.asyncio
+async def test_legacy_migration_preserves_attachment_over_five_mib(
+    client: httpx.AsyncClient,
+) -> None:
+    _owner, owner_headers = await bootstrap(client)
+    content = random.Random(1).randbytes(6 * MIB)
+    archive = legacy_migration_archive([content])
+
+    imported = await client.post(
+        "/passwords/import",
+        files={"file": ("migration.zip", archive, "application/zip")},
+        data={"master_password": ADMIN_PASSWORD, "on_conflict": "skip"},
+        headers=owner_headers,
+    )
+    assert imported.status_code == 200, imported.text
+
+    [attachment] = (
+        await client.get(
+            "/passwords/attachment migration/attachments", headers=owner_headers
+        )
+    ).json()
+    downloaded = await client.get(
+        f"/passwords/attachment migration/attachments/{attachment['id']}",
+        headers=owner_headers,
+    )
+    assert downloaded.content == content
+
+    backup = await client.post(
+        "/passwords/backup",
+        json={"master_password": ADMIN_PASSWORD},
+        headers=owner_headers,
+    )
+    assert backup.status_code == 200, backup.text
+    restored = await client.post(
+        "/passwords/import",
+        files={"file": ("vault.cmbackup", backup.content, "application/octet-stream")},
+        data={"master_password": ADMIN_PASSWORD, "on_conflict": "skip"},
+        headers=owner_headers,
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["skipped"] == 1
 
 
 async def mcp_post(
@@ -154,14 +351,15 @@ async def test_admin_lifecycle_revokes_memory_sessions(
     assert revoked.status_code == 200, revoked.text
     assert (await client.get("/auth/me", headers=member_headers)).status_code == 401
 
-    _, member_headers = await login(client, "member", MEMBER_PASSWORD)
+    changed_password = f"{MEMBER_PASSWORD}-changed"
+    _, member_headers = await login(client, "member", changed_password)
     disabled = await client.patch(
         f"/users/{member['id']}", json={"active": False}, headers=owner_headers
     )
     assert disabled.status_code == 200, disabled.text
     assert (await client.get("/auth/me", headers=member_headers)).status_code == 401
     refused = await client.post(
-        "/auth/login", json={"username": "member", "password": MEMBER_PASSWORD}
+        "/auth/login", json={"username": "member", "password": changed_password}
     )
     assert refused.status_code == 200
     assert refused.json()["valid"] is False

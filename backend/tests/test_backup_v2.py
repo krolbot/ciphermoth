@@ -360,8 +360,8 @@ MALFORMED: dict[str, tuple[list[dict], list[bytes], dict]] = {
         [b"abc"],
         {},
     ),
-    "attachment over 5 MB": (
-        [backup_entry("a", attachments=[_attachment(b"x", size=6 * MIB)])],
+    "attachment over 10 MB": (
+        [backup_entry("a", attachments=[_attachment(b"x", size=11 * MIB)])],
         [b"x"],
         {},
     ),
@@ -370,8 +370,8 @@ MALFORMED: dict[str, tuple[list[dict], list[bytes], dict]] = {
         [b"x"] * 21,
         {},
     ),
-    "over 25 MB on one entry": (
-        [backup_entry("a", attachments=[_attachment(b"x", size=5 * MIB)] * 6)],
+    "over 50 MB on one entry": (
+        [backup_entry("a", attachments=[_attachment(b"x", size=10 * MIB)] * 6)],
         [b"x"] * 6,
         {},
     ),
