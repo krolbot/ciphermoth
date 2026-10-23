@@ -132,7 +132,7 @@ const EntryDetails = ({ entry, onClose, onCopy, onEdit, onDelete, onShare, onTog
               onClick={() => onToggleFavorite(entry)}
               sx={{ width: 44, height: 44 }}
             >
-              {entry.favorite ? <StarIcon color="warning" /> : <StarBorderIcon />}
+              {entry.favorite ? <StarIcon color="secondary" /> : <StarBorderIcon />}
             </IconButton>
           </Tooltip>
         )}

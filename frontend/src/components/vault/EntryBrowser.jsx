@@ -141,7 +141,7 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
                         </Typography>
                         {entry.favorite && (
                           <StarIcon
-                            color="warning"
+                            color="secondary"
                             sx={{ fontSize: 14, flexShrink: 0 }}
                             aria-label={t("vault.browser.favorite")}
                           />

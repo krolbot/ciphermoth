@@ -4,6 +4,13 @@ import { resolve } from "node:path";
 import { after, before, test } from "node:test";
 import { chromium } from "playwright";
 import { startFrontend, stopFrontend } from "./frontend.mjs";
+import { GLOW, INK, SURFACE } from "../../../frontend/src/lib/brand.js";
+
+const rgb = (hex) =>
+  `rgb(${hex
+    .match(/[a-f0-9]{2}/gi)
+    .map((part) => parseInt(part, 16))
+    .join(", ")})`;
 
 // Synthetic records only. Exercise the shipped bundle without a real vault/session.
 const entries = [
@@ -246,9 +253,11 @@ async function screenshot(page, filename) {
 for (const [width, language, theme] of [
   [320, "en", "dark"],
   [375, "ru", "light"],
+  [375, "ru", "dark"],
   [768, "ru", "dark"],
   [1280, "en", "dark"],
   [1440, "ru", "light"],
+  [1440, "ru", "dark"],
 ]) {
   test(`vault fits ${width}px / ${language} / ${theme}, including long values and trash`, async () => {
     const { context, page, errors } = await vault(width, language, theme);
@@ -258,6 +267,16 @@ for (const [width, language, theme] of [
         name: ru ? "Записи хранилища" : "Vault entries",
       });
       assert.equal(await list.getByRole("listitem").count(), entries.length);
+      assert.equal(
+        await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+        rgb(theme === "dark" ? INK : SURFACE)
+      );
+      assert.equal(
+        await list
+          .getByLabel(ru ? "Избранное" : "Favorite", { exact: true })
+          .evaluate((icon) => getComputedStyle(icon).color),
+        rgb(GLOW)
+      );
       await fits(page);
       const lastCopy = list
         .getByRole("button", { name: /^(Copy password|Скопировать пароль):/ })
@@ -273,7 +292,7 @@ for (const [width, language, theme] of [
         true,
         "the theme switch must not cover the last copy action"
       );
-      if (width === 375) await screenshot(page, "vault-mobile-ru.png");
+      if (width === 375) await screenshot(page, `vault-mobile-ru-${theme}.png`);
       const longName = entries[3].password_name;
       await list
         .getByRole("button", {
@@ -304,7 +323,17 @@ for (const [width, language, theme] of [
           })
           .click();
         await detail.getByRole("heading", { name: "GitHub", exact: true }).waitFor();
-        await screenshot(page, `vault-desktop-${language}.png`);
+        assert.equal(
+          await detail
+            .getByRole("button", {
+              name: ru ? "Убрать из избранного" : "Remove from favorites",
+              exact: true,
+            })
+            .locator("svg")
+            .evaluate((icon) => getComputedStyle(icon).color),
+          rgb(GLOW)
+        );
+        await screenshot(page, `vault-desktop-${language}-${theme}.png`);
       } else {
         await page.keyboard.press("Escape");
         await detail.waitFor({ state: "hidden" });
