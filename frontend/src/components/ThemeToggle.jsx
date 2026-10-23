@@ -8,7 +8,7 @@ import { GLOW } from "../lib/brand";
 
 const FLIGHT_MS = 1050;
 
-const ThemeToggle = ({ zIndex = 1200 }) => {
+const ThemeToggle = ({ zIndex = 1200, sx }) => {
   const { t } = useTranslation();
   const { mode, toggle } = useColorMode();
   const [flying, setFlying] = useState(false);
@@ -96,6 +96,7 @@ const ThemeToggle = ({ zIndex = 1200 }) => {
             "0%": { boxShadow: `0 0 0 0 color-mix(in srgb, ${GLOW} 55%, transparent)` },
             "100%": { boxShadow: "0 0 0 26px transparent" },
           },
+          ...sx,
         }}
       >
         <span className="cmMoth">

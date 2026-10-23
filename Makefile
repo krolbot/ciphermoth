@@ -85,7 +85,7 @@ test:
 	cd frontend && npm test
 	node --test docker/frontend/runtime-config.test.mjs
 
-# Builds the frontend image and checks its Content-Security-Policy in Chromium.
+# Builds the frontend image and checks CSP and responsive vault workflows in Chromium.
 .PHONY: test-browser
 test-browser:
 	docker build -f docker/frontend/Dockerfile --build-arg VITE_API_URL=__CIPHERMOTH_API_URL__ -t ciphermoth-frontend:browser-test .

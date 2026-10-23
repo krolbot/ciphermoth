@@ -2,9 +2,10 @@
   "name": "ciphermoth-frontend-browser-tests",
   "private": true,
   "type": "module",
-  "description": "Browser checks of the frontend image (Content-Security-Policy). Not part of the app.",
+  "description": "Browser checks of the frontend image: CSP and responsive vault workflows. Not part of the app.",
   "scripts": {
-    "test": "node --test --test-concurrency=1 csp.browser.test.mjs"
+    "test": "node --test --test-concurrency=1 *.browser.test.mjs",
+    "test:vault": "node --test vault.browser.test.mjs"
   },
   "devDependencies": {
     "playwright": "1.64.0"

@@ -4,18 +4,23 @@ import {
   Box,
   Button,
   CircularProgress,
+  IconButton,
   InputAdornment,
+  Menu,
   MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Tooltip,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
-import { DataGrid } from "@mui/x-data-grid";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import DownloadIcon from "@mui/icons-material/Download";
 import HealthAndSafetyIcon from "@mui/icons-material/HealthAndSafety";
 import SearchIcon from "@mui/icons-material/Search";
+import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
@@ -29,8 +34,7 @@ import ImportDialog from "../components/vault/ImportDialog";
 import PasswordFormDialog from "../components/vault/PasswordFormDialog";
 import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
-import { createColumns } from "../components/vault/columns";
-import { gridBaseSx } from "../components/vault/gridStyles";
+import EntryBrowser from "../components/vault/EntryBrowser";
 import useClipboard from "../hooks/useClipboard";
 
 const buildSubtitle = (loading, passwords, t) => {
@@ -64,7 +68,8 @@ const PasswordsPage = () => {
     (state) => state.ciphermothModels.passwords
   );
 
-  const [visibleRows, setVisibleRows] = useState(new Set());
+  const [toolsAnchor, setToolsAnchor] = useState(null);
+  const [sortOrder, setSortOrder] = useState("favorites");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
@@ -88,15 +93,6 @@ const PasswordsPage = () => {
   useEffect(() => {
     if (error) enqueueSnackbar(error, { variant: "error" });
   }, [error, enqueueSnackbar]);
-
-  const toggleVisibility = useCallback((name) => {
-    setVisibleRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }, []);
 
   const openAdd = () => {
     setEditTarget(null);
@@ -195,21 +191,6 @@ const PasswordsPage = () => {
     });
   };
 
-  const columns = useMemo(
-    () =>
-      createColumns({
-        visibleRows,
-        onToggleVisibility: toggleVisibility,
-        onToggleFavorite: handleToggleFavorite,
-        onCopy: copy,
-        onEdit: openEdit,
-        onDelete: setDeleteTarget,
-        onShare: setShareTarget,
-        t,
-      }),
-    [visibleRows, toggleVisibility, handleToggleFavorite, copy, openEdit, t]
-  );
-
   const folderOptions = useMemo(
     () =>
       [...new Set(passwords.map((p) => p.folder).filter(Boolean))].sort((a, b) =>
@@ -241,9 +222,10 @@ const PasswordsPage = () => {
 
     return [...matches].sort(
       (a, b) =>
-        Number(b.favorite) - Number(a.favorite) || a.password_name.localeCompare(b.password_name)
+        (sortOrder === "favorites" ? Number(b.favorite) - Number(a.favorite) : 0) ||
+        a.password_name.localeCompare(b.password_name) * (sortOrder === "name-desc" ? -1 : 1)
     );
-  }, [passwords, search, activeFolder]);
+  }, [passwords, search, activeFolder, sortOrder]);
 
   const subtitle = useMemo(() => buildSubtitle(loading, passwords, t), [loading, passwords, t]);
   const isEmpty = !loading && passwords.length === 0;
@@ -274,46 +256,76 @@ const PasswordsPage = () => {
           sx={{ flexWrap: "wrap", justifyContent: { xs: "flex-start", md: "flex-end" } }}
         >
           <Button
-            variant="outlined"
-            startIcon={<HealthAndSafetyIcon />}
-            onClick={() => setHealthOpen(true)}
-            disabled={passwords.length === 0}
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={openAdd}
+            sx={{ minHeight: 44, textTransform: "none" }}
           >
-            {t("vault.health")}
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<DownloadIcon />}
-            onClick={() => setBackupOpen(true)}
-            disabled={passwords.length === 0}
-          >
-            {t("vault.backup")}
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<UploadFileIcon />}
-            onClick={() => setImportOpen(true)}
-          >
-            {t("vault.import")}
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<DeleteOutlineIcon />}
-            onClick={() => setTrashOpen(true)}
-          >
-            {trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash")}
-          </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={openAdd}>
             {t("common.actions.add")}
           </Button>
+          <Tooltip title={t("vault.browser.tools")}>
+            <IconButton
+              aria-label={t("vault.browser.tools")}
+              aria-haspopup="menu"
+              aria-expanded={Boolean(toolsAnchor)}
+              onClick={(event) => setToolsAnchor(event.currentTarget)}
+              sx={{ width: 44, height: 44, border: "1px solid", borderColor: "divider" }}
+            >
+              <MoreHorizIcon />
+            </IconButton>
+          </Tooltip>
+          <Menu
+            anchorEl={toolsAnchor}
+            open={Boolean(toolsAnchor)}
+            onClose={() => setToolsAnchor(null)}
+          >
+            {[
+              [
+                HealthAndSafetyIcon,
+                t("vault.health"),
+                () => setHealthOpen(true),
+                passwords.length === 0,
+              ],
+              [DownloadIcon, t("vault.backup"), () => setBackupOpen(true), passwords.length === 0],
+              [UploadFileIcon, t("vault.import"), () => setImportOpen(true), false],
+              [
+                DeleteOutlineIcon,
+                trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash"),
+                () => setTrashOpen(true),
+                false,
+              ],
+            ].map(([Icon, label, action, disabled]) => (
+              <MenuItem
+                key={label}
+                disabled={disabled}
+                onClick={() => {
+                  setToolsAnchor(null);
+                  action();
+                }}
+                sx={{ minHeight: 44 }}
+              >
+                <ListItemIcon>
+                  <Icon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>{label}</ListItemText>
+              </MenuItem>
+            ))}
+          </Menu>
         </Stack>
       </Stack>
 
       {!isEmpty && (
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.5}
-          sx={{ mb: 2, alignItems: { xs: "stretch", sm: "center" } }}
+        <Box
+          sx={{
+            display: "grid",
+            "& .MuiInputBase-root": { minHeight: 44 },
+            gap: 1.5,
+            mb: 2,
+            gridTemplateColumns: {
+              xs: "repeat(2, minmax(0, 1fr))",
+              sm: folderOptions.length ? "minmax(0, 1fr) 170px 170px" : "minmax(0, 1fr) 170px",
+            },
+          }}
         >
           <TextField
             size="small"
@@ -321,7 +333,8 @@ const PasswordsPage = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             sx={{
-              width: { xs: "100%", sm: 320 },
+              minWidth: 0,
+              gridColumn: { xs: "1 / -1", sm: "auto" },
               "& .MuiInputBase-input::placeholder": {
                 color: "text.secondary",
                 opacity: 1,
@@ -344,7 +357,7 @@ const PasswordsPage = () => {
               label={t("common.fields.folder")}
               value={activeFolder}
               onChange={(e) => setFolderFilter(e.target.value)}
-              sx={{ width: { xs: "100%", sm: 200 } }}
+              sx={{ minWidth: 0 }}
             >
               <MenuItem value="">{t("vault.allFolders")}</MenuItem>
               {folderOptions.map((f) => (
@@ -354,7 +367,19 @@ const PasswordsPage = () => {
               ))}
             </TextField>
           )}
-        </Stack>
+          <TextField
+            select
+            size="small"
+            label={t("vault.browser.sort")}
+            value={sortOrder}
+            onChange={(event) => setSortOrder(event.target.value)}
+            sx={{ minWidth: 0 }}
+          >
+            <MenuItem value="favorites">{t("vault.browser.favoritesFirst")}</MenuItem>
+            <MenuItem value="name">{t("vault.browser.nameAscending")}</MenuItem>
+            <MenuItem value="name-desc">{t("vault.browser.nameDescending")}</MenuItem>
+          </TextField>
+        </Box>
       )}
 
       {damageCheckError && (
@@ -393,66 +418,15 @@ const PasswordsPage = () => {
 
       {isEmpty && <EmptyVault onAdd={openAdd} />}
 
-      {!loading && !isEmpty && (
-        <Typography
-          variant="caption"
-          sx={{ display: { xs: "block", md: "none" }, color: "text.secondary", mb: 1 }}
-        >
-          {t("vault.scrollHint")}
-        </Typography>
-      )}
-
-      {!loading && !isEmpty && (
-        <DataGrid
-          rows={filteredPasswords}
-          columns={columns}
-          getRowId={(row) => row.password_name}
-          disableRowSelectionOnClick
-          density="compact"
-          rowHeight={44}
-          columnHeaderHeight={42}
-          pageSizeOptions={[10, 25, 50]}
-          initialState={{
-            pagination: { paginationModel: { pageSize: 10 } },
-          }}
-          slots={{
-            noRowsOverlay: () => (
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  height: "100%",
-                }}
-              >
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  {t("vault.noSearchResults", { search: search.trim() })}
-                </Typography>
-              </Box>
-            ),
-          }}
-          sx={{
-            ...gridBaseSx,
-            bgcolor: "background.paper",
-            borderRadius: 2.5,
-            "& .MuiDataGrid-columnHeaders": { borderColor: "divider" },
-            "& .MuiDataGrid-columnHeader": { bgcolor: "background.paper" },
-            "& .MuiDataGrid-columnHeaderTitle": {
-              fontWeight: 600,
-              color: "text.secondary",
-            },
-            "& .MuiDataGrid-row:hover": { bgcolor: "action.hover" },
-            "& .rowHoverActions": {
-              opacity: 0,
-              pointerEvents: "none",
-              transition: "opacity 120ms ease",
-            },
-            "& .MuiDataGrid-row:hover .rowHoverActions, & .MuiDataGrid-row:has(:focus-visible) .rowHoverActions":
-              {
-                opacity: 1,
-                pointerEvents: "auto",
-              },
-          }}
+      {passwords.length > 0 && (
+        <EntryBrowser
+          entries={filteredPasswords}
+          emptyMessage={t("vault.noSearchResults", { search: search.trim() })}
+          onCopy={copy}
+          onEdit={openEdit}
+          onDelete={setDeleteTarget}
+          onShare={setShareTarget}
+          onToggleFavorite={handleToggleFavorite}
         />
       )}
 

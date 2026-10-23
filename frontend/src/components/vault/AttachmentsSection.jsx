@@ -18,7 +18,7 @@ const formatBytes = (bytes, language) => {
   return `${formatter.format(bytes / (1024 * 1024))} MB`;
 };
 
-const AttachmentsSection = ({ passwordName, onChanged }) => {
+const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
   const { t, i18n } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const fetchAttachments = useStoreActions((a) => a.ciphermothModels.passwords.fetchAttachments);
@@ -124,33 +124,47 @@ const AttachmentsSection = ({ passwordName, onChanged }) => {
               {formatBytes(att.size_bytes, i18n.resolvedLanguage)}
             </Typography>
             <Tooltip title={t("common.actions.download")}>
-              <IconButton size="small" onClick={() => onDownload(att)}>
+              <IconButton
+                size="small"
+                onClick={() => onDownload(att)}
+                sx={{ width: 44, height: 44 }}
+              >
                 <FileDownloadOutlinedIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Tooltip title={t("attachments.removeFile")}>
-              <IconButton size="small" color="error" onClick={() => setPendingDelete(att)}>
-                <DeleteOutlineIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+            {!readOnly && (
+              <Tooltip title={t("attachments.removeFile")}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={() => setPendingDelete(att)}
+                  sx={{ width: 44, height: 44 }}
+                >
+                  <DeleteOutlineIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
           </Stack>
         ))
       )}
 
-      <Box>
-        <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
-        <Button
-          size="small"
-          startIcon={<AttachFileIcon />}
-          onClick={() => inputRef.current?.click()}
-          loading={busy}
-        >
-          {t("attachments.attachFile")}
-        </Button>
-        <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>
-          {t("attachments.limits")}
-        </Typography>
-      </Box>
+      {!readOnly && (
+        <Box>
+          <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
+          <Button
+            size="small"
+            sx={{ minHeight: 44 }}
+            startIcon={<AttachFileIcon />}
+            onClick={() => inputRef.current?.click()}
+            loading={busy}
+          >
+            {t("attachments.attachFile")}
+          </Button>
+          <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>
+            {t("attachments.limits")}
+          </Typography>
+        </Box>
+      )}
 
       <ConfirmDialog
         open={!!pendingDelete}

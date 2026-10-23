@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { after, before, describe, test } from "node:test";
 
 import { chromium } from "playwright";
 
-const IMAGE = process.env.CIPHERMOTH_FRONTEND_IMAGE ?? "ciphermoth-frontend:browser-test";
+import { startFrontend, stopFrontend } from "./frontend.mjs";
 const RELEASES = "https://api.github.com/repos/krolbot/ciphermoth/releases/latest";
 
 const listen = (handler) =>
@@ -26,40 +26,6 @@ const fakeApi = (seen) => (request, response) => {
   } else {
     response.end(JSON.stringify({ version: "test", features: [] }));
   }
-};
-
-const startFrontend = async (apiUrl) => {
-  const name = `ciphermoth-csp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  execFileSync("docker", [
-    "run",
-    "-d",
-    "--rm",
-    "--name",
-    name,
-    "-e",
-    `VITE_API_URL=${apiUrl}`,
-    "-p",
-    "127.0.0.1::3000",
-    IMAGE,
-  ]);
-  const port = execFileSync("docker", ["port", name, "3000/tcp"])
-    .toString()
-    .trim()
-    .split(":")
-    .pop();
-  const url = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      if ((await fetch(url)).ok) return { name, url };
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-  }
-  throw new Error(`frontend did not start:\n${execFileSync("docker", ["logs", name])}`);
-};
-
-const stopFrontend = (frontend) => {
-  if (frontend) spawnSync("docker", ["rm", "-f", frontend.name]);
 };
 
 const attempt = (page, action, target) =>

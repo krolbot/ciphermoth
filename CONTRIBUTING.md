@@ -74,7 +74,7 @@ What the suite protects, and where:
 | Vault sessions expire, lock, end on rotation and survive races | `test_sessions.py` |
 | The CLI refuses servers older than v1.5.0, and the released v1.4.7 CLI is told to update without changing anything | `test_cli.py`, with that CLI frozen in `testdata/clients` |
 | The frontend image validates its API URL and renders its CSP | `docker/frontend/runtime-config.test.mjs` (part of `make test`) |
-| The CSP lets the UI reach its API and blocks every other destination | `docker/frontend/browser/csp.browser.test.mjs`, run with `make test-browser` (builds the image, drives Chromium) |
+| The CSP lets the UI reach its API and blocks every other destination; the vault list, entry details and trash fit mobile and desktop without losing copy or permission controls | `docker/frontend/browser/*.browser.test.mjs`, run with `make test-browser` (builds the image, drives Chromium with synthetic vault records) |
 | The vault file: initialization, file modes, identity and version checks, SQLite version, the one-process lock, snapshots, restores, corruption, busy handling, reads next to a writer | `test_storage.py` |
 | Cryptography is byte-compatible | `test_vectors.py` with [`testdata/vectors`](testdata/vectors/README.md), shared with `frontend/src/lib/totp.test.js` |
 | Imports cannot damage a vault | `test_imports.py` (including Hypothesis property tests), `test_hostile_files.py` |

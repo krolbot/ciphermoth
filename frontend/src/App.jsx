@@ -78,7 +78,9 @@ const AppContent = () => {
         onClose={() => {}}
         onChanged={setUser}
       />
-      <ThemeToggle />
+      <Box sx={{ display: "flex", justifyContent: "flex-end", px: 3, pb: { xs: 3, md: 0 } }}>
+        <ThemeToggle sx={{ position: { xs: "static", md: "fixed" } }} />
+      </Box>
     </Box>
   );
 };

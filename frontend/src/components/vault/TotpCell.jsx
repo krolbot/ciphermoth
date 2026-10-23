@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, CircularProgress, Tooltip, Typography, useTheme } from "@mui/material";
+import { ButtonBase, CircularProgress, Tooltip, Typography, useTheme } from "@mui/material";
 import { useTranslation } from "react-i18next";
 
 import { generateTotp, totpRemaining } from "../../lib/totp";
@@ -46,11 +46,21 @@ const TotpCell = ({ secret, onCopy }) => {
 
   return (
     <Tooltip title={t("totp.copy")}>
-      <Box
+      <ButtonBase
+        aria-label={t("totp.copy")}
         onClick={() => onCopy?.(code)}
-        sx={{ display: "flex", alignItems: "center", gap: 0.75, cursor: "pointer" }}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          minHeight: 44,
+          px: 1,
+          borderRadius: 1,
+          "&.Mui-focusVisible": { outline: "2px solid", outlineColor: "primary.main" },
+        }}
       >
         <Typography
+          component="span"
           variant="body2"
           sx={{
             fontFamily: "'Space Mono', monospace",
@@ -67,7 +77,7 @@ const TotpCell = ({ secret, onCopy }) => {
           thickness={5}
           sx={{ color: remaining <= 5 ? "warning.main" : "text.disabled" }}
         />
-      </Box>
+      </ButtonBase>
     </Tooltip>
   );
 };

@@ -1,6 +1,5 @@
 import { createTheme } from "@mui/material/styles";
 import { ruRU as coreRuRU } from "@mui/material/locale";
-import { ruRU as dataGridRuRU } from "@mui/x-data-grid/locales";
 
 import {
   BORDER,
@@ -126,6 +125,6 @@ export const createAppTheme = (mode, language) => {
         },
       },
     },
-    ...(language === "ru" ? [coreRuRU, dataGridRuRU] : [])
+    ...(language === "ru" ? [coreRuRU] : [])
   );
 };
