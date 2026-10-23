@@ -77,9 +77,9 @@ let browser;
 let origin;
 
 before(async () => {
+  browser = await chromium.launch();
   frontend = await startFrontend("/api");
   origin = frontend.url;
-  browser = await chromium.launch();
 });
 after(async () => {
   await browser?.close();
