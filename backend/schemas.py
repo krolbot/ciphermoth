@@ -397,6 +397,7 @@ class PasswordResponse(BaseModel):
     folder: str | None = None
     favorite: bool = False
     backed_up: bool
+    created: datetime
     updated: datetime
     deleted: datetime | None = None
     password_history: list[PasswordHistoryEntry] = Field(default_factory=list)

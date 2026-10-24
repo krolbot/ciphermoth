@@ -222,6 +222,7 @@ const PasswordsPage = () => {
 
     return [...matches].sort(
       (a, b) =>
+        (sortOrder === "created-desc" ? Date.parse(b.created) - Date.parse(a.created) : 0) ||
         (sortOrder === "favorites" ? Number(b.favorite) - Number(a.favorite) : 0) ||
         a.password_name.localeCompare(b.password_name) * (sortOrder === "name-desc" ? -1 : 1)
     );
@@ -378,6 +379,7 @@ const PasswordsPage = () => {
             <MenuItem value="favorites">{t("vault.browser.favoritesFirst")}</MenuItem>
             <MenuItem value="name">{t("vault.browser.nameAscending")}</MenuItem>
             <MenuItem value="name-desc">{t("vault.browser.nameDescending")}</MenuItem>
+            <MenuItem value="created-desc">{t("vault.browser.dateAdded")}</MenuItem>
           </TextField>
         </Box>
       )}

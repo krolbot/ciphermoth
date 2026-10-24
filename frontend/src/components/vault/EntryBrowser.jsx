@@ -43,13 +43,22 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
       variant="outlined"
       sx={{
         display: "grid",
-        gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "minmax(0, 0.9fr) minmax(0, 1.1fr)" },
+        gridTemplateColumns: {
+          xs: "minmax(0, 1fr)",
+          md: selected ? "minmax(0, 0.9fr) minmax(0, 1.1fr)" : "minmax(0, 1fr)",
+        },
         borderRadius: 2.5,
         overflow: "hidden",
         minWidth: 0,
       }}
     >
-      <Box sx={{ minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
+      <Box
+        sx={{
+          minWidth: 0,
+          borderRight: { md: selected ? "1px solid" : 0 },
+          borderColor: { md: "divider" },
+        }}
+      >
         <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
             {t("vault.browser.entries")}{" "}
@@ -207,30 +216,13 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
           </Box>
         )}
       </Box>
-      {desktop && (
+      {desktop && selected && (
         <Box
           component="section"
           aria-label={t("vault.browser.details")}
           sx={{ minWidth: 0, maxHeight: "min(80vh, 840px)", overflowY: "auto" }}
         >
-          {details || (
-            <Stack
-              spacing={1.5}
-              sx={{
-                alignItems: "center",
-                justifyContent: "center",
-                minHeight: 400,
-                p: 4,
-                textAlign: "center",
-              }}
-            >
-              <KeyOutlinedIcon sx={{ color: "text.secondary", fontSize: 40 }} />
-              <Typography variant="h6">{t("vault.browser.selectTitle")}</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 280 }}>
-                {t("vault.browser.selectHint")}
-              </Typography>
-            </Stack>
-          )}
+          {details}
         </Box>
       )}
       {!desktop && (

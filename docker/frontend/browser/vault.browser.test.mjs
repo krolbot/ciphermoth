@@ -16,6 +16,8 @@ const rgb = (hex) =>
 const entries = [
   {
     id: 1,
+    created: "2026-01-01T12:00:00Z",
+    updated: "2026-10-24T12:00:00Z",
     password_name: "GitHub",
     username: "nikita@example.test",
     password_value: "Synthetic-secret!2026",
@@ -38,6 +40,7 @@ const entries = [
   },
   {
     id: 2,
+    created: "2026-03-31T23:30:00Z",
     password_name: "Read-only account",
     username: "reader@example.test",
     password_value: "Synthetic-read-only",
@@ -51,6 +54,7 @@ const entries = [
   },
   {
     id: 3,
+    created: "2026-04-01T01:00:00+03:00",
     password_name: "Recovery notes",
     password_value: "Synthetic private note\nSecond line",
     kind: "note",
@@ -61,6 +65,7 @@ const entries = [
   },
   {
     id: 4,
+    created: "2026-03-31T23:00:00Z",
     password_name: "Very long entry name / ".repeat(8),
     username: "long".repeat(40),
     password_value: "Long-secret-".repeat(40),
@@ -227,7 +232,10 @@ test("mobile vault is a vertical list, with a full-screen read view and no hidde
     await fits(page);
     await readOnly.getByRole("button", { name: "Back to entries" }).click();
     await list.getByRole("button", { name: "Open Recovery notes", exact: true }).click();
-    const note = page.getByRole("dialog", { name: "Recovery notes", exact: true });
+    const note = page.getByRole("dialog", {
+      name: "Recovery notes",
+      exact: true,
+    });
     assert.equal(await note.getByText(entries[2].password_value, { exact: true }).count(), 0);
     await note.getByRole("button", { name: "Copy note", exact: true }).click();
     assert.equal(
@@ -266,6 +274,23 @@ for (const [width, language, theme] of [
       const list = page.getByRole("list", {
         name: ru ? "Записи хранилища" : "Vault entries",
       });
+      const detailsRegion = page.getByRole("region", {
+        name: ru ? "Просмотр записи" : "Entry details",
+      });
+      const listFillsBrowser = () =>
+        list.evaluate((node) => {
+          const pane = node.parentElement;
+          return (
+            Math.abs(pane.getBoundingClientRect().width - pane.parentElement.clientWidth) < 1 &&
+            getComputedStyle(pane).borderRightWidth === "0px"
+          );
+        });
+      assert.equal(
+        await detailsRegion.count(),
+        0,
+        "details stay hidden until a record is selected"
+      );
+      assert.equal(await listFillsBrowser(), true, "the unselected list fills the browser");
       assert.equal(await list.getByRole("listitem").count(), entries.length);
       assert.equal(
         await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
@@ -279,7 +304,9 @@ for (const [width, language, theme] of [
       );
       await fits(page);
       const lastCopy = list
-        .getByRole("button", { name: /^(Copy password|Скопировать пароль):/ })
+        .getByRole("button", {
+          name: /^(Copy password|Скопировать пароль):/,
+        })
         .last();
       await lastCopy.scrollIntoViewIfNeeded();
       assert.equal(
@@ -293,6 +320,7 @@ for (const [width, language, theme] of [
         "the theme switch must not cover the last copy action"
       );
       if (width === 375) await screenshot(page, `vault-mobile-ru-${theme}.png`);
+      if (width === 1440) await screenshot(page, `vault-list-${language}-${theme}.png`);
       const longName = entries[3].password_name;
       await list
         .getByRole("button", {
@@ -307,6 +335,7 @@ for (const [width, language, theme] of [
             })
           : page.getByRole("dialog", { name: longName, exact: true });
       await detail.waitFor();
+      if (width >= 900) assert.equal(await listFillsBrowser(), false);
       assert.equal(await detail.getByText(entries[3].password_value, { exact: true }).count(), 0);
       await detail
         .getByRole("button", {
@@ -339,6 +368,25 @@ for (const [width, language, theme] of [
         await detail.waitFor({ state: "hidden" });
       }
       await list.waitFor();
+      await page.getByRole("combobox", { name: ru ? "Порядок" : "Sort", exact: true }).click();
+      const byDate = page.getByRole("option", {
+        name: ru ? "По времени добавления" : "Date added",
+        exact: true,
+      });
+      await byDate.waitFor();
+      if ((width === 375 || width === 1440) && theme === "dark") {
+        await screenshot(page, `vault-sort-${width}-${language}.png`);
+      }
+      await byDate.click();
+      assert.deepEqual(
+        await list
+          .getByRole("button", { name: /^(Open|Открыть) / })
+          .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
+        [entries[1], entries[3], entries[2], entries[0]].map(
+          (entry) => `${ru ? "Открыть" : "Open"} ${entry.password_name}`
+        )
+      );
+      await fits(page);
       if (width === 1280) {
         await page.getByRole("combobox", { name: "Sort", exact: true }).click();
         await page.getByRole("option", { name: "Name Z–A", exact: true }).click();
@@ -346,7 +394,10 @@ for (const [width, language, theme] of [
           await list
             .getByRole("listitem")
             .first()
-            .getByRole("button", { name: `Open ${entries[3].password_name}`, exact: true })
+            .getByRole("button", {
+              name: `Open ${entries[3].password_name}`,
+              exact: true,
+            })
             .count(),
           1
         );
@@ -359,9 +410,12 @@ for (const [width, language, theme] of [
       const search = page.getByPlaceholder(ru ? "Поиск по хранилищу…" : "Search vault…");
       await search.fill("reader@example.test");
       assert.equal(await list.getByRole("listitem").count(), 1);
+      assert.equal(await detailsRegion.count(), 0);
+      assert.equal(await listFillsBrowser(), true);
       await search.fill("no-such-entry");
       await page.getByRole("status").waitFor();
       assert.equal(await list.count(), 0);
+      assert.equal(await detailsRegion.count(), 0);
       await search.fill("");
       await page
         .getByRole("button", {

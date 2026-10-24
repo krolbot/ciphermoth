@@ -96,6 +96,8 @@ async def test_entries_notes_totp_history_and_favorites(
     assert resp.status_code == 400
 
     login = await _get(client, key, "GitHub #work")
+    created = login["created"]
+    assert created.endswith("Z")
     assert login["totp_secret"] == "JBSWY3DPEHPK3PXP"
     assert login["tags"] == ["dev", "ops"]
     assert login["custom_fields"] == [
@@ -122,11 +124,13 @@ async def test_entries_notes_totp_history_and_favorites(
     )
     assert resp.status_code == 200, resp.text
     login = await _get(client, key, "GitHub")
+    assert login["created"] == created
     assert login["password_value"] == "gh-2"
     assert [h["value"] for h in login["password_history"]] == ["gh-Secret-1"]
 
     listing = await client.get("/passwords", headers=headers)
     assert [p["password_name"] for p in listing.json()] == ["GitHub", "Wi-Fi ключ"]
+    assert listing.json()[0]["created"] == created
 
     resp = await client.post(
         "/passwords/backup", json={"master_password": MASTER_PASSWORD}, headers=headers
@@ -302,7 +306,7 @@ async def test_backup_export_and_restore_into_a_fresh_vault(
     )
     assert resp.json()["imported"] == 2
     restored = await client.get("/passwords", headers=auth(new_key))
-    fields = ("password_name", "kind", "username", "password_value", "url")
+    fields = ("password_name", "kind", "username", "password_value", "url", "created")
     fields += ("totp_secret", "description", "tags", "custom_fields", "folder")
     assert [{f: p[f] for f in fields} for p in restored.json()] == [
         {f: p[f] for f in fields} for p in exported.json()

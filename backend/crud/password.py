@@ -156,6 +156,7 @@ class PasswordCRUD(BaseCRUD):
             folder=document.folder or None,
             favorite=document.favorite,
             backed_up=model.backed_up,
+            created=model.created.replace(tzinfo=UTC),
             updated=model.updated,
             deleted=model.deleted,
             password_history=[item.model_dump() for item in document.history],

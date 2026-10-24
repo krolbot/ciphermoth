@@ -1,4 +1,4 @@
-name: Frontend image
+name: Application images
 
 on:
   workflow_dispatch:
@@ -9,14 +9,25 @@ permissions:
   id-token: write
 
 concurrency:
-  group: frontend-image-${{ github.sha }}
+  group: application-images-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   publish:
+    name: ${{ matrix.image.name }}
     if: github.repository == 'krolbot/ciphermoth' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: ciphermoth-frontend
+            dockerfile: docker/frontend/Dockerfile
+            args: VITE_API_URL=__CIPHERMOTH_API_URL__
+          - name: ciphermoth-backend
+            dockerfile: docker/backend/Dockerfile
+            args: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,21 +38,23 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish the Lab frontend
+      - name: Build and publish the Lab image
         id: image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/frontend/Dockerfile
+          file: ${{ matrix.image.dockerfile }}
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/krolbot/ciphermoth-frontend:sha-${{ github.sha }}
-          build-args: VITE_API_URL=__CIPHERMOTH_API_URL__
+          tags: ghcr.io/krolbot/${{ matrix.image.name }}:sha-${{ github.sha }}
+          build-args: ${{ matrix.image.args }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-amd64
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-amd64
           labels: |
             org.opencontainers.image.source=https://github.com/krolbot/ciphermoth
             org.opencontainers.image.revision=${{ github.sha }}
       - uses: sigstore/cosign-installer@v3
       - name: Sign the published image
         env:
-          IMAGE: ghcr.io/krolbot/ciphermoth-frontend@${{ steps.image.outputs.digest }}
+          IMAGE: ghcr.io/krolbot/${{ matrix.image.name }}@${{ steps.image.outputs.digest }}
         run: cosign sign --yes "$IMAGE"
