@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Box,
   ButtonBase,
@@ -21,26 +21,38 @@ import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import { useTranslation } from "react-i18next";
 
 import EntryDetails from "./EntryDetails";
+import EntryListActions from "./EntryListActions";
 
 const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
   const { t } = useTranslation();
   const theme = useTheme();
   const desktop = useMediaQuery(theme.breakpoints.up("md"));
   const [selectedId, setSelectedId] = useState(null);
+  const selectedTrigger = useRef(null);
   const selected = entries.find((entry) => entry.id === selectedId);
+  const closeDetails = () => {
+    setSelectedId(null);
+    if (desktop) selectedTrigger.current?.focus();
+  };
   const details = selected && (
     <EntryDetails
       key={selected.id}
       entry={selected}
       onCopy={onCopy}
       {...actions}
-      onClose={desktop ? undefined : () => setSelectedId(null)}
+      onClose={closeDetails}
     />
   );
 
   return (
     <Paper
       variant="outlined"
+      onKeyDown={(event) => {
+        if (desktop && selected && event.key === "Escape" && !event.defaultPrevented) {
+          event.stopPropagation();
+          closeDetails();
+        }
+      }}
       sx={{
         display: "grid",
         gridTemplateColumns: {
@@ -95,7 +107,11 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
                   component="li"
                   key={entry.id}
                   sx={{
-                    display: "flex",
+                    display: selected ? "flex" : "grid",
+                    gridTemplateColumns: {
+                      xs: "minmax(0, 1fr)",
+                      md: "minmax(0, 1fr) minmax(0, 1.35fr)",
+                    },
                     alignItems: "center",
                     minWidth: 0,
                     borderBottom: "1px solid",
@@ -107,7 +123,10 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
                   <ButtonBase
                     aria-label={t("vault.browser.open", { name: entry.password_name })}
                     aria-current={entry.id === selected?.id ? "true" : undefined}
-                    onClick={() => setSelectedId(entry.id)}
+                    onClick={(event) => {
+                      selectedTrigger.current = event.currentTarget;
+                      setSelectedId(entry.id);
+                    }}
                     sx={{
                       flex: 1,
                       minWidth: 0,
@@ -193,23 +212,29 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
                       )}
                     </Box>
                   </ButtonBase>
-                  <Tooltip title={copyLabel}>
-                    <IconButton
-                      aria-label={`${copyLabel}: ${entry.password_name}`}
-                      onClick={() => onCopy(entry.password_value)}
-                      sx={{ width: 44, height: 44, mr: 1, flexShrink: 0 }}
-                    >
-                      <ContentCopyIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <ChevronRightIcon
-                    sx={{
-                      color: "text.secondary",
-                      fontSize: 18,
-                      mr: 1,
-                      display: { xs: "none", sm: "block" },
-                    }}
-                  />
+                  {!selected ? (
+                    <EntryListActions entry={entry} onCopy={onCopy} {...actions} />
+                  ) : (
+                    <>
+                      <Tooltip title={copyLabel}>
+                        <IconButton
+                          aria-label={`${copyLabel}: ${entry.password_name}`}
+                          onClick={() => onCopy(entry.password_value)}
+                          sx={{ width: 44, height: 44, mr: 1, flexShrink: 0 }}
+                        >
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <ChevronRightIcon
+                        sx={{
+                          color: "text.secondary",
+                          fontSize: 18,
+                          mr: 1,
+                          display: { xs: "none", sm: "block" },
+                        }}
+                      />
+                    </>
+                  )}
                 </Box>
               );
             })}
@@ -229,7 +254,7 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
         <Dialog
           fullScreen
           open={Boolean(selected)}
-          onClose={() => setSelectedId(null)}
+          onClose={closeDetails}
           aria-labelledby="entry-detail-title"
           slotProps={{ paper: { sx: { borderRadius: 0 } } }}
         >

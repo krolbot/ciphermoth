@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Box, Button, Chip, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
@@ -106,36 +107,56 @@ const EntryDetails = ({ entry, onClose, onCopy, onEdit, onDelete, onShare, onTog
       }}
     >
       <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", mb: 2 }}>
-        {onClose ? (
+        {onClose && (
           <Button
             startIcon={<ArrowBackIcon />}
             onClick={onClose}
-            sx={{ minHeight: 44, textTransform: "none" }}
+            sx={{
+              minHeight: 44,
+              textTransform: "none",
+              display: { xs: "inline-flex", md: "none" },
+            }}
           >
             {t("vault.browser.back")}
           </Button>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            {t(isNote ? "entry.kind.note" : "entry.kind.login")}
-          </Typography>
         )}
-        {writable && (
-          <Tooltip
-            title={t(
-              entry.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
-            )}
-          >
-            <IconButton
-              aria-label={t(
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ display: { xs: onClose ? "none" : "block", md: "block" } }}
+        >
+          {t(isNote ? "entry.kind.note" : "entry.kind.login")}
+        </Typography>
+        <Stack direction="row">
+          {writable && (
+            <Tooltip
+              title={t(
                 entry.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
               )}
-              onClick={() => onToggleFavorite(entry)}
-              sx={{ width: 44, height: 44 }}
             >
-              {entry.favorite ? <StarIcon color="secondary" /> : <StarBorderIcon />}
-            </IconButton>
-          </Tooltip>
-        )}
+              <IconButton
+                aria-label={t(
+                  entry.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
+                )}
+                onClick={() => onToggleFavorite(entry)}
+                sx={{ width: 44, height: 44 }}
+              >
+                {entry.favorite ? <StarIcon color="secondary" /> : <StarBorderIcon />}
+              </IconButton>
+            </Tooltip>
+          )}
+          {onClose && (
+            <Tooltip title={t("common.actions.close")}>
+              <IconButton
+                aria-label={t("common.actions.close")}
+                onClick={onClose}
+                sx={{ width: 44, height: 44, display: { xs: "none", md: "inline-flex" } }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Stack>
       </Stack>
       <Typography
         id="entry-detail-title"

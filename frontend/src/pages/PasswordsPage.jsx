@@ -69,7 +69,7 @@ const PasswordsPage = () => {
   );
 
   const [toolsAnchor, setToolsAnchor] = useState(null);
-  const [sortOrder, setSortOrder] = useState("favorites");
+  const [sortOrder, setSortOrder] = useState("created-desc");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
@@ -323,8 +323,8 @@ const PasswordsPage = () => {
             gap: 1.5,
             mb: 2,
             gridTemplateColumns: {
-              xs: "repeat(2, minmax(0, 1fr))",
-              sm: folderOptions.length ? "minmax(0, 1fr) 170px 170px" : "minmax(0, 1fr) 170px",
+              xs: "minmax(0, 1fr)",
+              sm: folderOptions.length ? "minmax(0, 1fr) 170px 260px" : "minmax(0, 1fr) 260px",
             },
           }}
         >

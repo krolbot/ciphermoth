@@ -55,7 +55,7 @@ const AppContent = () => {
   }
 
   return (
-    <Box sx={{ display: "flex" }}>
+    <Box sx={{ display: "flex", flexDirection: "column" }}>
       <CssBaseline />
       <TopMenu />
       <Box

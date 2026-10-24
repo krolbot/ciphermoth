@@ -165,6 +165,13 @@ async function fits(page) {
     scroll: document.documentElement.scrollWidth,
   }));
   assert.equal(geometry.scroll, geometry.width, JSON.stringify(geometry));
+  assert.equal(
+    await page
+      .locator("main")
+      .evaluate((main) => main.clientWidth === main.parentElement.clientWidth),
+    true,
+    "the theme switch must not reserve a column beside the app"
+  );
   const overflowing = await page
     .locator('[role="dialog"], [role="list"], section')
     .evaluateAll((nodes) =>
@@ -173,6 +180,18 @@ async function fits(page) {
         .map((node) => node.getAttribute("aria-label") || node.tagName)
     );
   assert.deepEqual(overflowing, []);
+  const invalidActions = await page
+    .getByRole("list", { name: /^(Vault entries|Записи хранилища)$/ })
+    .locator("button")
+    .evaluateAll((buttons) =>
+      buttons.flatMap((button) => {
+        const rect = button.getBoundingClientRect();
+        return rect.width < 40 || rect.height < 40 || rect.left < 0 || rect.right > innerWidth
+          ? [{ name: button.getAttribute("aria-label"), width: rect.width, height: rect.height }]
+          : [];
+      })
+    );
+  assert.deepEqual(invalidActions, [], "list actions stay touch-sized and within the viewport");
 }
 
 test("mobile vault is a vertical list, with a full-screen read view and no hidden actions", async () => {
@@ -258,11 +277,123 @@ async function screenshot(page, filename) {
   });
 }
 
+for (const width of [375, 1440]) {
+  test(`list actions work without opening details at ${width}px and honor access`, async () => {
+    const { context, page, errors } = await vault(width);
+    try {
+      const list = page.getByRole("list", { name: "Vault entries" });
+      const github = list.getByRole("listitem").filter({
+        has: page.getByRole("button", { name: "Open GitHub", exact: true }),
+      });
+      const action = (label) =>
+        github.getByRole("button", { name: `${label}: GitHub`, exact: true });
+      await action("Copy username").click();
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), entries[0].username);
+      await action("Copy password").click();
+      assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        entries[0].password_value
+      );
+      await github.getByRole("button", { name: "Copy 2FA code", exact: true }).click();
+      assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^\d{6}$/);
+      assert.equal(await github.getByText(entries[0].password_value, { exact: true }).count(), 0);
+      await action("Reveal password").click();
+      await github.getByText(entries[0].password_value, { exact: true }).waitFor();
+      await action("Hide password").click();
+      assert.equal(await github.getByText(entries[0].password_value, { exact: true }).count(), 0);
+
+      await context.route("https://github.com/**", (route) =>
+        route.fulfill({ body: "Synthetic website" })
+      );
+      const popupPromise = page.waitForEvent("popup");
+      await action("Open website").click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState();
+      assert.equal(popup.url(), "https://github.com/");
+      assert.equal(await popup.evaluate(() => window.opener), null);
+      await popup.close();
+
+      await action("Edit").click();
+      await page.getByRole("textbox", { name: /^Name/ }).waitFor();
+      await page.keyboard.press("Escape");
+      await action("Manage sharing").click();
+      await page.getByRole("heading", { name: "Manage sharing", exact: true }).waitFor();
+      await page.keyboard.press("Escape");
+      const favoriteResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          new URL(response.url()).pathname.endsWith("/favorite")
+      );
+      await action("Remove from favorites").click();
+      const favorite = await favoriteResponse;
+      assert.equal(new URL(favorite.url()).pathname, "/api/passwords/GitHub/favorite");
+      assert.deepEqual(favorite.request().postDataJSON(), { favorite: false });
+
+      const mutations = [];
+      page.on("request", (request) => {
+        if (request.method() !== "GET") mutations.push(request.method());
+      });
+      await action("Delete").click();
+      const confirmation = page.getByRole("dialog", { name: "Move to Trash", exact: true });
+      await confirmation.waitFor();
+      await confirmation.getByText("GitHub", { exact: true }).waitFor();
+      assert.deepEqual(mutations, [], "delete still requires confirmation");
+      await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.deepEqual(mutations, []);
+      assert.equal(await page.getByRole("region", { name: "Entry details" }).count(), 0);
+
+      const readOnly = list.getByRole("listitem").filter({
+        has: page.getByRole("button", { name: "Open Read-only account", exact: true }),
+      });
+      for (const label of ["Edit", "Delete", "Manage sharing", "Mark as favorite"]) {
+        assert.equal(
+          await readOnly
+            .getByRole("button", { name: `${label}: Read-only account`, exact: true })
+            .count(),
+          0
+        );
+      }
+      await readOnly
+        .getByRole("button", { name: "Copy password: Read-only account", exact: true })
+        .click();
+      assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        entries[1].password_value
+      );
+
+      const note = list.getByRole("listitem").filter({
+        has: page.getByRole("button", { name: "Open Recovery notes", exact: true }),
+      });
+      assert.equal(
+        await note.getByRole("button", { name: "Edit: Recovery notes", exact: true }).count(),
+        1
+      );
+      assert.equal(
+        await note
+          .getByRole("button", { name: "Manage sharing: Recovery notes", exact: true })
+          .count(),
+        0
+      );
+      await note.getByRole("button", { name: "Copy note: Recovery notes", exact: true }).click();
+      assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        entries[2].password_value
+      );
+      await fits(page);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 for (const [width, language, theme] of [
   [320, "en", "dark"],
   [375, "ru", "light"],
   [375, "ru", "dark"],
   [768, "ru", "dark"],
+  [900, "ru", "dark"],
+  [1024, "en", "dark"],
   [1280, "en", "dark"],
   [1440, "ru", "light"],
   [1440, "ru", "dark"],
@@ -293,6 +424,31 @@ for (const [width, language, theme] of [
       assert.equal(await listFillsBrowser(), true, "the unselected list fills the browser");
       assert.equal(await list.getByRole("listitem").count(), entries.length);
       assert.equal(
+        await page
+          .getByRole("combobox", { name: ru ? "Порядок" : "Sort", exact: true })
+          .textContent(),
+        ru ? "По времени добавления" : "Date added"
+      );
+      assert.equal(
+        await page
+          .getByRole("combobox", { name: ru ? "Порядок" : "Sort", exact: true })
+          .evaluate((control) => control.scrollWidth <= control.clientWidth),
+        true,
+        "the default sort label is not truncated"
+      );
+      const expectedDateOrder = [entries[1], entries[3], entries[2], entries[0]].map(
+        (entry) => `${ru ? "Открыть" : "Open"} ${entry.password_name}`
+      );
+      assert.deepEqual(
+        await list
+          .getByRole("listitem")
+          .evaluateAll((items) =>
+            items.map((item) => item.querySelector("button").getAttribute("aria-label"))
+          ),
+        expectedDateOrder,
+        "newest-first creation time is the default, not favorite or last modified"
+      );
+      assert.equal(
         await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
         rgb(theme === "dark" ? INK : SURFACE)
       );
@@ -322,6 +478,26 @@ for (const [width, language, theme] of [
       if (width === 375) await screenshot(page, `vault-mobile-ru-${theme}.png`);
       if (width === 1440) await screenshot(page, `vault-list-${language}-${theme}.png`);
       const longName = entries[3].password_name;
+      const longRow = list.getByRole("listitem").filter({
+        has: page.getByRole("button", {
+          name: `${ru ? "Открыть" : "Open"} ${longName}`,
+          exact: true,
+        }),
+      });
+      await longRow
+        .getByRole("button", {
+          name: `${ru ? "Показать пароль" : "Reveal password"}: ${longName}`,
+          exact: true,
+        })
+        .click();
+      await longRow.getByText(entries[3].password_value, { exact: true }).waitFor();
+      await fits(page);
+      await longRow
+        .getByRole("button", {
+          name: `${ru ? "Скрыть пароль" : "Hide password"}: ${longName}`,
+          exact: true,
+        })
+        .click();
       await list
         .getByRole("button", {
           name: `${ru ? "Открыть" : "Open"} ${longName}`,
@@ -363,6 +539,22 @@ for (const [width, language, theme] of [
           rgb(GLOW)
         );
         await screenshot(page, `vault-desktop-${language}-${theme}.png`);
+        const trigger = list.getByRole("button", {
+          name: `${ru ? "Открыть" : "Open"} GitHub`,
+          exact: true,
+        });
+        await detail.getByRole("button", { name: ru ? "Закрыть" : "Close", exact: true }).click();
+        assert.equal(await detailsRegion.count(), 0);
+        assert.equal(await listFillsBrowser(), true);
+        assert.equal(await trigger.evaluate((button) => document.activeElement === button), true);
+        await trigger.press("Enter");
+        await detail.waitFor();
+        assert.equal(await detail.getByText(entries[0].password_value, { exact: true }).count(), 0);
+        await detail.getByRole("button", { name: ru ? "Закрыть" : "Close", exact: true }).focus();
+        await page.keyboard.press("Escape");
+        assert.equal(await detailsRegion.count(), 0);
+        assert.equal(await listFillsBrowser(), true);
+        assert.equal(await trigger.evaluate((button) => document.activeElement === button), true);
       } else {
         await page.keyboard.press("Escape");
         await detail.waitFor({ state: "hidden" });
@@ -380,8 +572,10 @@ for (const [width, language, theme] of [
       await byDate.click();
       assert.deepEqual(
         await list
-          .getByRole("button", { name: /^(Open|Открыть) / })
-          .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
+          .getByRole("listitem")
+          .evaluateAll((items) =>
+            items.map((item) => item.querySelector("button").getAttribute("aria-label"))
+          ),
         [entries[1], entries[3], entries[2], entries[0]].map(
           (entry) => `${ru ? "Открыть" : "Open"} ${entry.password_name}`
         )
