@@ -1,4 +1,5 @@
 import { IS_DESKTOP, saveFile } from "../platform";
+import i18n from "../i18n";
 // Shared helpers for the easy-peasy model thunks. React-free so the HTTP
 // error/download plumbing stays in one auditable place.
 
@@ -11,9 +12,17 @@ const detailMessage = (detail, fallback) => {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
     const msgs = detail
-      .map((e) => e?.msg)
-      .filter((m) => typeof m === "string")
-      .map((m) => m.replace(/^Value error,\s*/i, ""));
+      .filter((e) => typeof e?.msg === "string")
+      .map((e) => {
+        const field = Array.isArray(e.loc) ? e.loc.slice(1).join(".") : "";
+        const message = e.msg.replace(/^Value error,\s*/i, "");
+        if (field === "username") {
+          return `${i18n.t("auth.username")}: ${
+            e.type === "string_pattern_mismatch" ? i18n.t("auth.usernameRules") : message
+          }`;
+        }
+        return field ? `${field}: ${message}` : message;
+      });
     return msgs.length ? msgs.join("; ") : fallback;
   }
   return fallback;

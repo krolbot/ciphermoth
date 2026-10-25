@@ -1,10 +1,45 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import i18n from "../i18n";
 
 import { errorDetail } from "./http";
 
 const withData = (data) => ({ response: { status: 400, data } });
 
 describe("errorDetail", () => {
+  afterEach(() => i18n.changeLanguage("en"));
+
+  it.each(["en", "ru"])(
+    "identifies username errors in %s without echoing input",
+    async (language) => {
+      await i18n.changeLanguage(language);
+      const detail = [
+        {
+          loc: ["body", "username"],
+          type: "string_pattern_mismatch",
+          msg: "String should match pattern '^[a-z0-9][a-z0-9._@-]*$'",
+          input: "invalid user input",
+        },
+      ];
+      await expect(errorDetail(withData({ detail }), "fallback")).resolves.toBe(
+        `${i18n.t("auth.username")}: ${i18n.t("auth.usernameRules")}`
+      );
+    }
+  );
+
+  it("preserves nested field locations and body-level messages without echoing input", async () => {
+    const detail = [
+      {
+        loc: ["body", "custom_fields", 0, "label"],
+        msg: "Value error, Label required.",
+        input: "private",
+      },
+      { loc: ["body"], msg: "Value error, Invalid request." },
+    ];
+    await expect(errorDetail(withData({ detail }), "fallback")).resolves.toBe(
+      "custom_fields.0.label: Label required.; Invalid request."
+    );
+  });
   it("returns a string detail as is", async () => {
     await expect(errorDetail(withData({ detail: "Name taken." }), "fallback")).resolves.toBe(
       "Name taken."
@@ -18,7 +53,7 @@ describe("errorDetail", () => {
       { loc: ["body"], msg: 42 },
     ];
     await expect(errorDetail(withData({ detail }), "fallback")).resolves.toBe(
-      "String should have at most 2048 characters; TOTP secret must be valid base32."
+      "url: String should have at most 2048 characters; totp_secret: TOTP secret must be valid base32."
     );
   });
 

@@ -178,6 +178,7 @@ const LoginPage = () => {
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoComplete="username"
+          helperText={initialized ? undefined : t("auth.usernameRules")}
           autoFocus
           fullWidth
           sx={{ mb: 1.5 }}

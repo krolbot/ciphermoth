@@ -201,6 +201,50 @@ for (const [width, language] of [
     }
   });
 
+  test(`username validation identifies the field without losing the generated password at ${width}px`, async () => {
+    const { context, page, t, errors } = await openPage(width, language, "/users");
+    try {
+      const create = page.locator("form");
+      await create.getByText(t.auth.usernameRules, { exact: true }).waitFor();
+      const username = create.getByLabel(t.auth.username, { exact: false });
+      assert.equal(await username.getAttribute("autocapitalize"), "none");
+      await username.fill("invalid user");
+      await create
+        .getByRole("button", { name: t.entry.actions.generatePassword, exact: true })
+        .click();
+      const password = create.getByLabel(t.users.temporaryPassword, { exact: false });
+      const generated = await password.inputValue();
+      await page.route("**/api/users", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        return route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({
+            detail: [
+              {
+                type: "string_pattern_mismatch",
+                loc: ["body", "username"],
+                msg: "String should match pattern '^[a-z0-9][a-z0-9._@-]*$'",
+              },
+            ],
+          }),
+        });
+      });
+      await create.getByRole("button", { name: t.common.actions.create, exact: true }).click();
+      await page
+        .getByText(`${t.auth.username}: ${t.auth.usernameRules}`, { exact: true })
+        .waitFor();
+      assert.equal(await password.inputValue(), generated);
+      assert.equal(await username.inputValue(), "invalid user");
+      assert.equal(await password.getAttribute("type"), "password");
+      await fits(page);
+      await screenshot(page, `username-validation-${width}-${language}.png`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+
   test(`password change generates only the new password at ${width}px`, async () => {
     const { context, page, t, errors, writes } = await openPage(width, language, "/users");
     try {

@@ -254,6 +254,7 @@ const UsersPage = () => {
             display: "grid",
             gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr) 180px auto" },
             gap: 1.25,
+            alignItems: "start",
           }}
         >
           <TextField
@@ -264,6 +265,8 @@ const UsersPage = () => {
               setForm((current) => ({ ...current, username: event.target.value }))
             }
             autoComplete="off"
+            helperText={t("auth.usernameRules")}
+            slotProps={{ htmlInput: { autoCapitalize: "none", spellCheck: false } }}
           />
           {form.role === "service" ? (
             <Box />

@@ -4,6 +4,7 @@ from typing import Annotated
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
@@ -32,11 +33,11 @@ Username = Annotated[
     str,
     StringConstraints(
         strip_whitespace=True,
-        to_lower=True,
         min_length=2,
         max_length=64,
         pattern=r"^[a-z0-9][a-z0-9._@-]*$",
     ),
+    BeforeValidator(lambda value: value.lower() if isinstance(value, str) else value),
 ]
 
 

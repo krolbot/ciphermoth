@@ -82,6 +82,8 @@ const en = {
     logIn: "Log in",
     logOut: "Log out",
     username: "Username",
+    usernameRules:
+      "2–64 characters: Latin letters, digits and . _ @ -. Start with a letter or digit. Uppercase letters are stored as lowercase.",
     currentPassword: "Current password",
     newPassword: "New password",
     changePassword: "Change password",
