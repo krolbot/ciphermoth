@@ -3,7 +3,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,48 @@ class APISettings(BaseSettings):
         return kwargs
 
     model_config = {"validate_assignment": True}
+
+
+SETTINGS_DEFAULTS = {
+    "inactivity_ms": 120_000,
+    "warn_before_ms": 60_000,
+    "hidden_ms": 60_000,
+    "debounce_ms": 1_000,
+    "clipboard_clear_ms": 30_000,
+    "update_check_enabled": True,
+}
+
+
+class VaultDefaults(BaseSettings):
+    inactivity_ms: int = Field(
+        default=SETTINGS_DEFAULTS["inactivity_ms"], ge=30_000, le=3_600_000
+    )
+    warn_before_ms: int = Field(
+        default=SETTINGS_DEFAULTS["warn_before_ms"], ge=5_000, le=600_000
+    )
+    hidden_ms: int = Field(
+        default=SETTINGS_DEFAULTS["hidden_ms"], ge=10_000, le=3_600_000
+    )
+    debounce_ms: int = Field(
+        default=SETTINGS_DEFAULTS["debounce_ms"], ge=100, le=10_000
+    )
+    clipboard_clear_ms: int = Field(
+        default=SETTINGS_DEFAULTS["clipboard_clear_ms"], ge=5_000, le=600_000
+    )
+    update_check_enabled: bool = SETTINGS_DEFAULTS["update_check_enabled"]
+
+    model_config = SettingsConfigDict(env_prefix="CIPHERMOTH_", extra="ignore")
+
+    @model_validator(mode="after")
+    def _warning_comes_before_the_lock(self) -> "VaultDefaults":
+        if self.warn_before_ms >= self.inactivity_ms:
+            raise ValueError("warn_before_ms must be shorter than inactivity_ms.")
+        return self
+
+
+@lru_cache
+def get_vault_defaults() -> VaultDefaults:
+    return VaultDefaults()
 
 
 class StorageSettings(BaseSettings):

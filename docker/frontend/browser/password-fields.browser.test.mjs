@@ -19,20 +19,30 @@ after(async () => {
 });
 
 // Entirely synthetic sessions and intercepted API calls; never open a real vault.
-async function openPage(width, language, path, authenticated = true, initialized = true) {
+async function openPage(
+  width,
+  language,
+  path,
+  authenticated = true,
+  initialized = true,
+  role = "admin",
+  policy = { inactivity_ms: 3600000, hidden_ms: 3600000 }
+) {
   const context = await browser.newContext({ viewport: { width, height: 900 } });
   const page = await context.newPage();
+  if (policy.clock) await page.clock.install();
   const errors = [];
   const writes = [];
-  const user = { id: 1, username: "synthetic-admin", role: "admin", active: true };
+  const user = { id: 1, username: "synthetic-user", role, active: true };
   const t = language === "ru" ? ru : en;
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(
     ({ authenticated, user, language }) => {
-      if (authenticated) {
+      if (authenticated && !sessionStorage.getItem("synthetic-fixture-initialized")) {
         sessionStorage.setItem("ciphermothSession", "synthetic-password-fields-session");
         sessionStorage.setItem("ciphermothUser", JSON.stringify(user));
       }
+      sessionStorage.setItem("synthetic-fixture-initialized", "true");
       localStorage.setItem("ciphermoth-language", language);
       localStorage.setItem("ciphermoth-theme", "dark");
     },
@@ -58,13 +68,16 @@ async function openPage(width, language, path, authenticated = true, initialized
     "/api/vault/damaged": { entries: [], attachments: [] },
     "/api/settings": {
       update_check_enabled: false,
-      inactivity_ms: 3600000,
-      hidden_ms: 3600000,
+      inactivity_ms: policy.inactivity_ms,
+      hidden_ms: policy.hidden_ms,
       warn_before_ms: 60000,
       debounce_ms: 1000,
       clipboard_clear_ms: 30000,
     },
-    "/api/master_password/session": { idle_timeout_ms: 3600000, expires_in_ms: 3600000 },
+    "/api/master_password/session": {
+      idle_timeout_ms: policy.inactivity_ms,
+      expires_in_ms: policy.remaining_ms ?? policy.inactivity_ms,
+    },
   };
   await page.route("**/api/**", (route) => {
     const request = route.request();
@@ -77,6 +90,13 @@ async function openPage(width, language, path, authenticated = true, initialized
       });
     }
     if (request.method() !== "GET") writes.push({ path, body: request.postDataJSON() });
+    if (["/api/auth/login", "/api/auth/bootstrap"].includes(path)) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ valid: true, session_token: "synthetic-login-session", user }),
+      });
+    }
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -86,6 +106,76 @@ async function openPage(width, language, path, authenticated = true, initialized
   await page.goto(`${frontend.url}${path}`);
   return { context, page, t, errors, writes };
 }
+
+for (const remaining of [900000, 30000]) {
+  test(`initial server policy honors ${remaining}ms remaining without the bootstrap two-minute cap`, async () => {
+    const { context, page, t, errors } = await openPage(
+      375,
+      "ru",
+      "/passwords",
+      true,
+      true,
+      "admin",
+      {
+        inactivity_ms: 900000,
+        hidden_ms: 600000,
+        remaining_ms: remaining,
+        clock: true,
+      }
+    );
+    try {
+      await page.getByPlaceholder(t.vault.searchPlaceholder).waitFor();
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      await page.clock.fastForward(remaining - 1000);
+      assert.equal(
+        await page.evaluate(() => Boolean(sessionStorage.getItem("ciphermothSession"))),
+        true
+      );
+      await page.clock.fastForward(2000);
+      await page.waitForURL("**/login");
+      assert.equal(await page.evaluate(() => sessionStorage.getItem("ciphermothSession")), null);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test("hidden-tab policy honors ten minutes instead of the built-in one minute", async () => {
+  const { context, page, t, errors } = await openPage(
+    375,
+    "ru",
+    "/passwords",
+    true,
+    true,
+    "admin",
+    {
+      inactivity_ms: 900000,
+      hidden_ms: 600000,
+      clock: true,
+    }
+  );
+  try {
+    await page.getByPlaceholder(t.vault.searchPlaceholder).waitFor();
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    // Synthetic visibility transition, with real hook timers and browser clock.
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.fastForward(60001);
+    assert.equal(
+      await page.evaluate(() => Boolean(sessionStorage.getItem("ciphermothSession"))),
+      true
+    );
+    await page.clock.fastForward(600001 - 60001);
+    await page.waitForURL("**/login");
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("ciphermothSession")), null);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
 
 function strong(password) {
   assert.equal(password.length, 16);
@@ -368,3 +458,115 @@ test("existing vault generator stays singular; backup, restore and TOTP never ge
     await context.close();
   }
 });
+
+for (const role of ["admin", "member"]) {
+  test(`login restores deep-link query/hash only when ${role} has route access`, async () => {
+    const requested = "/users?view=accounts#selected";
+    const { context, page, t, errors, writes } = await openPage(
+      375,
+      "ru",
+      requested,
+      false,
+      true,
+      role
+    );
+    const userRequests = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/users") userRequests.push(request.url());
+    });
+    try {
+      await page.waitForURL(`${frontend.url}/login`);
+      // React Router stores return intent in this history entry, including after refresh.
+      await page.reload();
+      await page.getByLabel(t.auth.username, { exact: false }).fill("synthetic-user");
+      await page
+        .getByLabel(t.auth.masterPassword, { exact: false })
+        .and(page.locator("input"))
+        .fill("synthetic-only");
+      await page.getByRole("button", { name: t.auth.unlock, exact: true }).click();
+      await page.waitForURL(`${frontend.url}${role === "admin" ? requested : "/passwords"}`);
+      assert.ok(writes.some(({ path }) => path === "/api/auth/login"));
+      if (role === "admin") {
+        await page.getByRole("heading", { name: t.users.title, exact: true }).waitFor();
+        const logo = page.getByRole("link", {
+          name: `CipherMoth — ${t.users.backToVault}`,
+          exact: true,
+        });
+        const box = await logo.boundingBox();
+        assert.ok(box.width >= 44 && box.height >= 44);
+        await logo.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForURL(`${frontend.url}/passwords`);
+      } else {
+        await page.getByPlaceholder(t.vault.searchPlaceholder).waitFor();
+        assert.deepEqual(userRequests, [], "a member must never mount the administrator page");
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+for (const [width, authenticated] of [
+  [375, true],
+  [375, false],
+  [1440, true],
+]) {
+  test(`theme toggle stays fixed and usable across scroll/viewport changes at ${width}px, auth=${authenticated}`, async () => {
+    const { context, page, t, errors } = await openPage(
+      width,
+      "en",
+      authenticated ? "/users" : "/login",
+      authenticated
+    );
+    try {
+      const protocol = await context.newCDPSession(page);
+      await protocol.send("Emulation.setSafeAreaInsetsOverride", {
+        insets: { top: 0, left: 0, bottom: 34, right: 20 },
+      });
+      const toggle = page.getByRole("button", { name: t.theme.switchToLight, exact: true });
+      await toggle.waitFor();
+      const geometry = () =>
+        toggle.evaluate((button) => {
+          const style = getComputedStyle(button);
+          const rect = button.getBoundingClientRect();
+          return {
+            position: style.position,
+            bottom: parseFloat(style.bottom),
+            right: parseFloat(style.right),
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            viewportWidth: innerWidth,
+            viewportHeight: innerHeight,
+          };
+        });
+      const before = await geometry();
+      assert.equal(before.position, "fixed");
+      assert.equal(before.bottom, 58, "24px gap plus native 34px bottom safe area");
+      assert.equal(before.right, 44, "24px gap plus native 20px right safe area");
+      assert.ok(before.width >= 44 && before.height >= 44);
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      const after = await geometry();
+      assert.equal(after.x, before.x);
+      assert.equal(after.y, before.y);
+      await page.setViewportSize({ width, height: 640 });
+      const resized = await geometry();
+      assert.ok(Math.abs(resized.viewportHeight - resized.y - resized.height - resized.bottom) < 1);
+      assert.ok(resized.x >= 0 && resized.x + resized.width <= resized.viewportWidth);
+      await toggle.click();
+      await page.getByRole("button", { name: t.theme.switchToDark, exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => localStorage.getItem("ciphermoth-theme")), "light");
+      assert.match(
+        await page.locator('meta[name="viewport"]').getAttribute("content"),
+        /viewport-fit=cover/
+      );
+      await screenshot(page, `fixed-theme-${width}-${authenticated ? "vault" : "login"}.png`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+}

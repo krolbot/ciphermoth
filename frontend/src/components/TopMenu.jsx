@@ -65,24 +65,42 @@ const TopMenu = () => {
       <Container maxWidth="lg">
         <Toolbar disableGutters>
           <Box sx={{ flexGrow: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 1 }}>
-            <Box sx={{ width: 24, height: 24, display: "flex", color: "inherit" }}>
-              <MothIcon
-                width="100%"
-                height="100%"
-                style={{ display: "block", overflow: "visible" }}
-              />
-            </Box>
-            <Typography
-              component="h1"
-              variant="h6"
-              noWrap
-              sx={{ color: "inherit", fontWeight: 600, display: { xs: "none", sm: "block" } }}
+            <Box
+              component={Link}
+              to="/passwords"
+              aria-label={`CipherMoth — ${t("users.backToVault")}`}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 1,
+                minWidth: 44,
+                minHeight: 44,
+                color: "inherit",
+                textDecoration: "none",
+                borderRadius: 1,
+                "&:focus-visible": { outline: `2px solid ${GLOW}`, outlineOffset: 2 },
+              }}
             >
-              Cipher
-              <Box component="span" sx={{ color: GLOW }}>
-                Moth
+              <Box sx={{ width: 24, height: 24, display: "flex", color: "inherit" }}>
+                <MothIcon
+                  width="100%"
+                  height="100%"
+                  style={{ display: "block", overflow: "visible" }}
+                />
               </Box>
-            </Typography>
+              <Typography
+                component="h1"
+                variant="h6"
+                noWrap
+                sx={{ color: "inherit", fontWeight: 600, display: { xs: "none", sm: "block" } }}
+              >
+                Cipher
+                <Box component="span" sx={{ color: GLOW }}>
+                  Moth
+                </Box>
+              </Typography>
+            </Box>
             <EnvBadge />
             {version && (
               <Tooltip arrow title={t("topMenu.runningVersion")}>

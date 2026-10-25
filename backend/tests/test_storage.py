@@ -9,14 +9,15 @@ from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event, insert, text
 from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 import storage
 from crud.engine import Database, after_commit, after_rollback, create_engine, is_busy
 from main import get_application
-from models import SETTINGS_DEFAULTS
+from models import SettingsModel
+from settings import SETTINGS_DEFAULTS
 from storage import (
     APPLICATION_ID,
     SCHEMA_VERSION,
@@ -65,6 +66,10 @@ def _mode(path: Path) -> int:
 
 async def _populate(client: httpx.AsyncClient, names: list[str]) -> str:
     token = await create_vault(client)
+    configured = await client.patch(
+        "/settings", json=SETTINGS_DEFAULTS, headers=auth(token)
+    )
+    assert configured.status_code == 200, configured.text
     for name in names:
         resp = await client.post(
             "/passwords/create", json=entry(name), headers=auth(token)
@@ -249,7 +254,9 @@ async def test_preparing_twice_changes_nothing(tmp_path: Path) -> None:
         await (await _prepared(tmp_path)).dispose()
     with closing(sqlite3.connect(tmp_path / VAULT_FILE)) as connection:
         rows = connection.execute("SELECT inactivity_ms FROM settings").fetchall()
-    assert rows == [(SETTINGS_DEFAULTS["inactivity_ms"],)]
+    assert rows == [], (
+        "new vaults inherit deployment defaults rather than freezing a settings row"
+    )
 
 
 async def test_an_interrupted_first_start_is_completed_on_the_next(
@@ -279,6 +286,8 @@ async def test_cancelling_a_writer_rolls_back_and_releases_its_connection(
     tmp_path: Path,
 ) -> None:
     database = await _prepared(tmp_path)
+    async with database.transaction() as session:
+        await session.execute(insert(SettingsModel).values(**SETTINGS_DEFAULTS))
     entered = asyncio.Event()
     hooks: list[str] = []
 

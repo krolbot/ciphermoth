@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, insert
+from sqlalchemy import Connection
 
 from helpers import FORMAT_VERSION
-from models import SETTINGS_DEFAULTS, BaseModel, SettingsModel
+from models import BaseModel
 
 MIN_SQLITE_VERSION = (3, 51, 3)
 APPLICATION_ID = 0x434D5448
@@ -207,7 +207,6 @@ def ensure_schema(connection: Connection) -> None:
     objects = connection.exec_driver_sql("SELECT count(*) FROM sqlite_schema").scalar()
     if application_id == 0 and user_version == 0 and objects == 0:
         BaseModel.metadata.create_all(connection)
-        connection.execute(insert(SettingsModel).values(**SETTINGS_DEFAULTS))
         connection.exec_driver_sql(f"PRAGMA application_id={APPLICATION_ID}")
         connection.exec_driver_sql(f"PRAGMA user_version={SCHEMA_VERSION}")
         return
@@ -385,6 +384,30 @@ def snapshot(data_dir: Path, destination: Path | None = None) -> Path:
     except OSError as error:
         raise StorageError(f"Could not write the snapshot: {error}") from error
     return target
+
+
+def reset_settings(data_dir: Path) -> Path:
+    """Discard only administrator settings overrides, with a checked rollback
+    snapshot. The backend must be stopped so no process retains the old policy.
+    """
+    require_supported_sqlite()
+    with VaultLock(data_dir):
+        saved = snapshot(data_dir)
+        try:
+            with contextlib.closing(
+                _connect_existing(vault_file(data_dir), writable=True)
+            ) as connection:
+                connection.execute("PRAGMA synchronous=FULL")
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute("DELETE FROM settings")
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+        except sqlite3.DatabaseError as error:
+            raise StorageError(f"Could not reset settings: {error}") from error
+    return saved
 
 
 def migrate_users(data_dir: Path) -> Path:

@@ -17,10 +17,9 @@ async def serve(proto_in, proto_out, data_dir, applied, started):
 
     from crud.engine import Database
     from main import get_application
-    from vault_sessions import VaultSessions
-    from models import SETTINGS_DEFAULTS
-    from settings import get_api_settings
+    from settings import get_api_settings, get_vault_defaults
     from storage import migrate_users_if_needed
+    from vault_sessions import VaultSessions
 
     from .server import CoreServer
 
@@ -31,7 +30,7 @@ async def serve(proto_in, proto_out, data_dir, applied, started):
     app = get_application(
         database=Database(data_dir),
         vault_sessions=VaultSessions(
-            max_sessions=1, idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"]
+            max_sessions=1, idle_timeout_ms=get_vault_defaults().inactivity_ms
         ),
     )
     # Private pipes have one owner. HTTP per-address quotas would lock that

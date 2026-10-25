@@ -4,7 +4,7 @@ from typing import Annotated
 import typer
 
 import storage
-from settings import get_storage_settings
+from settings import get_storage_settings, get_vault_defaults
 
 app = typer.Typer(
     help=(
@@ -72,6 +72,28 @@ def restore(
     if kept is not None:
         typer.echo(f"The replaced vault was kept as {kept}")
     typer.echo("Restored. Start CipherMoth and unlock with that snapshot's password.")
+
+
+@app.command(
+    "reset-settings",
+    help=(
+        "Discard saved administrator settings and inherit environment defaults. "
+        "Stop CipherMoth first; a rollback snapshot is kept."
+    ),
+)
+def reset_settings(
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask to confirm.")] = False,
+) -> None:
+    get_vault_defaults()  # Refuse invalid environment defaults before changing data.
+    if not yes:
+        typer.confirm(
+            "Discard saved settings and inherit the server defaults?", abort=True
+        )
+    try:
+        saved = storage.reset_settings(_data_dir())
+    except storage.StorageError as error:
+        raise _fail(error) from None
+    typer.echo(f"Settings reset. Rollback snapshot: {saved}")
 
 
 @app.command(

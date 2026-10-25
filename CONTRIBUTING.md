@@ -109,6 +109,42 @@ Everything is optional, the defaults work fine for local use.
 | `CIPHERMOTH_DATA_DIR` | `data` (`/data` in the image) | Folder that holds `vault.db` and `snapshots/`, created `0700` |
 | `CIPHERMOTH_RATE_LIMIT` | unset | Overrides every route's own limit (e.g. `200/hour`). Unlocking defaults to `30/hour`; each CLI command unlocks once, so raise this if a batch of them trips it |
 
+**Vault defaults:** backend environment variables use milliseconds (except the
+boolean update flag). The priority is **a saved administrator settings form →
+environment → built-in defaults**. New vaults inherit deployment defaults without
+storing a settings row. Saving Settings creates a complete administrator override;
+it is retained across restarts and environment changes. Existing stored settings,
+even those equal to old defaults, are preserved. Restart the backend after changing
+the environment. Invalid values refuse startup; the warning must precede the idle
+lock.
+
+| Variable | Built-in default | Accepted range |
+|---|---|---|
+| `CIPHERMOTH_INACTIVITY_MS` | `120000` | `30000`–`3600000` |
+| `CIPHERMOTH_HIDDEN_MS` | `60000` | `10000`–`3600000` |
+| `CIPHERMOTH_WARN_BEFORE_MS` | `60000` | `5000`–`600000`, less than inactivity |
+| `CIPHERMOTH_DEBOUNCE_MS` | `1000` | `100`–`10000` |
+| `CIPHERMOTH_CLIPBOARD_CLEAR_MS` | `30000` | `5000`–`600000` |
+| `CIPHERMOTH_UPDATE_CHECK_ENABLED` | `true` | `true` / `false` |
+
+For example, put `CIPHERMOTH_INACTIVITY_MS=900000` and
+`CIPHERMOTH_HIDDEN_MS=600000` in the Compose `.env` for 15-minute idle and 10-minute
+background limits. Compose passes these variables to the backend; the frontend
+reads the effective policy from the authenticated API.
+
+To explicitly discard a saved override and inherit server defaults again:
+
+```shell
+docker compose -f docker-compose.prod.yml stop backend
+docker compose -f docker-compose.prod.yml run --rm --no-deps backend ciphermoth-admin reset-settings --yes
+docker compose -f docker-compose.prod.yml up -d backend
+```
+
+`reset-settings` needs no account password, refuses while the backend owns the
+vault, validates the environment first and retains an integrity-checked rollback
+snapshot. It removes only the settings override, not users, entries, grants or
+attachments. There is no vault-format or schema migration.
+
 **Frontend:**
 
 | Variable | Default | Description |

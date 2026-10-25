@@ -3,8 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crud.base import BaseCRUD
 from crud.engine import after_commit
-from models import SETTINGS_DEFAULTS, SettingsModel
+from models import SettingsModel
 from schemas import SettingsResponse, SettingsUpdate
+from settings import get_vault_defaults
 from vault_sessions import VaultSessions
 
 
@@ -21,7 +22,7 @@ class SettingsCRUD(BaseCRUD):
     async def _get_or_create(self) -> SettingsModel:
         model = await self._stored()
         if model is None:
-            model = SettingsModel(**SETTINGS_DEFAULTS)
+            model = SettingsModel(**get_vault_defaults().model_dump())
             self.session.add(model)
             await self.session.flush()
         return model
@@ -41,12 +42,12 @@ class SettingsCRUD(BaseCRUD):
         stored = await self.session.scalar(
             select(SettingsModel.inactivity_ms).order_by(SettingsModel.id).limit(1)
         )
-        return SETTINGS_DEFAULTS["inactivity_ms"] if stored is None else stored
+        return get_vault_defaults().inactivity_ms if stored is None else stored
 
     async def get_settings(self) -> SettingsResponse:
         model = await self._stored()
         if model is None:
-            return SettingsResponse(**SETTINGS_DEFAULTS)
+            return SettingsResponse(**get_vault_defaults().model_dump())
         return self._to_response(model)
 
     async def update_settings(self, data: SettingsUpdate) -> SettingsResponse:

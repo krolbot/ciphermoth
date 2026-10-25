@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   Box,
   Button,
@@ -33,6 +34,7 @@ const unlockButtonSx = {
 
 const LoginPage = () => {
   const { t } = useTranslation();
+  const { state } = useLocation();
   const { enqueueSnackbar } = useSnackbar();
 
   const { fetchStatus, authenticate, setUsername, setValue, setConfirm, setError } =
@@ -67,7 +69,7 @@ const LoginPage = () => {
       enqueueSnackbar(t("auth.validation.enterMasterPassword"), { variant: "error" });
       return;
     }
-    authenticate({ endpoint: "/auth/login", username, password: value });
+    authenticate({ endpoint: "/auth/login", username, password: value, returnTo: state?.returnTo });
   };
 
   const handleCreate = () => {
@@ -91,7 +93,12 @@ const LoginPage = () => {
       setError(t("auth.validation.confirmNoRecovery"));
       return;
     }
-    authenticate({ endpoint: "/auth/bootstrap", username, password: value });
+    authenticate({
+      endpoint: "/auth/bootstrap",
+      username,
+      password: value,
+      returnTo: state?.returnTo,
+    });
   };
 
   if (initialized === null) {
@@ -128,7 +135,11 @@ const LoginPage = () => {
         }}
       >
         <Box
+          component={Link}
+          to="/passwords"
+          aria-label={`CipherMoth — ${t("users.backToVault")}`}
           sx={{
+            display: "block",
             width: 56,
             mx: "auto",
             mb: 2.25,

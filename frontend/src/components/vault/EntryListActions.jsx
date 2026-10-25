@@ -62,7 +62,7 @@ const EntryListActions = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFa
   ].filter(Boolean);
 
   return (
-    <Box sx={{ minWidth: 0, px: 1, pb: { xs: 1, md: 0 } }}>
+    <Box sx={{ minWidth: 0, px: { xs: 0, md: 1 }, pb: { xs: 1, md: 0 } }}>
       <Stack
         direction="row"
         useFlexGap

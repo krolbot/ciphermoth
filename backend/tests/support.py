@@ -26,7 +26,8 @@ from sqlalchemy import insert, text
 from crud.engine import Database
 from helpers import VaultKey
 from main import app, get_application
-from models import SETTINGS_DEFAULTS, SettingsModel
+from models import SettingsModel
+from settings import SETTINGS_DEFAULTS
 from storage import VAULT_FILE
 from vault_sessions import Instant, VaultSessions, system_clock
 
@@ -46,7 +47,7 @@ def data_dir() -> Path:
 
 
 async def reset_vault() -> None:
-    """Return the shared test vault to the state of a fresh install."""
+    """Reset the shared test vault with a legacy stored-defaults settings row."""
     async with engine.begin() as conn:
         for table in (
             "attachments",

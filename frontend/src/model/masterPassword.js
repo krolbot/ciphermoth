@@ -42,7 +42,7 @@ const MasterPassword = {
     }
   }),
 
-  authenticate: thunk(async (actions, { endpoint, username, password }) => {
+  authenticate: thunk(async (actions, { endpoint, username, password, returnTo }) => {
     actions.setError(null);
     actions.setLoading(true);
     try {
@@ -55,7 +55,7 @@ const MasterPassword = {
       setCurrentUser(data.user);
       actions.setValue("");
       actions.setConfirm("");
-      enterVault();
+      enterVault(returnTo);
     } catch (err) {
       const message =
         err.response?.status === 429

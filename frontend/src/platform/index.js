@@ -16,9 +16,13 @@ export const saveFile = async (blob, filename) =>
     headers: { "x-filename": encodeURIComponent(filename) },
   });
 
-export const enterVault = () => {
-  if (!IS_DESKTOP) return window.location.replace("/passwords");
-  window.history.replaceState(null, "", "/passwords");
+export const enterVault = (returnTo) => {
+  const path =
+    typeof returnTo === "string" && /^\/(?:passwords|users)\/?(?:[?#]|$)/.test(returnTo)
+      ? returnTo
+      : "/passwords";
+  if (!IS_DESKTOP) return window.location.replace(path);
+  window.history.replaceState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
 };
 

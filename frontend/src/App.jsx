@@ -41,7 +41,7 @@ const AppContent = () => {
       {routes.map((route) => (
         <Route key={route.path} path={route.path} element={route.element} />
       ))}
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/passwords" replace />} />
     </Routes>
   );
 
@@ -65,6 +65,7 @@ const AppContent = () => {
           flexGrow: 1,
           minHeight: "100vh",
           overflow: "auto",
+          pb: "calc(84px + env(safe-area-inset-bottom, 0px))",
         }}
       >
         <Toolbar />
@@ -78,9 +79,7 @@ const AppContent = () => {
         onClose={() => {}}
         onChanged={setUser}
       />
-      <Box sx={{ display: "flex", justifyContent: "flex-end", px: 3, pb: { xs: 3, md: 0 } }}>
-        <ThemeToggle sx={{ position: { xs: "static", md: "fixed" } }} />
-      </Box>
+      <ThemeToggle />
     </Box>
   );
 };

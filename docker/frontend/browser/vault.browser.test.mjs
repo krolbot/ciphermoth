@@ -91,7 +91,7 @@ after(async () => {
   stopFrontend(frontend);
 });
 
-async function vault(width, language = "en", theme = "dark") {
+async function vault(width, language = "en", theme = "dark", records = entries) {
   const context = await browser.newContext({
     viewport: { width, height: width < 600 ? 812 : 900 },
     permissions: ["clipboard-read", "clipboard-write"],
@@ -118,7 +118,7 @@ async function vault(width, language = "en", theme = "dark") {
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     let data = {};
-    if (path === "/api/passwords") data = entries;
+    if (path === "/api/passwords") data = records;
     else if (path === "/api/passwords/trash")
       data = [
         {
@@ -192,6 +192,42 @@ async function fits(page) {
       })
     );
   assert.deepEqual(invalidActions, [], "list actions stay touch-sized and within the viewport");
+}
+
+for (const width of [320, 375, 390, 394, 412, 1440]) {
+  test(`all eight list actions use available width at ${width}px without shrinking touch targets`, async () => {
+    const language = width === 394 ? "ru" : "en";
+    const { context, page, errors } = await vault(width, language, "dark", [
+      { ...entries[0], totp_secret: null },
+    ]);
+    try {
+      const item = page
+        .getByRole("list", { name: /^(Vault entries|Записи хранилища)$/ })
+        .getByRole("listitem");
+      const boxes = await item.locator("button").evaluateAll((buttons) =>
+        buttons.slice(1).map((button) => {
+          const { x, y, width, height } = button.getBoundingClientRect();
+          return { x, y, width, height };
+        })
+      );
+      assert.equal(boxes.length, 8);
+      for (const box of boxes) {
+        assert.ok(box.width >= 44 && box.height >= 44, JSON.stringify(box));
+        assert.ok(box.x >= 0 && box.x + box.width <= width, JSON.stringify(box));
+      }
+      if (width >= 390) {
+        assert.ok(
+          boxes.every((box) => Math.abs(box.y - boxes[0].y) < 1),
+          "delete stays on the same visual line when eight 44px targets fit"
+        );
+      }
+      await fits(page);
+      await screenshot(page, `vault-actions-${width}-${language}.png`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
 }
 
 test("mobile vault is a vertical list, with a full-screen read view and no hidden actions", async () => {

@@ -21,15 +21,6 @@ from sqlalchemy.types import TypeDecorator
 
 from helpers import new_uid
 
-SETTINGS_DEFAULTS = {
-    "inactivity_ms": 120_000,
-    "warn_before_ms": 60_000,
-    "hidden_ms": 60_000,
-    "debounce_ms": 1_000,
-    "clipboard_clear_ms": 30_000,
-    "update_check_enabled": True,
-}
-
 
 def utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)

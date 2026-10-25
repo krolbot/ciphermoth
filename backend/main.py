@@ -25,8 +25,7 @@ from api.routes import make_api_exceptions, make_api_router
 from api.security_headers import SecurityHeaders
 from crud.engine import Database
 from mcp_server import MCP_SCOPE, ServiceTokenVerifier, build_mcp_server
-from models import SETTINGS_DEFAULTS
-from settings import get_api_settings
+from settings import get_api_settings, get_vault_defaults
 from storage import VaultLock
 from vault_sessions import VaultSessions
 
@@ -91,7 +90,7 @@ def get_application(
     server.state.vault_sessions = (
         vault_sessions
         if vault_sessions is not None
-        else VaultSessions(idle_timeout_ms=SETTINGS_DEFAULTS["inactivity_ms"])
+        else VaultSessions(idle_timeout_ms=get_vault_defaults().inactivity_ms)
     )
     mcp = build_mcp_server(server.state.database, server.state.vault_sessions)
     server.state.mcp_server = mcp

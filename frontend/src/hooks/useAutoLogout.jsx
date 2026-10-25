@@ -46,6 +46,7 @@ const useAutoLogout = () => {
   const lastActivityRef = useRef(0);
   const lastReportedRef = useRef(0);
   const reportingRef = useRef(false);
+  const synchronizedRef = useRef(false);
 
   const clearWarning = useCallback(() => {
     if (warnKeyRef.current) closeSnackbar(warnKeyRef.current);
@@ -85,6 +86,7 @@ const useAutoLogout = () => {
 
   const adopt = useCallback(
     (status, deadline) => {
+      synchronizedRef.current = true;
       inactivityRef.current = status.idle_timeout_ms;
       deadlineRef.current = deadline;
       schedule();
@@ -107,7 +109,12 @@ const useAutoLogout = () => {
     const sentAt = Date.now();
     const status = await readSession();
     if (!status || !isAuth()) return;
-    adopt(status, earlierDeadline(deadlineRef.current, sentAt, status));
+    adopt(
+      status,
+      synchronizedRef.current
+        ? earlierDeadline(deadlineRef.current, sentAt, status)
+        : deadlineFromStatus(sentAt, status)
+    );
   }, [adopt]);
 
   const onActivity = useCallback(() => {

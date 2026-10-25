@@ -63,6 +63,49 @@ describe("authenticate", () => {
     });
   });
 
+  it.each(["/users", "/users/?view=accounts#selected", "/passwords?folder=Work#entry"])(
+    "returns to the requested local protected route %s without sending it to the server",
+    async (returnTo) => {
+      const { actions } = build({
+        "POST /auth/login": [200, { valid: true, session_token: TOKEN, user: USER }],
+      });
+      await actions.authenticate({
+        endpoint: "/auth/login",
+        username: USER.username,
+        password: "synthetic-only",
+        returnTo,
+      });
+      expect(browser.location.replace).toHaveBeenCalledWith(returnTo);
+      expect(JSON.parse(seen[0].data)).not.toHaveProperty("returnTo");
+    }
+  );
+
+  it.each([
+    undefined,
+    null,
+    {},
+    "",
+    "/login",
+    "/unknown",
+    "//evil.example/users",
+    "https://evil.example/users",
+    ["javascript", "alert(1)"].join(":"),
+    "/\\evil.example/users",
+    "/users/../../login",
+    "/users%2f..%2f..%2flogin",
+  ])("rejects unsafe or unrecognized return targets: %s", async (returnTo) => {
+    const { actions } = build({
+      "POST /auth/login": [200, { valid: true, session_token: TOKEN, user: USER }],
+    });
+    await actions.authenticate({
+      endpoint: "/auth/login",
+      username: USER.username,
+      password: "synthetic-only",
+      returnTo,
+    });
+    expect(browser.location.replace).toHaveBeenCalledWith("/passwords");
+  });
+
   it("never stores vault key material even if a server sends it", async () => {
     const { actions } = build({
       "POST /auth/login": [

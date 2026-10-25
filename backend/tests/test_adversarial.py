@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from crud.master_password import MasterPasswordCRUD
-from models import SETTINGS_DEFAULTS
+from settings import SETTINGS_DEFAULTS
 from tests.support import (
     MASTER_PASSWORD,
     NEW_MASTER_PASSWORD,

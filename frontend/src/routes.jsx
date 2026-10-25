@@ -1,4 +1,4 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 
 import LoginPage from "./pages/LoginPage";
 import PasswordsPage from "./pages/PasswordsPage";
@@ -6,7 +6,16 @@ import UsersPage from "./pages/UsersPage";
 import { getCurrentUser, isAuth } from "./utils";
 
 const ProtectedRoute = ({ children, role }) => {
-  if (!isAuth()) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (!isAuth()) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: location.pathname + location.search + location.hash }}
+      />
+    );
+  }
   if (role && getCurrentUser()?.role !== role) return <Navigate to="/passwords" replace />;
   return children;
 };
