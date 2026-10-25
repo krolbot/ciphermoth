@@ -86,6 +86,8 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
           <PasswordField
             label={t("auth.newPassword")}
             value={newPassword}
+            onGenerate={setNewPassword}
+            disabled={busy}
             onChange={(event) => setNewPassword(event.target.value)}
             autoComplete="new-password"
           />

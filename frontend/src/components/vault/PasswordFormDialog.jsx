@@ -39,7 +39,7 @@ import PasswordField from "../PasswordField";
 import AttachmentsSection from "./AttachmentsSection";
 import PasswordGenerator, { CHAR_KEYS } from "./PasswordGenerator";
 import StrengthBar from "./StrengthBar";
-import { generatePassword } from "../../lib/passwordGenerator";
+import { DEFAULT_PASSWORD_OPTIONS, generatePassword } from "../../lib/passwordGenerator";
 import { GLOW } from "../../lib/brand";
 
 const EMPTY_FORM = {
@@ -55,7 +55,6 @@ const EMPTY_FORM = {
   folder: "",
   favorite: false,
 };
-const GEN_DEFAULTS = { length: 16, uppercase: true, lowercase: true, numbers: true, symbols: true };
 
 const normalizeCustomFields = (fields) =>
   (fields ?? [])
@@ -231,7 +230,7 @@ const PasswordFormDialog = ({
   const [showTotp, setShowTotp] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
   const [sections, setSections] = useState(() => sectionsForTarget(null));
-  const [genOpts, setGenOpts] = useState(GEN_DEFAULTS);
+  const [genOpts, setGenOpts] = useState(DEFAULT_PASSWORD_OPTIONS);
   const [submitting, setSubmitting] = useState(false);
   const [attachmentsDirty, setAttachmentsDirty] = useState(false);
 

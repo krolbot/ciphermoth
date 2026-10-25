@@ -19,7 +19,21 @@ const CHAR_POOLS = {
   symbols: "!@#$%^&*()-_=+[]{}|;:,.<>?",
 };
 
-export const generatePassword = ({ length, uppercase, lowercase, numbers, symbols }) => {
+export const DEFAULT_PASSWORD_OPTIONS = {
+  length: 16,
+  uppercase: true,
+  lowercase: true,
+  numbers: true,
+  symbols: true,
+};
+
+export const generatePassword = ({
+  length,
+  uppercase,
+  lowercase,
+  numbers,
+  symbols,
+} = DEFAULT_PASSWORD_OPTIONS) => {
   const pools = [];
   if (uppercase) pools.push(CHAR_POOLS.uppercase);
   if (lowercase) pools.push(CHAR_POOLS.lowercase);

@@ -272,6 +272,10 @@ const UsersPage = () => {
               label={t("users.temporaryPassword")}
               required
               value={form.temporary_password}
+              onGenerate={(password) =>
+                setForm((current) => ({ ...current, temporary_password: password }))
+              }
+              disabled={busy}
               onChange={(event) =>
                 setForm((current) => ({ ...current, temporary_password: event.target.value }))
               }
@@ -319,6 +323,8 @@ const UsersPage = () => {
           <PasswordField
             label={t("users.temporaryPassword")}
             value={temporaryPassword}
+            onGenerate={setTemporaryPassword}
+            disabled={busy}
             onChange={(event) => setTemporaryPassword(event.target.value)}
             autoComplete="new-password"
             autoFocus

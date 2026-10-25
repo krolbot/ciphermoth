@@ -187,6 +187,8 @@ const LoginPage = () => {
           label={t("auth.masterPassword")}
           required
           value={value}
+          onGenerate={initialized ? undefined : setValue}
+          disabled={loading}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && initialized) handleLogin();

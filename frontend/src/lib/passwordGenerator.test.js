@@ -58,6 +58,14 @@ describe("secureRandBelow", () => {
 });
 
 describe("generatePassword", () => {
+  it("defaults to a 16-character password containing every character class", () => {
+    const password = generatePassword();
+    expect(password).toHaveLength(16);
+    for (const pool of Object.values(POOLS)) {
+      expect([...password].some((c) => pool.includes(c))).toBe(true);
+    }
+  });
+
   it.each([4, 16, 32, 128])("returns exactly %i characters", (length) => {
     expect(generatePassword({ length, ...ALL })).toHaveLength(length);
   });
