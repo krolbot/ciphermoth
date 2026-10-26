@@ -91,25 +91,25 @@ after(async () => {
   stopFrontend(frontend);
 });
 
-async function vault(width, language = "en", theme = "dark", records = entries) {
+async function vault(width, language = "en", theme = "dark", records = entries, options = {}) {
   const context = await browser.newContext({
     viewport: { width, height: width < 600 ? 812 : 900 },
     permissions: ["clipboard-read", "clipboard-write"],
   });
   const page = await context.newPage();
+  if (options.clock) await page.clock.install();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(
     ({ language, theme }) => {
-      sessionStorage.setItem("ciphermothSession", "synthetic-browser-session");
-      sessionStorage.setItem(
-        "ciphermothUser",
-        JSON.stringify({
-          id: 1,
-          username: "synthetic",
-          role: "member",
-        })
-      );
+      if (!sessionStorage.getItem("synthetic-fixture-initialized")) {
+        sessionStorage.setItem("synthetic-fixture-initialized", "true");
+        sessionStorage.setItem("ciphermothSession", "synthetic-browser-session");
+        sessionStorage.setItem(
+          "ciphermothUser",
+          JSON.stringify({ id: 1, username: "synthetic", role: "member" })
+        );
+      }
       localStorage.setItem("ciphermoth-language", language);
       localStorage.setItem("ciphermoth-theme", theme);
     },
@@ -132,18 +132,31 @@ async function vault(width, language = "en", theme = "dark", records = entries) 
     else if (path === "/api/settings")
       data = {
         update_check_enabled: false,
-        inactivity_ms: 3600000,
-        hidden_ms: 3600000,
-        warn_before_ms: 60000,
+        inactivity_ms: options.clock ? 30000 : 3600000,
+        hidden_ms: options.clock ? 10000 : 3600000,
+        warn_before_ms: options.clock ? 5000 : 60000,
         debounce_ms: 1000,
         clipboard_clear_ms: 30000,
       };
     else if (path === "/api/master_password/session")
-      data = { idle_timeout_ms: 3600000, expires_in_ms: 3600000 };
+      data = {
+        idle_timeout_ms: options.clock ? 30000 : 3600000,
+        expires_in_ms: options.clock ? 30000 : 3600000,
+      };
+    else if (path === "/api/auth/status") data = { initialized: true };
+    else if (path === "/api/auth/login")
+      data = {
+        valid: true,
+        session_token: "synthetic-unlocked-session",
+        user: { id: 1, username: "synthetic", role: "member", active: true },
+        idle_timeout_ms: 30000,
+      };
     else if (path.endsWith("/attachments"))
       data = [{ id: 8, filename: "Readme.txt", size_bytes: 100 }];
     else if (path.endsWith("/shares") || path === "/api/users/share-targets") data = [];
     else if (path === "/api/auth/me") data = { id: 1, username: "synthetic", role: "member" };
+    else if (path === "/api/auth/entry-draft-key")
+      data = { user_id: 1, key: Buffer.alloc(32, 7).toString("base64") };
     else if (path === "/api/meta") data = { version: "3.1.0", features: [] };
     return route.fulfill({
       status: 200,
@@ -192,6 +205,179 @@ async function fits(page) {
       })
     );
   assert.deepEqual(invalidActions, [], "list actions stay touch-sized and within the viewport");
+}
+
+for (const [width, reason] of [
+  [375, "hidden"],
+  [1440, "idle"],
+  [1440, "renderer-reset"],
+]) {
+  test(`encrypted new-entry draft survives ${reason} locking and unlock at ${width}px`, async () => {
+    const { context, page, errors } = await vault(width, "en", "dark", entries, { clock: true });
+    let secret = "Synthetic-unsaved-secret-2026!";
+    try {
+      const mutations = [];
+      page.on("request", (request) => {
+        if (new URL(request.url()).pathname === "/api/passwords/create") mutations.push(request);
+      });
+      await page.getByRole("button", { name: "Add", exact: true }).click();
+      const dialog = page.getByRole("dialog");
+      await dialog.getByRole("textbox", { name: /^Name/ }).fill("Unsaved synthetic entry");
+      await dialog.getByRole("textbox", { name: /^Username/ }).fill("unsaved@example.test");
+      await dialog.locator('input[autocomplete="new-password"]').fill(secret);
+      await fits(page);
+      assert.deepEqual(mutations, [], "a draft must not create a real entry");
+      if (reason === "hidden") {
+        await page.evaluate(() => {
+          Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+      }
+      if (reason === "renderer-reset") {
+        secret = "Last-input-before-native-reset!";
+        // Reproduce native navigation without endSession or a flush callback.
+        // Inspect storage in the input task: waiting a tick hides the old race.
+        await page.evaluate((value) => {
+          const storageKey = "ciphermoth-entry-draft:v1:1";
+          const before = sessionStorage.getItem(storageKey);
+          const input = document.querySelector('input[autocomplete="new-password"]');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(
+            input,
+            value
+          );
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          if (sessionStorage.getItem(storageKey) === before)
+            throw new Error("The last input was not persisted in the input task");
+          sessionStorage.removeItem("ciphermothSession");
+          sessionStorage.removeItem("ciphermothUser");
+          window.location.replace("/login");
+        }, secret);
+      } else {
+        await page.clock.fastForward(reason === "hidden" ? 10001 : 30001);
+      }
+      await page.getByRole("button", { name: "Unlock Vault", exact: true }).waitFor();
+      const stored = await page.evaluate(() => JSON.stringify({ ...sessionStorage }));
+      assert.match(stored, /ciphermoth-entry-draft:v1:1/);
+      assert.ok(!stored.includes(secret) && !stored.includes("unsaved@example.test"));
+      await page.getByRole("textbox", { name: "Username", exact: true }).fill("synthetic");
+      await page.locator('input[autocomplete="current-password"]').fill("Synthetic-login-only!");
+      await page.getByRole("button", { name: "Unlock Vault", exact: true }).click();
+      await page.getByRole("dialog").waitFor();
+      assert.equal(
+        await dialog.getByRole("textbox", { name: /^Name/ }).inputValue(),
+        "Unsaved synthetic entry"
+      );
+      assert.equal(
+        await dialog.getByRole("textbox", { name: /^Username/ }).inputValue(),
+        "unsaved@example.test"
+      );
+      assert.equal(await dialog.locator('input[autocomplete="new-password"]').inputValue(), secret);
+      assert.equal(
+        await dialog.locator('input[autocomplete="new-password"]').getAttribute("type"),
+        "password"
+      );
+      assert.deepEqual(mutations, []);
+      await screenshot(page, `draft-restored-${width}-${reason}.png`);
+      await dialog.getByRole("button", { name: "Create", exact: true }).click();
+      await dialog.waitFor({ state: "hidden" });
+      assert.equal(mutations.length, 1);
+      assert.equal(mutations[0].postDataJSON().password_value, secret);
+      assert.equal(
+        await page.evaluate(() => sessionStorage.getItem("ciphermoth-entry-draft:v1:1")),
+        null
+      );
+      await page.getByRole("button", { name: "Add", exact: true }).click();
+      assert.equal(await dialog.getByRole("textbox", { name: /^Name/ }).inputValue(), "");
+      await dialog.getByRole("textbox", { name: /^Name/ }).fill("Cancel this draft");
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.equal(
+        await page.evaluate(() => sessionStorage.getItem("ciphermoth-entry-draft:v1:1")),
+        null
+      );
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test("a damaged draft is kept until explicit discard, and does not permanently block creation", async () => {
+  const { context, page, errors } = await vault(375);
+  try {
+    await page.evaluate(() => sessionStorage.setItem("ciphermoth-entry-draft:v1:1", "damaged"));
+    await page.reload();
+    await page.getByRole("alert").filter({ hasText: "Could not prepare or restore" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Add", exact: true }).isDisabled(), true);
+    assert.equal(
+      await page.evaluate(() => sessionStorage.getItem("ciphermoth-entry-draft:v1:1")),
+      "damaged"
+    );
+    await fits(page);
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await page.getByRole("button", { name: "Discard draft", exact: true }).waitFor();
+    assert.equal(
+      await page.evaluate(() => sessionStorage.getItem("ciphermoth-entry-draft:v1:1")),
+      "damaged"
+    );
+    await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("dialog").waitFor();
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+for (const width of [375, 899, 900, 1024, 1440]) {
+  test(`vault tools are direct desktop buttons or compact mobile actions at ${width}px`, async () => {
+    const { context, page, errors } = await vault(width, "ru");
+    try {
+      const desktop = width >= 900;
+      const menu = page.getByRole("button", { name: "Действия с хранилищем", exact: true });
+      assert.equal(await menu.count(), desktop ? 0 : 1);
+      const actions = [
+        ["Состояние", /^Состояние хранилища$/],
+        ["Резервная копия", /резервн/i],
+        ["Импорт", /^Импорт/],
+        ["Корзина (1)", /^Корзина$/],
+      ];
+      if (desktop) {
+        const positions = await Promise.all(
+          ["Добавить", ...actions.map(([label]) => label)].map((name) =>
+            page.getByRole("button", { name, exact: true }).boundingBox()
+          )
+        );
+        assert.ok(positions.every((box) => box && box.height >= 44));
+        if (width >= 1024)
+          assert.ok(positions.every((box) => Math.abs(box.y - positions[0].y) < 1));
+      }
+      await screenshot(page, `vault-tools-${width}-ru.png`);
+      for (const [name, title] of actions) {
+        if (!desktop) await menu.click();
+        await page.getByRole(desktop ? "button" : "menuitem", { name, exact: true }).click();
+        const dialog = page.getByRole("dialog");
+        await dialog.getByRole("heading", { name: title }).waitFor();
+        await fits(page);
+        await page.keyboard.press("Escape");
+        await dialog.waitFor({ state: "hidden" });
+      }
+      if (width === 899) {
+        await menu.click();
+        await page.getByRole("menu").waitFor();
+        await page.setViewportSize({ width: 1024, height: 900 });
+        await page.getByRole("button", { name: "Состояние", exact: true }).waitFor();
+        await page.getByRole("menu").waitFor({ state: "hidden" });
+        await page.setViewportSize({ width, height: 900 });
+        await menu.waitFor();
+        assert.equal(await page.getByRole("menu").count(), 0);
+        await fits(page);
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
 }
 
 for (const width of [320, 375, 390, 394, 412, 1440]) {
@@ -647,12 +833,16 @@ for (const [width, language, theme] of [
       assert.equal(await list.count(), 0);
       assert.equal(await detailsRegion.count(), 0);
       await search.fill("");
+      if (width < 900) {
+        await page
+          .getByRole("button", {
+            name: ru ? "Действия с хранилищем" : "Vault tools",
+          })
+          .click();
+      }
       await page
-        .getByRole("button", {
-          name: ru ? "Действия с хранилищем" : "Vault tools",
-        })
+        .getByRole(width >= 900 ? "button" : "menuitem", { name: /^(Корзина|Trash)/ })
         .click();
-      await page.getByRole("menuitem", { name: /^(Корзина|Trash)/ }).click();
       const trash = page.getByRole("dialog", {
         name: ru ? "Корзина" : "Trash",
         exact: true,

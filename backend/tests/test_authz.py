@@ -51,6 +51,9 @@ def _alpha() -> dict:
 
 
 PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
+    ("GET", "/api/auth/entry-draft-key"): lambda c, h, x: c.get(
+        "/auth/entry-draft-key", headers=h
+    ),
     ("GET", "/api/auth/me"): lambda c, h, x: c.get("/auth/me", headers=h),
     ("POST", "/api/auth/logout"): lambda c, h, x: c.post("/auth/logout", headers=h),
     ("PUT", "/api/auth/password"): lambda c, h, x: c.put(

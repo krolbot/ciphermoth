@@ -201,6 +201,10 @@ class VaultKey:
     def name_index(self, name: str) -> bytes:
         return hmac.new(self._index, name.encode(), hashlib.sha256).digest()
 
+    def entry_draft_key(self, user_id: int) -> bytes:
+        """A browser-only draft key, separated from vault keys and other users."""
+        return _hkdf(self._raw, f"ciphermoth/browser-entry-draft/v1/{user_id}")
+
     def seal_entry(self, uid: bytes, document: bytes) -> bytes:
         return _seal(self._records, _padded(document), _associated_data(b"entry", uid))
 

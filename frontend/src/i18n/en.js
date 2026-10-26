@@ -181,6 +181,14 @@ const en = {
     },
   },
   entry: {
+    draft: {
+      savedLocally:
+        "Your draft is encrypted in this tab and will be restored after unlocking. Closing the tab removes it.",
+      failed: "Could not save the draft. Keep this page open until you save the entry.",
+      unavailable:
+        "Could not prepare or restore a secure draft. Try again, or discard an unreadable draft to create a new entry.",
+      discard: "Discard draft",
+    },
     title: {
       editNote: "Edit Secure Note",
       editPassword: "Edit Password",

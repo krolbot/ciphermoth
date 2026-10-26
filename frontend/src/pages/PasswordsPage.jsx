@@ -14,6 +14,8 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
@@ -36,6 +38,9 @@ import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
 import EntryBrowser from "../components/vault/EntryBrowser";
 import useClipboard from "../hooks/useClipboard";
+import apiClient from "../api/client";
+import { createEntryDraftStore } from "../lib/entryDraft";
+import { getCurrentUser } from "../utils";
 
 const buildSubtitle = (loading, passwords, t) => {
   if (loading) return t("common.labels.loading");
@@ -46,6 +51,8 @@ const buildSubtitle = (loading, passwords, t) => {
 
 const PasswordsPage = () => {
   const { t } = useTranslation();
+  const theme = useTheme();
+  const desktop = useMediaQuery(theme.breakpoints.up("md"));
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -81,6 +88,66 @@ const PasswordsPage = () => {
   const [removeDamagedOpen, setRemoveDamagedOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
+  const [draftStore, setDraftStore] = useState(null);
+  const [initialDraft, setInitialDraft] = useState(null);
+  const [draftError, setDraftError] = useState(false);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftAttempt, setDraftAttempt] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setDraftError(false);
+    setDraftStore(null);
+    const restoreDraft = async () => {
+      try {
+        const { data } = await apiClient.get("/auth/entry-draft-key");
+        if (!active) return;
+        if (data.user_id !== getCurrentUser()?.id) throw new Error("Draft owner changed");
+        const store = createEntryDraftStore(data);
+        setDraftStore(store);
+        const draft = store.read();
+        setDraftReady(true);
+        if (draft) {
+          setInitialDraft(draft);
+          setEditTarget(null);
+          setDialogOpen(true);
+        }
+      } catch {
+        if (active) setDraftError(true);
+      }
+    };
+    restoreDraft();
+    return () => {
+      active = false;
+    };
+  }, [draftAttempt]);
+
+  const saveDraft = useCallback(
+    (form) => {
+      if (!draftStore) return;
+      try {
+        if (form) draftStore.write(form);
+        else draftStore.clear();
+        setDraftError(false);
+      } catch {
+        setDraftError(true);
+      }
+    },
+    [draftStore]
+  );
+
+  const closeEntryForm = () => {
+    if (!editTarget) {
+      draftStore?.clear();
+      setInitialDraft(null);
+      setDraftError(false);
+    }
+    setDialogOpen(false);
+  };
+
+  useEffect(() => {
+    if (desktop) setToolsAnchor(null);
+  }, [desktop]);
 
   useEffect(() => {
     get();
@@ -95,7 +162,12 @@ const PasswordsPage = () => {
   }, [error, enqueueSnackbar]);
 
   const openAdd = () => {
+    if (!draftReady) {
+      enqueueSnackbar(t("entry.draft.unavailable"), { variant: "error" });
+      return;
+    }
     setEditTarget(null);
+    setInitialDraft(null);
     setDialogOpen(true);
   };
 
@@ -142,7 +214,7 @@ const PasswordsPage = () => {
         }
       );
     }
-    setDialogOpen(false);
+    closeEntryForm();
   };
 
   const handleDelete = async () => {
@@ -230,15 +302,26 @@ const PasswordsPage = () => {
 
   const subtitle = useMemo(() => buildSubtitle(loading, passwords, t), [loading, passwords, t]);
   const isEmpty = !loading && passwords.length === 0;
+  const tools = [
+    [HealthAndSafetyIcon, t("vault.health"), () => setHealthOpen(true), passwords.length === 0],
+    [DownloadIcon, t("vault.backup"), () => setBackupOpen(true), passwords.length === 0],
+    [UploadFileIcon, t("vault.import"), () => setImportOpen(true), false],
+    [
+      DeleteOutlineIcon,
+      trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash"),
+      () => setTrashOpen(true),
+      false,
+    ],
+  ];
 
   return (
     <Box>
       <Stack
-        direction={{ xs: "column", md: "row" }}
+        direction={{ xs: "column", lg: "row" }}
         spacing={2}
         sx={{
           justifyContent: "space-between",
-          alignItems: { xs: "stretch", md: "flex-start" },
+          alignItems: { xs: "stretch", lg: "flex-start" },
           mb: 2.5,
         }}
       >
@@ -254,48 +337,50 @@ const PasswordsPage = () => {
           direction="row"
           spacing={1}
           useFlexGap
-          sx={{ flexWrap: "wrap", justifyContent: { xs: "flex-start", md: "flex-end" } }}
+          sx={{ flexWrap: "wrap", justifyContent: { xs: "flex-start", lg: "flex-end" } }}
         >
           <Button
             variant="contained"
             startIcon={<AddIcon />}
+            disabled={!draftReady}
             onClick={openAdd}
             sx={{ minHeight: 44, textTransform: "none" }}
           >
             {t("common.actions.add")}
           </Button>
-          <Tooltip title={t("vault.browser.tools")}>
-            <IconButton
-              aria-label={t("vault.browser.tools")}
-              aria-haspopup="menu"
-              aria-expanded={Boolean(toolsAnchor)}
-              onClick={(event) => setToolsAnchor(event.currentTarget)}
-              sx={{ width: 44, height: 44, border: "1px solid", borderColor: "divider" }}
-            >
-              <MoreHorizIcon />
-            </IconButton>
-          </Tooltip>
+          {desktop ? (
+            tools.map(([Icon, label, action, disabled]) => (
+              <Button
+                key={label}
+                variant="outlined"
+                color="inherit"
+                startIcon={<Icon />}
+                disabled={disabled}
+                onClick={action}
+                sx={{ minHeight: 44, textTransform: "none", whiteSpace: "nowrap" }}
+              >
+                {label}
+              </Button>
+            ))
+          ) : (
+            <Tooltip title={t("vault.browser.tools")}>
+              <IconButton
+                aria-label={t("vault.browser.tools")}
+                aria-haspopup="menu"
+                aria-expanded={Boolean(toolsAnchor)}
+                onClick={(event) => setToolsAnchor(event.currentTarget)}
+                sx={{ width: 44, height: 44, border: "1px solid", borderColor: "divider" }}
+              >
+                <MoreHorizIcon />
+              </IconButton>
+            </Tooltip>
+          )}
           <Menu
             anchorEl={toolsAnchor}
-            open={Boolean(toolsAnchor)}
+            open={!desktop && Boolean(toolsAnchor)}
             onClose={() => setToolsAnchor(null)}
           >
-            {[
-              [
-                HealthAndSafetyIcon,
-                t("vault.health"),
-                () => setHealthOpen(true),
-                passwords.length === 0,
-              ],
-              [DownloadIcon, t("vault.backup"), () => setBackupOpen(true), passwords.length === 0],
-              [UploadFileIcon, t("vault.import"), () => setImportOpen(true), false],
-              [
-                DeleteOutlineIcon,
-                trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash"),
-                () => setTrashOpen(true),
-                false,
-              ],
-            ].map(([Icon, label, action, disabled]) => (
+            {tools.map(([Icon, label, action, disabled]) => (
               <MenuItem
                 key={label}
                 disabled={disabled}
@@ -314,6 +399,35 @@ const PasswordsPage = () => {
           </Menu>
         </Stack>
       </Stack>
+
+      {draftError && !draftReady && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+              <Button color="inherit" size="small" onClick={() => setDraftAttempt((n) => n + 1)}>
+                {t("common.actions.retry")}
+              </Button>
+              {draftStore && (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    draftStore.clear();
+                    setDraftError(false);
+                    setDraftReady(true);
+                  }}
+                >
+                  {t("entry.draft.discard")}
+                </Button>
+              )}
+            </Stack>
+          }
+        >
+          {t("entry.draft.unavailable")}
+        </Alert>
+      )}
 
       {!isEmpty && (
         <Box
@@ -432,14 +546,20 @@ const PasswordsPage = () => {
         />
       )}
 
-      <PasswordFormDialog
-        open={dialogOpen}
-        editTarget={editTarget}
-        folderOptions={folderOptions}
-        onClose={() => setDialogOpen(false)}
-        onSubmit={handleSubmit}
-        onCopy={copy}
-      />
+      {dialogOpen && (
+        <PasswordFormDialog
+          key={editTarget?.id ?? "new"}
+          open
+          editTarget={editTarget}
+          initialDraft={initialDraft}
+          onDraftChange={saveDraft}
+          draftError={draftError}
+          folderOptions={folderOptions}
+          onClose={closeEntryForm}
+          onSubmit={handleSubmit}
+          onCopy={copy}
+        />
+      )}
       <ShareDialog
         open={Boolean(shareTarget)}
         entry={shareTarget}

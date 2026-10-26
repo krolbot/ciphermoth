@@ -53,6 +53,23 @@ A policy cannot stop injected code from navigating the tab to another site with 
 
 Two session details worth knowing: closing a tab without logging out leaves its session open on the server until the inactivity timeout (a browser's "reopen closed tab" can restore it until then), and a duplicated tab shares the original's session, so logging out in one locks both.
 
+## Encrypted new-entry drafts
+
+The new-entry form keeps one encrypted draft per account in the tab's `sessionStorage`.
+`GET /api/auth/entry-draft-key` requires a live account session and returns only a draft-specific
+256-bit key, derived with HKDF-SHA256 from the vault key and the label
+`ciphermoth/browser-entry-draft/v1/{user_id}`. It cannot decrypt vault entries or authenticate API calls.
+The response is `no-store`; the UI keeps this draft key only in memory and never persists it.
+Drafts use AES-256-GCM (`@noble/ciphers`) with a fresh 96-bit nonce for each write and the versioned
+account storage name as authenticated data. Encryption and storage complete synchronously in the
+input handler, before React renders the update; native locking never waits for renderer callbacks.
+The same account can resume after unlocking; another account's key cannot decrypt the draft.
+Creating the entry or cancelling removes it. Normal tab closure clears it, although browser session
+recovery can retain `sessionStorage`. Clearing browser data, resetting the vault key, or losing the
+tab can lose the draft. It is not a backup and does not preserve edits to existing entries. As with
+decrypted entries, XSS in an unlocked page can read a draft; encryption protects its stored copy,
+not a compromised client. Nonces use the platform CSPRNG (`crypto.getRandomValues`).
+
 ## Updates and the supply chain
 
 Release images (`ciphermoth-backend`, `ciphermoth-frontend`) are signed with [cosign](https://github.com/sigstore/cosign) - keyless, via GitHub OIDC - so each image's digest is provably built by CipherMoth's own release workflow. Verify them before you start a new version; the command is in [docs/UPDATING.md](docs/UPDATING.md).

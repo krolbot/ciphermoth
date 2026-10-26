@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Autocomplete,
   Box,
@@ -41,6 +41,7 @@ import PasswordGenerator, { CHAR_KEYS } from "./PasswordGenerator";
 import StrengthBar from "./StrengthBar";
 import { DEFAULT_PASSWORD_OPTIONS, generatePassword } from "../../lib/passwordGenerator";
 import { GLOW } from "../../lib/brand";
+import { isAuth } from "../../utils";
 
 const EMPTY_FORM = {
   password_name: "",
@@ -219,31 +220,44 @@ const PasswordFormDialog = ({
   onClose,
   onSubmit,
   onCopy,
+  initialDraft,
+  onDraftChange,
+  draftError,
   folderOptions = [],
 }) => {
   const { t } = useTranslation();
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setFormState] = useState(() => toForm(editTarget ?? initialDraft));
+  const formRef = useRef(form);
   const [formError, setFormError] = useState("");
   const [showValue, setShowValue] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
-  const [sections, setSections] = useState(() => sectionsForTarget(null));
+  const [sections, setSections] = useState(() => sectionsForTarget(editTarget ?? initialDraft));
   const [genOpts, setGenOpts] = useState(DEFAULT_PASSWORD_OPTIONS);
   const [submitting, setSubmitting] = useState(false);
   const [attachmentsDirty, setAttachmentsDirty] = useState(false);
 
+  const dirty = JSON.stringify(form) !== JSON.stringify(EMPTY_FORM);
+  const setForm = (update) => {
+    const next = update(formRef.current);
+    formRef.current = next;
+    if (!editTarget)
+      onDraftChange?.(JSON.stringify(next) !== JSON.stringify(EMPTY_FORM) ? next : null);
+    setFormState(next);
+  };
+
   useEffect(() => {
-    if (!open) return;
-    setForm(toForm(editTarget));
-    setSections(sectionsForTarget(editTarget));
-    setFormError("");
-    setShowValue(false);
-    setShowTotp(false);
-    setShowGenerator(false);
-    setAttachmentsDirty(false);
-  }, [open, editTarget]);
+    if (editTarget || !dirty) return;
+    const beforeUnload = (event) => {
+      if (!isAuth()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [editTarget, dirty]);
 
   const isNote = form.kind === "note";
 
@@ -293,13 +307,11 @@ const PasswordFormDialog = ({
   };
 
   const toggleGenClass = (key) => {
-    setGenOpts((prev) => {
-      const wouldHaveNone = CHAR_KEYS.every((k) => (k === key ? prev[k] : !prev[k]));
-      if (wouldHaveNone) return prev;
-      const next = { ...prev, [key]: !prev[key] };
-      applyGenerated(next);
-      return next;
-    });
+    const wouldHaveNone = CHAR_KEYS.every((k) => (k === key ? genOpts[k] : !genOpts[k]));
+    if (wouldHaveNone) return;
+    const next = { ...genOpts, [key]: !genOpts[key] };
+    setGenOpts(next);
+    applyGenerated(next);
   };
 
   const handleSubmit = async () => {
@@ -368,7 +380,13 @@ const PasswordFormDialog = ({
       : "entry.title.addPassword";
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth fullScreen={fullScreen}>
+    <Dialog
+      open={open}
+      onClose={submitting ? undefined : onClose}
+      maxWidth="sm"
+      fullWidth
+      fullScreen={fullScreen}
+    >
       <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         {t(titleKey)}
         <Tooltip
@@ -380,6 +398,16 @@ const PasswordFormDialog = ({
         </Tooltip>
       </DialogTitle>
       <DialogContent dividers>
+        {!editTarget && (
+          <Typography
+            role="status"
+            variant="body2"
+            color={draftError ? "error" : "text.secondary"}
+            sx={{ mb: 2 }}
+          >
+            {t(draftError ? "entry.draft.failed" : "entry.draft.savedLocally")}
+          </Typography>
+        )}
         {!editTarget && (
           <ToggleButtonGroup
             exclusive

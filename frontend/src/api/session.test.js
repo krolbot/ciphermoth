@@ -5,6 +5,7 @@ import { stubBrowser } from "../test/globals";
 import { LOGOUT_NOTICE, isAuth, setSessionToken } from "../utils";
 import apiClient from "./client";
 import { endSession, readSession, touchSession } from "./session";
+import { createEntryDraftStore } from "../lib/entryDraft";
 
 const TOKEN = "kM3x1y8Qe0bWv7c2Z9pL4tR6sN5aH1jD0fG3uY8iO2w";
 const originalAdapter = apiClient.defaults.adapter;
@@ -23,6 +24,17 @@ afterEach(() => {
 });
 
 describe("ending a session", () => {
+  it("retains the synchronously encrypted draft when ending the session", async () => {
+    const store = createEntryDraftStore({ user_id: 1, key: btoa("x".repeat(32)) });
+    apiClient.defaults.adapter = routes({ "POST /master_password/lock": [200, {}] }, seen);
+    setSessionToken(TOKEN);
+    const form = { password_name: "Unsaved", password_value: "Synthetic-draft" };
+    store.write(form);
+    await endSession();
+    expect(isAuth()).toBe(false);
+    expect(createEntryDraftStore({ user_id: 1, key: btoa("x".repeat(32)) }).read()).toEqual(form);
+    expect(browser.location.replace).toHaveBeenCalledWith("/login");
+  });
   it("locks it on the server, forgets it and returns to the unlock screen", async () => {
     apiClient.defaults.adapter = routes({ "POST /master_password/lock": [200, {}] }, seen);
     setSessionToken(TOKEN);

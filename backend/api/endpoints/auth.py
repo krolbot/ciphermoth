@@ -1,6 +1,9 @@
+import base64
+
 from fastapi import APIRouter, Request
 
 from api.endpoints.deps import (
+    AuthContextDep,
     AuthCRUDDep,
     CredentialDep,
     PasswordChangeContextDep,
@@ -13,6 +16,7 @@ from schemas import (
     AuthResponse,
     AuthStatus,
     AuthUser,
+    EntryDraftKey,
     PasswordChangePayload,
     SimpleDetailSchema,
 )
@@ -50,6 +54,14 @@ async def logout(
 ) -> SimpleDetailSchema:
     vault_sessions.revoke(credential.token)
     return SimpleDetailSchema(detail="Logged out.")
+
+
+@router.get("/entry-draft-key", response_model=EntryDraftKey)
+async def entry_draft_key(context: AuthContextDep) -> EntryDraftKey:
+    return EntryDraftKey(
+        user_id=context.user.id,
+        key=base64.b64encode(context.key.entry_draft_key(context.user.id)).decode(),
+    )
 
 
 @router.put("/password", response_model=AuthResponse)

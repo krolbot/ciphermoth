@@ -56,6 +56,47 @@ async def login(
     return body["user"], auth(body["session_token"])
 
 
+async def test_entry_draft_key_survives_reauthentication_and_password_change(
+    client: httpx.AsyncClient,
+) -> None:
+    user, headers = await bootstrap(client)
+    first = await client.get("/auth/entry-draft-key", headers=headers)
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "no-store"
+    assert first.json()["user_id"] == user["id"]
+    key = base64.b64decode(first.json()["key"], validate=True)
+    assert len(key) == 32
+    await client.post("/auth/logout", headers=headers)
+    assert (
+        await client.get("/auth/entry-draft-key", headers=headers)
+    ).status_code == 401
+    _, headers = await login(client, "owner", ADMIN_PASSWORD)
+    second = await client.get("/auth/entry-draft-key", headers=headers)
+    assert second.json() == first.json()
+    changed = await client.put(
+        "/auth/password",
+        json={"current_password": ADMIN_PASSWORD, "new_password": MEMBER_PASSWORD},
+        headers=headers,
+    )
+    assert changed.status_code == 200
+    headers = auth(changed.json()["session_token"])
+    assert (
+        await client.get("/auth/entry-draft-key", headers=headers)
+    ).json() == first.json()
+    assert (await client.get("/passwords", headers=headers)).json() == []
+
+
+def test_entry_draft_keys_are_separated_from_vault_keys_and_other_accounts() -> None:
+    from helpers import VaultKey
+
+    raw = bytes(range(32))
+    key = VaultKey(raw)
+    assert key.entry_draft_key(1) not in (raw, key.check, key.name_index("draft"))
+    assert key.entry_draft_key(1) != key.entry_draft_key(2)
+    assert key.entry_draft_key(1) == VaultKey(raw).entry_draft_key(1)
+    assert key.entry_draft_key(1) != VaultKey(bytes(reversed(raw))).entry_draft_key(1)
+
+
 def legacy_migration_archive(attachments: list[bytes]) -> bytes:
     stamp = "2026-10-20T12:00:00Z"
     payload = json.dumps(

@@ -104,6 +104,11 @@ class AuthResponse(BaseModel):
     idle_timeout_ms: int | None = None
 
 
+class EntryDraftKey(BaseModel):
+    user_id: int
+    key: str = Field(repr=False)
+
+
 class UserCreatePayload(BaseModel):
     username: Username
     role: UserRole = UserRole.member

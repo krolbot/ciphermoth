@@ -51,6 +51,7 @@ async function openPage(
   const data = {
     "/api/auth/status": { initialized },
     "/api/auth/me": user,
+    "/api/auth/entry-draft-key": { user_id: user.id, key: Buffer.alloc(32, 7).toString("base64") },
     "/api/meta": { version: "3.1.0", features: [] },
     "/api/users": [user, { id: 2, username: "synthetic-member", role: "member", active: true }],
     "/api/passwords": [
