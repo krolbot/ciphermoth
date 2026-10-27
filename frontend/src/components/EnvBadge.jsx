@@ -1,56 +1,23 @@
-import { Box, Chip, Tooltip } from "@mui/material";
+import { Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
-import { DEV_ACCENT, IS_DEV } from "../lib/appEnv";
-import { GLOW, INK } from "../lib/brand";
-
-const baseSx = {
-  height: 22,
-  fontFamily: "'Space Mono', monospace",
-  fontSize: 10,
-  letterSpacing: "0.12em",
-  borderRadius: 1,
-  cursor: "help",
-  "& .MuiChip-label": { px: 0.9 },
-};
+import { IS_DEV } from "../lib/appEnv";
 
 const EnvBadge = () => {
   const { t } = useTranslation();
+  const tooltip = t(IS_DEV ? "environment.developmentTooltip" : "environment.liveTooltip");
+  const label = t(IS_DEV ? "environment.development" : "environment.live");
+
   return (
-    <Tooltip arrow title={t(IS_DEV ? "environment.developmentTooltip" : "environment.liveTooltip")}>
-      <Chip
-        size="small"
-        label={
-          IS_DEV ? (
-            t("environment.development")
-          ) : (
-            <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.6 }}>
-              <Box
-                component="span"
-                sx={{
-                  width: 5,
-                  height: 5,
-                  borderRadius: "50%",
-                  bgcolor: GLOW,
-                  boxShadow: `0 0 5px ${GLOW}`,
-                }}
-              />
-              {t("environment.live")}
-            </Box>
-          )
-        }
-        variant={IS_DEV ? "filled" : "outlined"}
+    <Tooltip content={tooltip}>
+      <span
+        className={`cm-env-badge${IS_DEV ? " cm-env-badge--development" : ""}`}
         aria-label={t(IS_DEV ? "environment.developmentAria" : "environment.liveAria")}
-        sx={
-          IS_DEV
-            ? { ...baseSx, fontWeight: 700, bgcolor: DEV_ACCENT, color: INK }
-            : {
-                ...baseSx,
-                color: GLOW,
-                borderColor: `color-mix(in srgb, ${GLOW} 45%, transparent)`,
-              }
-        }
-      />
+        tabIndex={0}
+      >
+        {!IS_DEV && <span className="cm-env-badge__dot" aria-hidden="true" />}
+        {label}
+      </span>
     </Tooltip>
   );
 };

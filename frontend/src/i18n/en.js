@@ -72,7 +72,7 @@ const en = {
 
     confirmMasterPassword: "Confirm password",
     noRecoveryWarning:
-      "CipherMoth cannot reset the only administrator account. Add another administrator and keep an encrypted backup so access can be recovered safely.",
+      "CipherMoth cannot reset the only administrator account. Add another administrator or keep an encrypted backup so access can be recovered safely.",
     noRecoveryAcknowledgement:
       "I understand recovery requires another active administrator or an encrypted backup.",
     unlock: "Unlock Vault",
@@ -107,6 +107,14 @@ const en = {
     updateAvailable: "A new CipherMoth release is available",
     settings: "Settings",
   },
+  navigation: {
+    privateVault: "Private vault",
+    workspace: "Workspace",
+    manage: "Manage",
+    administration: "Administration",
+    more: "More",
+    newEntry: "New entry",
+  },
   vault: {
     title: "The Vault",
     subtitle: {
@@ -130,7 +138,7 @@ const en = {
       favoritesFirst: "Favorites first",
       nameAscending: "Name A–Z",
       nameDescending: "Name Z–A",
-      dateAdded: "Date added",
+      dateAdded: "Newest added",
       entries: "Vault entries",
       details: "Entry details",
       back: "Back to entries",
@@ -251,6 +259,7 @@ const en = {
   generator: {
     length: "Length",
     regenerate: "Regenerate",
+    undoReplacement: "Undo replacement",
   },
   strength: {
     veryWeak: "Very Weak",
@@ -329,6 +338,7 @@ const en = {
   settings: {
     title: "Settings",
     saved: "Settings saved.",
+    rangeValidation: "{{label}} must be a whole number from {{min}} to {{max}} seconds.",
     warningValidation: "Warning before logout must be less than the inactivity timeout.",
     fields: {
       inactivity: "Inactivity timeout",
@@ -376,6 +386,7 @@ const en = {
     deleteForever: "Delete forever",
     deleteForeverTitle: "Delete Forever",
     deleteForeverMessage: "Permanently delete <strong>{{name}}</strong>? This cannot be undone.",
+    purgeFailed: "The entry is still in trash. Deletion failed; you can try again.",
     deleteAll: "Delete all",
     deleteAllTitle: "Empty trash?",
     deleteAllMessage:
@@ -595,6 +606,7 @@ en.folderAccess = {
   targetTypes: { user: "User", group: "Group" },
   expiresAt: "Expires (optional)",
   expiresHint: "Leave blank for permanent access. Time uses this device's time zone.",
+  expiresValidation: "Choose a time in the future or leave the field empty.",
   expired: "Expired",
   audit: "Audit log",
   noAudit: "No access events yet.",

@@ -1,5 +1,5 @@
-import { Box, Chip, IconButton, Paper, Slider, Stack, Tooltip, Typography } from "@mui/material";
-import RefreshIcon from "@mui/icons-material/Refresh";
+import { ArrowRotateRight } from "@gravity-ui/icons";
+import { Button, Icon, Slider, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 const CHAR_OPTS = [
@@ -9,56 +9,64 @@ const CHAR_OPTS = [
   { key: "symbols", label: "!@#" },
 ];
 
-const CHAR_KEYS = CHAR_OPTS.map((o) => o.key);
+const CHAR_KEYS = CHAR_OPTS.map((option) => option.key);
 
-const PasswordGenerator = ({ options, onChangeLength, onToggleClass, onRegenerate }) => {
+const PasswordGenerator = ({
+  options,
+  onChangeLength,
+  onToggleClass,
+  onRegenerate,
+  canUndo = false,
+  onUndo,
+}) => {
   const { t } = useTranslation();
 
   return (
-    <Paper variant="outlined" sx={{ px: 2, py: 1.5, borderRadius: 1.5 }}>
-      <Stack spacing={1.5}>
-        <Box>
-          <Stack
-            direction="row"
-            sx={{ justifyContent: "space-between", alignItems: "center", mb: 0.5 }}
+    <section className="cm-password-generator">
+      <div className="cm-password-generator__length">
+        <span>{t("generator.length")}</span>
+        <output>{options.length}</output>
+      </div>
+      <Slider
+        value={options.length}
+        min={8}
+        max={64}
+        step={1}
+        onUpdate={onChangeLength}
+        aria-label={t("generator.length")}
+      />
+      <div className="cm-password-generator__classes">
+        {CHAR_OPTS.map(({ key, label }) => (
+          <Button
+            key={key}
+            type="button"
+            size="s"
+            selected={options[key]}
+            view={options[key] ? "action" : "outlined"}
+            onClick={() => onToggleClass(key)}
+            aria-pressed={options[key]}
           >
-            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 500 }}>
-              {t("generator.length")}
-            </Typography>
-            <Typography variant="caption" sx={{ fontWeight: 700 }}>
-              {options.length}
-            </Typography>
-          </Stack>
-          <Slider
-            size="small"
-            value={options.length}
-            min={8}
-            max={64}
-            step={1}
-            onChange={(_, value) => onChangeLength(value)}
-          />
-        </Box>
-        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-          {CHAR_OPTS.map(({ key, label }) => (
-            <Chip
-              key={key}
-              label={label}
-              size="small"
-              onClick={() => onToggleClass(key)}
-              color={options[key] ? "primary" : "default"}
-              variant={options[key] ? "filled" : "outlined"}
-              sx={{ fontFamily: "'Space Mono', monospace", fontWeight: 600 }}
-            />
-          ))}
-          <Box sx={{ flex: 1 }} />
-          <Tooltip title={t("generator.regenerate")}>
-            <IconButton size="small" onClick={onRegenerate}>
-              <RefreshIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-      </Stack>
-    </Paper>
+            <span className="cm-password-generator__class-label">{label}</span>
+          </Button>
+        ))}
+        {canUndo && (
+          <Button type="button" size="s" view="flat-secondary" onClick={onUndo}>
+            {t("generator.undoReplacement")}
+          </Button>
+        )}
+        <Tooltip content={t("generator.regenerate")}>
+          <Button
+            type="button"
+            size="s"
+            view="flat-secondary"
+            onClick={onRegenerate}
+            aria-label={t("generator.regenerate")}
+          >
+            <Icon data={ArrowRotateRight} />
+          </Button>
+        </Tooltip>
+      </div>
+    </section>
   );
 };
 

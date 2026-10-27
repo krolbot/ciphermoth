@@ -1,4 +1,3 @@
-import { Box, Stack, Typography } from "@mui/material";
 import { useTranslation } from "react-i18next";
 
 import { getPasswordStrength } from "../../lib/passwordStrength";
@@ -10,27 +9,23 @@ const StrengthBar = ({ password }) => {
   const strength = getPasswordStrength(password);
   if (!strength) return null;
 
+  const theme = strength.level < 2 ? "danger" : strength.level === 2 ? "warning" : "positive";
+
   return (
-    <Box>
-      <Stack direction="row" spacing={0.5} sx={{ mb: 0.75 }}>
-        {SEGMENTS.map((i) => (
-          <Box
-            key={i}
-            sx={{
-              flex: 1,
-              height: 4,
-              borderRadius: 2,
-              bgcolor: i <= strength.level ? strength.color : "grey.200",
-              transition: "background-color 0.2s",
-            }}
+    <div className={`cm-strength cm-strength--${theme}`}>
+      <div className="cm-strength__segments" aria-hidden="true">
+        {SEGMENTS.map((index) => (
+          <span
+            key={index}
+            className={`cm-strength__segment${index <= strength.level ? " cm-strength__segment--active" : ""}`}
           />
         ))}
-      </Stack>
-      <Typography variant="caption" sx={{ color: strength.color, fontWeight: 600 }}>
+      </div>
+      <span className="cm-strength__label">
         {t(strength.labelKey)}
-        {strength.recommend && ` - ${t("strength.recommendation")}`}
-      </Typography>
-    </Box>
+        {strength.recommend && ` — ${t("strength.recommendation")}`}
+      </span>
+    </div>
   );
 };
 

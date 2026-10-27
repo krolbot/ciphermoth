@@ -1,34 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Alert,
-  Box,
-  Button,
-  CircularProgress,
-  IconButton,
-  InputAdornment,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  ListItemText,
-  Tooltip,
-  Stack,
-  TextField,
-  Typography,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
-import AddIcon from "@mui/icons-material/Add";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import DownloadIcon from "@mui/icons-material/Download";
-import HealthAndSafetyIcon from "@mui/icons-material/HealthAndSafety";
-import FolderSharedOutlinedIcon from "@mui/icons-material/FolderSharedOutlined";
-import SearchIcon from "@mui/icons-material/Search";
-import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Ellipsis,
+  FolderOpen,
+  HeartPulse,
+  Magnifier,
+  Plus,
+  TrashBin,
+} from "@gravity-ui/icons";
+import { Alert, Button, Icon, Loader, Menu, MenuItem, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
-import { useSnackbar } from "notistack";
+
 import { Trans, useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import BackupDialog from "../components/vault/BackupDialog";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -41,23 +26,26 @@ import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
 import EntryBrowser from "../components/vault/EntryBrowser";
 import useClipboard from "../hooks/useClipboard";
+import { useSnackbar } from "../hooks/useNotify";
 import apiClient from "../api/client";
 import { createEntryDraftStore } from "../lib/entryDraft";
 import { getCurrentUser } from "../utils";
+import "../styles/passwords.css";
+
+const MOBILE_QUERY = "(max-width: 599px)";
 
 const buildSubtitle = (loading, passwords, t) => {
   if (loading) return t("common.labels.loading");
-  const n = passwords.length;
-  if (n === 0) return t("vault.subtitle.empty");
-  return `${t("vault.subtitle.secretCount", { count: n })}.`;
+  const count = passwords.length;
+  if (count === 0) return t("vault.subtitle.empty");
+  return `${t("vault.subtitle.secretCount", { count })}.`;
 };
 
 const PasswordsPage = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const theme = useTheme();
-  const desktop = useMediaQuery(theme.breakpoints.up("md"));
-  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [mobile, setMobile] = useState(() => window.matchMedia?.(MOBILE_QUERY).matches ?? false);
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -82,7 +70,6 @@ const PasswordsPage = () => {
   );
   const folders = useStoreState((state) => state.ciphermothModels.access.folders);
 
-  const [toolsAnchor, setToolsAnchor] = useState(null);
   const [sortOrder, setSortOrder] = useState("created-desc");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -101,6 +88,31 @@ const PasswordsPage = () => {
   const [draftError, setDraftError] = useState(false);
   const [draftReady, setDraftReady] = useState(false);
   const [draftAttempt, setDraftAttempt] = useState(0);
+  const [requestedEntryId, setRequestedEntryId] = useState(null);
+
+  const clearToolRoute = useCallback(() => {
+    if (!searchParams.has("tool")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("tool");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const query = window.matchMedia?.(MOBILE_QUERY);
+    if (!query) return undefined;
+    const updateViewport = ({ matches }) => setMobile(matches);
+    query.addEventListener("change", updateViewport);
+    return () => query.removeEventListener("change", updateViewport);
+  }, []);
+
+  useEffect(() => {
+    const tool = searchParams.get("tool");
+    if (tool === "backup") setBackupOpen(true);
+    if (tool === "health") setHealthOpen(true);
+    if (tool === "trash") setTrashOpen(true);
+    if (tool === "folders") setFoldersOpen(true);
+    if (tool === "import") setImportOpen(true);
+  }, [searchParams]);
 
   useEffect(() => {
     let active = true;
@@ -154,30 +166,39 @@ const PasswordsPage = () => {
   };
 
   useEffect(() => {
-    if (desktop) setToolsAnchor(null);
-  }, [desktop]);
-
-  useEffect(() => {
     get();
     getTrash();
     getDamaged();
-    getFolders().catch((err) => enqueueSnackbar(err.message, { variant: "error" }));
+    getFolders().catch((requestError) =>
+      enqueueSnackbar(requestError.message, { variant: "error" })
+    );
   }, [get, getTrash, getDamaged, getFolders, enqueueSnackbar]);
 
   const damagedCount = damaged.entries.length + damaged.attachments.length;
 
-  useEffect(() => {
-    if (error) enqueueSnackbar(error, { variant: "error" });
-  }, [error, enqueueSnackbar]);
+  const folderOptions = useMemo(
+    () => folders.filter((folder) => ["owner", "write", "read"].includes(folder.access)),
+    [folders]
+  );
+  const writableFolderOptions = useMemo(
+    () => folders.filter((folder) => ["owner", "write"].includes(folder.access)),
+    [folders]
+  );
+  const formFolderOptions = useMemo(
+    () =>
+      editTarget
+        ? writableFolderOptions.filter((folder) => folder.owner_id === editTarget.owner_id)
+        : writableFolderOptions,
+    [editTarget, writableFolderOptions]
+  );
+  const activeFolder = folderOptions.some((folder) => folder.id === Number(folderFilter))
+    ? folderFilter
+    : "";
 
   const openAdd = () => {
     const folder = writableFolderOptions.find((item) => item.id === Number(folderFilter));
     if (mobile) {
-      navigate("/entries/new", {
-        state: {
-          folderId: folder?.id ?? null,
-        },
-      });
+      navigate("/entries/new", { state: { folderId: folder?.id ?? null } });
       return;
     }
     if (!draftReady) {
@@ -199,8 +220,8 @@ const PasswordsPage = () => {
     async (row) => {
       try {
         await toggleFavorite({ passwordName: row.password_name, favorite: !row.favorite });
-      } catch (err) {
-        enqueueSnackbar(err.message, { variant: "error" });
+      } catch (requestError) {
+        enqueueSnackbar(requestError.message, { variant: "error" });
       }
     },
     [toggleFavorite, enqueueSnackbar]
@@ -219,31 +240,28 @@ const PasswordsPage = () => {
       });
       enqueueSnackbar(
         t(entry.kind === "note" ? "vault.messages.noteUpdated" : "vault.messages.passwordUpdated"),
-        {
-          variant: "success",
-        }
+        { variant: "success" }
       );
     } else {
       await create(entry);
       enqueueSnackbar(
         t(entry.kind === "note" ? "vault.messages.noteCreated" : "vault.messages.passwordCreated"),
-        {
-          variant: "success",
-        }
+        { variant: "success" }
       );
     }
     closeEntryForm();
-    await getFolders().catch((err) => enqueueSnackbar(err.message, { variant: "error" }));
+    await getFolders().catch((requestError) =>
+      enqueueSnackbar(requestError.message, { variant: "error" })
+    );
   };
 
   const handleDelete = async () => {
     try {
       await remove(deleteTarget);
-      enqueueSnackbar(t("vault.messages.movedToTrash"), { variant: "success" });
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
-    } finally {
       setDeleteTarget(null);
+      enqueueSnackbar(t("vault.messages.movedToTrash"), { variant: "success" });
+    } catch (requestError) {
+      enqueueSnackbar(requestError.message, { variant: "error" });
     }
   };
 
@@ -251,18 +269,19 @@ const PasswordsPage = () => {
     try {
       await restore(name);
       enqueueSnackbar(t("vault.messages.restored"), { variant: "success" });
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (requestError) {
+      enqueueSnackbar(requestError.message, { variant: "error" });
+      throw requestError;
     }
   };
 
   const handleRemoveDamaged = async () => {
-    setRemoveDamagedOpen(false);
     try {
       await removeDamaged(damaged);
+      setRemoveDamagedOpen(false);
       enqueueSnackbar(t("vault.damage.removed"), { variant: "success" });
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (requestError) {
+      enqueueSnackbar(requestError.message, { variant: "error" });
     }
   };
 
@@ -270,298 +289,232 @@ const PasswordsPage = () => {
     try {
       await purge(name);
       enqueueSnackbar(t("vault.messages.permanentlyDeleted"), { variant: "success" });
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (requestError) {
+      enqueueSnackbar(requestError.message, { variant: "error" });
+      throw requestError;
     }
   };
 
   const handleBackup = async (masterPassword) => {
     await backup(masterPassword);
-    enqueueSnackbar(t("vault.messages.backupRequested"), {
-      variant: "info",
-    });
+    enqueueSnackbar(t("vault.messages.backupRequested"), { variant: "info" });
   };
-
-  const folderOptions = useMemo(
-    () => folders.filter((folder) => ["owner", "write", "read"].includes(folder.access)),
-    [folders]
-  );
-  const writableFolderOptions = useMemo(
-    () => folders.filter((folder) => ["owner", "write"].includes(folder.access)),
-    [folders]
-  );
-  const formFolderOptions = useMemo(
-    () =>
-      editTarget
-        ? writableFolderOptions.filter((folder) => folder.owner_id === editTarget.owner_id)
-        : writableFolderOptions,
-    [editTarget, writableFolderOptions]
-  );
-  const activeFolder = folderOptions.some((folder) => folder.id === Number(folderFilter))
-    ? folderFilter
-    : "";
 
   const filteredPasswords = useMemo(() => {
     const query = search.trim().toLowerCase();
     const byFolder = activeFolder
-      ? passwords.filter((p) => p.folder_id === Number(activeFolder))
+      ? passwords.filter((password) => password.folder_id === Number(activeFolder))
       : passwords;
     const matches = !query
       ? byFolder
       : byFolder.filter(
-          (p) =>
-            p.password_name.toLowerCase().includes(query) ||
-            p.username?.toLowerCase().includes(query) ||
-            p.description?.toLowerCase().includes(query) ||
-            p.url?.toLowerCase().includes(query) ||
-            p.folder?.toLowerCase().includes(query) ||
-            p.tags?.some((tag) => tag.toLowerCase().includes(query)) ||
-            p.custom_fields?.some(
-              (f) =>
-                f.label.toLowerCase().includes(query) ||
-                (!f.hidden && f.value.toLowerCase().includes(query))
+          (password) =>
+            password.password_name.toLowerCase().includes(query) ||
+            password.username?.toLowerCase().includes(query) ||
+            password.description?.toLowerCase().includes(query) ||
+            password.url?.toLowerCase().includes(query) ||
+            password.folder?.toLowerCase().includes(query) ||
+            password.tags?.some((tag) => tag.toLowerCase().includes(query)) ||
+            password.custom_fields?.some(
+              (field) =>
+                field.label.toLowerCase().includes(query) ||
+                (!field.hidden && field.value.toLowerCase().includes(query))
             )
         );
 
     return [...matches].sort(
-      (a, b) =>
-        (sortOrder === "created-desc" ? Date.parse(b.created) - Date.parse(a.created) : 0) ||
-        (sortOrder === "favorites" ? Number(b.favorite) - Number(a.favorite) : 0) ||
-        a.password_name.localeCompare(b.password_name) * (sortOrder === "name-desc" ? -1 : 1)
+      (first, second) =>
+        (sortOrder === "created-desc"
+          ? Date.parse(second.created) - Date.parse(first.created)
+          : 0) ||
+        (sortOrder === "favorites" ? Number(second.favorite) - Number(first.favorite) : 0) ||
+        first.password_name.localeCompare(second.password_name) *
+          (sortOrder === "name-desc" ? -1 : 1)
     );
   }, [passwords, search, activeFolder, sortOrder]);
 
   const subtitle = useMemo(() => buildSubtitle(loading, passwords, t), [loading, passwords, t]);
   const isEmpty = !loading && passwords.length === 0;
+  const backupUnavailable = passwords.length === 0 && trash.length === 0 && damagedCount === 0;
   const tools = [
-    [HealthAndSafetyIcon, t("vault.health"), () => setHealthOpen(true), passwords.length === 0],
-    [FolderSharedOutlinedIcon, t("folderAccess.manageShort"), () => setFoldersOpen(true), false],
-    [DownloadIcon, t("vault.backup"), () => setBackupOpen(true), passwords.length === 0],
-    [UploadFileIcon, t("vault.import"), () => setImportOpen(true), false],
-    [
-      DeleteOutlineIcon,
-      trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash"),
-      () => setTrashOpen(true),
-      false,
-    ],
+    {
+      icon: HeartPulse,
+      label: t("vault.health"),
+      action: () => setHealthOpen(true),
+      disabled: passwords.length === 0,
+    },
+    {
+      icon: FolderOpen,
+      label: t("folderAccess.manageShort"),
+      action: () => setFoldersOpen(true),
+      disabled: false,
+    },
+    {
+      icon: ArrowDownToLine,
+      label: t("vault.backup"),
+      action: () => setBackupOpen(true),
+      disabled: backupUnavailable,
+    },
+    {
+      icon: ArrowUpFromLine,
+      label: t("vault.import"),
+      action: () => setImportOpen(true),
+      disabled: false,
+    },
+    {
+      icon: TrashBin,
+      label: trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash"),
+      action: () => setTrashOpen(true),
+      disabled: false,
+    },
   ];
 
   return (
-    <Box>
-      <Stack
-        direction={{ xs: "column", lg: "row" }}
-        spacing={2}
-        sx={{
-          justifyContent: "space-between",
-          alignItems: { xs: "stretch", lg: "flex-start" },
-          mb: 2.5,
-        }}
-      >
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-            {t("vault.title")}
-          </Typography>
-          <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
-            {subtitle}
-          </Typography>
-        </Box>
-        <Stack
-          direction="row"
-          spacing={1}
-          useFlexGap
-          sx={{ flexWrap: "wrap", justifyContent: { xs: "flex-start", lg: "flex-end" } }}
-        >
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            disabled={!draftReady}
-            onClick={openAdd}
-            sx={{ minHeight: 44, textTransform: "none" }}
-          >
+    <section className="cm-vault-page">
+      <header className="cm-page-header">
+        <div>
+          <h1>{t("vault.title")}</h1>
+          <p>{subtitle}</p>
+        </div>
+        <div className="cm-page-header__actions">
+          <Button type="button" view="action" size="l" disabled={!draftReady} onClick={openAdd}>
+            <Icon data={Plus} />
             {t("common.actions.add")}
           </Button>
-          {desktop ? (
-            tools.map(([Icon, label, action, disabled]) => (
-              <Button
-                key={label}
-                variant="outlined"
-                color="inherit"
-                startIcon={<Icon />}
-                disabled={disabled}
-                onClick={action}
-                sx={{ minHeight: 44, textTransform: "none", whiteSpace: "nowrap" }}
-              >
-                {label}
-              </Button>
-            ))
-          ) : (
-            <Tooltip title={t("vault.browser.tools")}>
-              <IconButton
-                aria-label={t("vault.browser.tools")}
-                aria-haspopup="menu"
-                aria-expanded={Boolean(toolsAnchor)}
-                onClick={(event) => setToolsAnchor(event.currentTarget)}
-                sx={{ width: 44, height: 44, border: "1px solid", borderColor: "divider" }}
-              >
-                <MoreHorizIcon />
-              </IconButton>
-            </Tooltip>
-          )}
           <Menu
-            anchorEl={toolsAnchor}
-            open={!desktop && Boolean(toolsAnchor)}
-            onClose={() => setToolsAnchor(null)}
+            placement="bottom-end"
+            trigger={
+              <Button type="button" view="outlined" size="l" aria-label={t("vault.browser.tools")}>
+                <Icon data={Ellipsis} />
+                {t("vault.browser.tools")}
+              </Button>
+            }
           >
-            {tools.map(([Icon, label, action, disabled]) => (
+            {tools.map(({ icon, label, action, disabled }) => (
               <MenuItem
                 key={label}
+                icon={<Icon data={icon} />}
                 disabled={disabled}
-                onClick={() => {
-                  setToolsAnchor(null);
-                  action();
-                }}
-                sx={{ minHeight: 44 }}
+                onClick={action}
               >
-                <ListItemIcon>
-                  <Icon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText>{label}</ListItemText>
+                {label}
               </MenuItem>
             ))}
           </Menu>
-        </Stack>
-      </Stack>
+        </div>
+      </header>
 
-      {draftError && !draftReady && (
-        <Alert
-          severity="error"
-          sx={{ mb: 2 }}
-          action={
-            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-              <Button color="inherit" size="small" onClick={() => setDraftAttempt((n) => n + 1)}>
+      <div className="cm-vault-alerts">
+        {error && <Alert theme="danger" view="outlined" message={error} />}
+        {draftError && !draftReady && (
+          <Alert
+            theme="danger"
+            view="outlined"
+            message={t("entry.draft.unavailable")}
+            actions={
+              <>
+                <Button
+                  type="button"
+                  view="flat-danger"
+                  onClick={() => setDraftAttempt((n) => n + 1)}
+                >
+                  {t("common.actions.retry")}
+                </Button>
+                {draftStore && (
+                  <Button
+                    type="button"
+                    view="flat-danger"
+                    onClick={() => {
+                      draftStore.clear();
+                      setDraftError(false);
+                      setDraftReady(true);
+                    }}
+                  >
+                    {t("entry.draft.discard")}
+                  </Button>
+                )}
+              </>
+            }
+            actionsLayout="horizontal"
+          />
+        )}
+        {damageCheckError && (
+          <Alert
+            theme="warning"
+            view="outlined"
+            message={damageCheckError}
+            actions={
+              <Button type="button" view="flat-warning" onClick={() => getDamaged()}>
                 {t("common.actions.retry")}
               </Button>
-              {draftStore && (
-                <Button
-                  color="inherit"
-                  size="small"
-                  onClick={() => {
-                    draftStore.clear();
-                    setDraftError(false);
-                    setDraftReady(true);
-                  }}
-                >
-                  {t("entry.draft.discard")}
-                </Button>
-              )}
-            </Stack>
-          }
-        >
-          {t("entry.draft.unavailable")}
-        </Alert>
-      )}
+            }
+          />
+        )}
+        {damagedCount > 0 && (
+          <Alert
+            theme="warning"
+            view="outlined"
+            message={t("vault.damage.message", { count: damagedCount })}
+            actions={
+              <Button type="button" view="flat-warning" onClick={() => setRemoveDamagedOpen(true)}>
+                {t("common.actions.remove")}
+              </Button>
+            }
+          />
+        )}
+      </div>
 
       {!isEmpty && (
-        <Box
-          sx={{
-            display: "grid",
-            "& .MuiInputBase-root": { minHeight: 44 },
-            gap: 1.5,
-            mb: 2,
-            gridTemplateColumns: {
-              xs: "minmax(0, 1fr)",
-              sm: folderOptions.length ? "minmax(0, 1fr) 170px 260px" : "minmax(0, 1fr) 260px",
-            },
-          }}
+        <div
+          className={`cm-vault-filters${folderOptions.length ? "" : " cm-vault-filters--without-folder"}`}
         >
-          <TextField
-            size="small"
+          <TextInput
+            className="cm-vault-search"
+            size="l"
+            type="search"
             placeholder={t("vault.searchPlaceholder")}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            sx={{
-              minWidth: 0,
-              gridColumn: { xs: "1 / -1", sm: "auto" },
-              "& .MuiInputBase-input::placeholder": {
-                color: "text.secondary",
-                opacity: 1,
-              },
-            }}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon fontSize="small" sx={{ color: "text.secondary" }} />
-                  </InputAdornment>
-                ),
-              },
-            }}
+            onUpdate={setSearch}
+            hasClear
+            startContent={<Icon data={Magnifier} />}
+            controlProps={{ "aria-label": t("vault.searchPlaceholder") }}
           />
           {folderOptions.length > 0 && (
-            <TextField
-              select
-              size="small"
-              label={t("common.fields.folder")}
-              value={activeFolder}
-              onChange={(e) => setFolderFilter(e.target.value)}
-              sx={{ minWidth: 0 }}
-            >
-              <MenuItem value="">{t("vault.allFolders")}</MenuItem>
-              {folderOptions.map((folder) => (
-                <MenuItem key={folder.id} value={folder.id}>
-                  {folder.name}
-                </MenuItem>
-              ))}
-            </TextField>
+            <Select
+              size="l"
+              aria-label={t("common.fields.folder")}
+              label={`${t("common.fields.folder")}:`}
+              value={[activeFolder]}
+              onUpdate={([value = ""]) => setFolderFilter(value)}
+              options={[
+                { value: "", content: t("vault.allFolders") },
+                ...folderOptions.map((folder) => ({
+                  value: String(folder.id),
+                  content: `${folder.name} · ${folder.owner_username ?? folder.owner_id}`,
+                })),
+              ]}
+            />
           )}
-          <TextField
-            select
-            size="small"
-            label={t("vault.browser.sort")}
-            value={sortOrder}
-            onChange={(event) => setSortOrder(event.target.value)}
-            sx={{ minWidth: 0 }}
-          >
-            <MenuItem value="favorites">{t("vault.browser.favoritesFirst")}</MenuItem>
-            <MenuItem value="name">{t("vault.browser.nameAscending")}</MenuItem>
-            <MenuItem value="name-desc">{t("vault.browser.nameDescending")}</MenuItem>
-            <MenuItem value="created-desc">{t("vault.browser.dateAdded")}</MenuItem>
-          </TextField>
-        </Box>
-      )}
-
-      {damageCheckError && (
-        <Alert
-          severity="warning"
-          sx={{ mb: 2 }}
-          action={
-            <Button color="inherit" size="small" onClick={() => getDamaged()}>
-              {t("common.actions.retry")}
-            </Button>
-          }
-        >
-          {damageCheckError}
-        </Alert>
-      )}
-
-      {damagedCount > 0 && (
-        <Alert
-          severity="warning"
-          sx={{ mb: 2 }}
-          action={
-            <Button color="inherit" size="small" onClick={() => setRemoveDamagedOpen(true)}>
-              {t("common.actions.remove")}
-            </Button>
-          }
-        >
-          {t("vault.damage.message", { count: damagedCount })}
-        </Alert>
+          <Select
+            size="l"
+            aria-label={t("vault.browser.sort")}
+            label={`${t("vault.browser.sort")}:`}
+            value={[sortOrder]}
+            onUpdate={([value = "created-desc"]) => setSortOrder(value)}
+            options={[
+              { value: "favorites", content: t("vault.browser.favoritesFirst") },
+              { value: "name", content: t("vault.browser.nameAscending") },
+              { value: "name-desc", content: t("vault.browser.nameDescending") },
+              { value: "created-desc", content: t("vault.browser.dateAdded") },
+            ]}
+          />
+        </div>
       )}
 
       {loading && (
-        <Box sx={{ display: "flex", justifyContent: "center", mt: 8 }}>
-          <CircularProgress />
-        </Box>
+        <div className="cm-vault-loader">
+          <Loader size="l" />
+        </div>
       )}
 
       {isEmpty && <EmptyVault onAdd={openAdd} />}
@@ -570,6 +523,8 @@ const PasswordsPage = () => {
         <EntryBrowser
           entries={filteredPasswords}
           emptyMessage={t("vault.noSearchResults", { search: search.trim() })}
+          requestedEntryId={requestedEntryId}
+          onRequestedEntryOpen={() => setRequestedEntryId(null)}
           onCopy={copy}
           onEdit={openEdit}
           onDelete={setDeleteTarget}
@@ -597,29 +552,51 @@ const PasswordsPage = () => {
         entry={shareTarget}
         onClose={() => setShareTarget(null)}
       />
-      <FolderAccessDialog open={foldersOpen} onClose={() => setFoldersOpen(false)} />
+      <FolderAccessDialog
+        open={foldersOpen}
+        onClose={() => {
+          setFoldersOpen(false);
+          clearToolRoute();
+        }}
+      />
       <BackupDialog
         open={backupOpen}
-        onClose={() => setBackupOpen(false)}
+        onClose={() => {
+          setBackupOpen(false);
+          clearToolRoute();
+        }}
         onBackup={handleBackup}
       />
       <ImportDialog
         open={importOpen}
-        onClose={() => setImportOpen(false)}
+        onClose={() => {
+          setImportOpen(false);
+          clearToolRoute();
+        }}
         onImport={importPasswords}
         onImportCsv={importCsv}
       />
       <HealthDialog
         open={healthOpen}
         passwords={passwords}
-        onClose={() => setHealthOpen(false)}
+        onClose={() => {
+          setHealthOpen(false);
+          clearToolRoute();
+        }}
         onSelect={(row) => {
           setHealthOpen(false);
-          openEdit(row);
+          clearToolRoute();
+          if (row.access === "read") {
+            setFolderFilter("");
+            setSearch(row.password_name);
+            setRequestedEntryId(row.id);
+          } else {
+            openEdit(row);
+          }
         }}
       />
       <ConfirmDialog
-        open={!!deleteTarget}
+        open={Boolean(deleteTarget)}
         title={t("vault.moveToTrash.title")}
         confirmText={t("vault.moveToTrash.title")}
         confirmColor="error"
@@ -645,11 +622,14 @@ const PasswordsPage = () => {
       <TrashDialog
         open={trashOpen}
         trash={trash}
-        onClose={() => setTrashOpen(false)}
+        onClose={() => {
+          setTrashOpen(false);
+          clearToolRoute();
+        }}
         onRestore={handleRestore}
         onPurge={handlePurge}
       />
-    </Box>
+    </section>
   );
 };
 

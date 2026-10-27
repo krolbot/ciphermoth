@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, IconButton, Stack, Tooltip, Typography } from "@mui/material";
-import AttachFileIcon from "@mui/icons-material/AttachFile";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import { useSnackbar } from "notistack";
+import { FileArrowDown, Paperclip, TrashBin } from "@gravity-ui/icons";
+import { Button, Icon, Tooltip } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
+import { useSnackbar } from "../../hooks/useNotify";
 import ConfirmDialog from "../ConfirmDialog";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -36,8 +34,8 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
   const refresh = useCallback(async () => {
     try {
       setAttachments(await fetchAttachments(passwordName));
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (error) {
+      enqueueSnackbar(error.message, { variant: "error" });
     }
   }, [fetchAttachments, passwordName, enqueueSnackbar]);
 
@@ -56,118 +54,113 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
           continue;
         }
         await uploadAttachment({ passwordName, file });
-        enqueueSnackbar(t("attachments.attached", { filename: file.name }), { variant: "success" });
+        enqueueSnackbar(t("attachments.attached", { filename: file.name }), {
+          variant: "success",
+        });
         onChanged?.();
       }
       await refresh();
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (error) {
+      enqueueSnackbar(error.message, { variant: "error" });
     } finally {
       setBusy(false);
     }
   };
 
-  const onPick = (e) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
+  const onPick = (event) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
     if (files.length) handleFiles(files);
   };
 
-  const onDownload = async (att) => {
+  const onDownload = async (attachment) => {
     try {
       await downloadAttachment({
         passwordName,
-        attachmentId: att.id,
-        filename: att.filename,
+        attachmentId: attachment.id,
+        filename: attachment.filename,
       });
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (error) {
+      enqueueSnackbar(error.message, { variant: "error" });
     }
   };
 
   const confirmDelete = async () => {
-    const att = pendingDelete;
-    setPendingDelete(null);
+    const attachment = pendingDelete;
     try {
-      await deleteAttachment({ passwordName, attachmentId: att.id });
-      enqueueSnackbar(t("attachments.removed", { filename: att.filename }), { variant: "success" });
+      await deleteAttachment({ passwordName, attachmentId: attachment.id });
+      setPendingDelete(null);
+      enqueueSnackbar(t("attachments.removed", { filename: attachment.filename }), {
+        variant: "success",
+      });
       onChanged?.();
       await refresh();
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (error) {
+      enqueueSnackbar(error.message, { variant: "error" });
     }
   };
 
   return (
-    <Stack spacing={1}>
+    <div className="cm-attachments">
       {attachments.length === 0 ? (
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
-          {t("attachments.empty")}
-        </Typography>
+        <p className="cm-attachments__empty">{t("attachments.empty")}</p>
       ) : (
-        attachments.map((att) => (
-          <Stack key={att.id} direction="row" spacing={1} sx={{ alignItems: "center" }}>
-            <AttachFileIcon fontSize="small" sx={{ color: "text.disabled" }} />
-            <Typography
-              variant="body2"
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {att.filename}
-            </Typography>
-            <Typography variant="caption" sx={{ color: "text.disabled", flexShrink: 0 }}>
-              {formatBytes(att.size_bytes, i18n.resolvedLanguage)}
-            </Typography>
-            <Tooltip title={t("common.actions.download")}>
-              <IconButton
-                size="small"
-                onClick={() => onDownload(att)}
-                sx={{ width: 44, height: 44 }}
-              >
-                <FileDownloadOutlinedIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            {!readOnly && (
-              <Tooltip title={t("attachments.removeFile")}>
-                <IconButton
-                  size="small"
-                  color="error"
-                  onClick={() => setPendingDelete(att)}
-                  sx={{ width: 44, height: 44 }}
+        <ul className="cm-attachments__list">
+          {attachments.map((attachment) => (
+            <li className="cm-attachments__row" key={attachment.id}>
+              <Icon data={Paperclip} size={16} className="cm-attachments__file-icon" />
+              <span className="cm-attachments__filename">{attachment.filename}</span>
+              <span className="cm-attachments__size">
+                {formatBytes(attachment.size_bytes, i18n.resolvedLanguage)}
+              </span>
+              <Tooltip content={t("common.actions.download")}>
+                <Button
+                  type="button"
+                  size="s"
+                  view="flat-secondary"
+                  onClick={() => onDownload(attachment)}
+                  aria-label={t("common.actions.download")}
                 >
-                  <DeleteOutlineIcon fontSize="small" />
-                </IconButton>
+                  <Icon data={FileArrowDown} />
+                </Button>
               </Tooltip>
-            )}
-          </Stack>
-        ))
+              {!readOnly && (
+                <Tooltip content={t("attachments.removeFile")}>
+                  <Button
+                    type="button"
+                    size="s"
+                    view="flat-danger"
+                    onClick={() => setPendingDelete(attachment)}
+                    aria-label={t("attachments.removeFile")}
+                  >
+                    <Icon data={TrashBin} />
+                  </Button>
+                </Tooltip>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       {!readOnly && (
-        <Box>
+        <div className="cm-attachments__upload">
           <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
           <Button
-            size="small"
-            sx={{ minHeight: 44 }}
-            startIcon={<AttachFileIcon />}
+            type="button"
+            size="m"
+            view="outlined"
             onClick={() => inputRef.current?.click()}
             loading={busy}
           >
+            <Icon data={Paperclip} />
             {t("attachments.attachFile")}
           </Button>
-          <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>
-            {t("attachments.limits")}
-          </Typography>
-        </Box>
+          <span>{t("attachments.limits")}</span>
+        </div>
       )}
 
       <ConfirmDialog
-        open={!!pendingDelete}
+        open={Boolean(pendingDelete)}
         title={t("attachments.removeTitle")}
         onClose={() => setPendingDelete(null)}
         onConfirm={confirmDelete}
@@ -176,7 +169,7 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
       >
         {t("attachments.removeMessage", { filename: pendingDelete?.filename })}
       </ConfirmDialog>
-    </Stack>
+    </div>
   );
 };
 

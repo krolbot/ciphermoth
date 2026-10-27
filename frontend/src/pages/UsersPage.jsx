@@ -1,32 +1,27 @@
 import { useEffect, useState } from "react";
+import { ArrowLeft, EllipsisVertical, Persons } from "@gravity-ui/icons";
 import {
   Alert,
-  Box,
   Button,
   Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  FormControlLabel,
+  Icon,
+  Menu,
+  MenuDivider,
   MenuItem,
-  Paper,
-  Stack,
+  Select,
   Switch,
-  TextField,
-  Typography,
-} from "@mui/material";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import FolderSharedOutlinedIcon from "@mui/icons-material/FolderSharedOutlined";
-import GroupsOutlinedIcon from "@mui/icons-material/GroupsOutlined";
+  TextInput,
+} from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
-import { useSnackbar } from "notistack";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
-import PasswordField from "../components/PasswordField";
 import GroupManagementDialog from "../components/access/GroupManagementDialog";
 import UserFolderAccessDialog from "../components/access/UserFolderAccessDialog";
+import ConfirmDialog from "../components/ConfirmDialog";
+import PasswordField from "../components/PasswordField";
 import useClipboard from "../hooks/useClipboard";
+import { useSnackbar } from "../hooks/useNotify";
 import { getCurrentUser } from "../utils";
 
 const EMPTY_FORM = { username: "", temporary_password: "", role: "member" };
@@ -43,12 +38,23 @@ const UsersPage = () => {
   const [busy, setBusy] = useState(false);
   const [serviceToken, setServiceToken] = useState("");
   const [resetTarget, setResetTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [folderAccessTarget, setFolderAccessTarget] = useState(null);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [temporaryPassword, setTemporaryPassword] = useState("");
 
+  const closeUserAction = (setter, target) => {
+    const userId = target?.id;
+    setter(null);
+    if (userId) {
+      window.requestAnimationFrame(() =>
+        document.querySelector(`[data-user-menu="${userId}"]`)?.focus()
+      );
+    }
+  };
+
   useEffect(() => {
-    get().catch((err) => enqueueSnackbar(err.message, { variant: "error" }));
+    get().catch((error) => enqueueSnackbar(error.message, { variant: "error" }));
   }, [get, enqueueSnackbar]);
 
   const run = async (operation, message = "") => {
@@ -57,8 +63,8 @@ const UsersPage = () => {
       const result = await operation();
       if (message) enqueueSnackbar(message, { variant: "success" });
       return result ?? true;
-    } catch (err) {
-      enqueueSnackbar(err.message, { variant: "error" });
+    } catch (error) {
+      enqueueSnackbar(error.message, { variant: "error" });
       return false;
     } finally {
       setBusy(false);
@@ -80,7 +86,7 @@ const UsersPage = () => {
       t("users.messages.passwordReset")
     );
     if (!ok) return;
-    setResetTarget(null);
+    closeUserAction(setResetTarget, resetTarget);
     setTemporaryPassword("");
   };
 
@@ -89,275 +95,254 @@ const UsersPage = () => {
     if (token) setServiceToken(token);
   };
 
+  const deleteUser = async () => {
+    const removed = await run(() => remove(deleteTarget.id), t("users.messages.deleted"));
+    if (removed) setDeleteTarget(null);
+  };
+
   return (
-    <Stack spacing={3} sx={{ minWidth: 0 }}>
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        spacing={2}
-        sx={{ justifyContent: "space-between", alignItems: { xs: "stretch", sm: "center" } }}
-      >
-        <Box>
-          <Typography component="h1" variant="h4" sx={{ fontWeight: 700 }}>
-            {t("users.title")}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            {t("users.subtitle")}
-          </Typography>
-        </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-          <Button
-            variant="outlined"
-            startIcon={<GroupsOutlinedIcon />}
-            onClick={() => setGroupsOpen(true)}
-          >
+    <section className="cm-users-page">
+      <header className="cm-page-header cm-users-page__header">
+        <div>
+          <h1>{t("users.title")}</h1>
+          <p>{t("users.subtitle")}</p>
+        </div>
+        <div className="cm-page-header__actions">
+          <Button type="button" view="outlined" onClick={() => setGroupsOpen(true)}>
+            <Icon data={Persons} />
             {t("groups.title")}
           </Button>
-          <Button component={Link} to="/passwords" variant="outlined" startIcon={<ArrowBackIcon />}>
+          <Button component={Link} to="/passwords" view="flat-secondary">
+            <Icon data={ArrowLeft} />
             {t("users.backToVault")}
           </Button>
-        </Stack>
-      </Stack>
+        </div>
+      </header>
+
       {serviceToken && (
-        <Alert severity="warning">
-          <Stack spacing={1}>
-            <Typography>{t("users.serviceTokenOnce")}</Typography>
-            <TextField value={serviceToken} slotProps={{ input: { readOnly: true } }} fullWidth />
-            <Stack direction="row" spacing={1}>
-              <Button onClick={() => copy(serviceToken)}>{t("users.copyToken")}</Button>
-              <Button color="inherit" onClick={() => setServiceToken("")}>
-                {t("common.actions.dismiss")}
-              </Button>
-            </Stack>
-          </Stack>
-        </Alert>
+        <Alert
+          theme="warning"
+          view="outlined"
+          title={t("users.serviceTokenOnce")}
+          message={
+            <div className="cm-users-token">
+              <TextInput value={serviceToken} controlProps={{ readOnly: true }} />
+              <div>
+                <Button type="button" view="outlined" onClick={() => copy(serviceToken)}>
+                  {t("users.copyToken")}
+                </Button>
+                <Button type="button" view="flat" onClick={() => setServiceToken("")}>
+                  {t("common.actions.dismiss")}
+                </Button>
+              </div>
+            </div>
+          }
+        />
       )}
 
-      <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: "hidden" }}>
+      <div className="cm-users-list">
         {users.map((user) => {
           const isCurrent = user.id === currentUserId;
           return (
-            <Box
-              key={user.id}
-              sx={{
-                display: "grid",
-                gridTemplateColumns: {
-                  xs: "minmax(0, 1fr)",
-                  md: "minmax(180px, 1fr) 170px 150px minmax(280px, auto)",
-                },
-                gap: 1.25,
-                alignItems: "center",
-                p: 2,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                "&:last-child": { borderBottom: 0 },
-              }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ fontWeight: 650, overflowWrap: "anywhere" }}>
-                  {user.username}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
+            <article className="cm-user-row" key={user.id}>
+              <div className="cm-user-row__identity">
+                <strong>{user.username}</strong>
+                <small>
                   {user.must_change_password && user.role !== "service"
                     ? t("users.passwordChangeRequested")
                     : user.role === "service"
                       ? t("users.serviceAccount")
                       : t("users.interactiveAccount")}
-                </Typography>
-              </Box>
-              <TextField
-                select
-                size="small"
-                label={t("users.role")}
-                value={user.role}
+                </small>
+              </div>
+              <Select
+                size="m"
+                aria-label={t("users.role")}
+                value={[user.role]}
                 disabled={busy || isCurrent || user.role === "service"}
-                onChange={(event) =>
-                  run(
-                    () => update({ userId: user.id, role: event.target.value }),
-                    t("users.messages.roleUpdated")
-                  )
+                options={(user.role === "service" ? ["service"] : ["admin", "member"]).map(
+                  (role) => ({ value: role, content: t(`users.roles.${role}`) })
+                )}
+                onUpdate={([role = user.role]) =>
+                  run(() => update({ userId: user.id, role }), t("users.messages.roleUpdated"))
+                }
+              />
+              <Switch
+                size="m"
+                checked={user.active}
+                disabled={busy || isCurrent}
+                onUpdate={(active) =>
+                  run(() => update({ userId: user.id, active }), t("users.messages.statusUpdated"))
                 }
               >
-                {(user.role === "service" ? ["service"] : ["admin", "member"]).map((role) => (
-                  <MenuItem key={role} value={role}>
-                    {t(`users.roles.${role}`)}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={user.active}
-                    disabled={busy || isCurrent}
-                    onChange={(event) =>
-                      run(
-                        () => update({ userId: user.id, active: event.target.checked }),
-                        t("users.messages.statusUpdated")
-                      )
-                    }
-                  />
-                }
-                label={t(user.active ? "users.active" : "users.inactive")}
-              />
-              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<FolderSharedOutlinedIcon />}
-                  disabled={busy}
-                  onClick={() => setFolderAccessTarget(user)}
-                >
-                  {t("folderAccess.manage")}
-                </Button>
-                {user.role === "service" ? (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={busy}
-                    onClick={() => rotateToken(user)}
-                  >
-                    {t("users.rotateToken")}
-                  </Button>
-                ) : (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={busy || isCurrent}
-                    onClick={() => setResetTarget(user)}
-                  >
-                    {t("users.resetPassword")}
-                  </Button>
-                )}
-                <Button
-                  size="small"
-                  variant="outlined"
-                  disabled={busy}
-                  onClick={() =>
-                    run(() => revokeSessions(user.id), t("users.messages.sessionsRevoked"))
+                {t(user.active ? "users.active" : "users.inactive")}
+              </Switch>
+              <div className="cm-user-row__actions">
+                <Menu
+                  placement="bottom-end"
+                  trigger={
+                    <Button
+                      type="button"
+                      size="l"
+                      view="flat-secondary"
+                      aria-label={`${t("navigation.more")}: ${user.username}`}
+                      data-user-menu={user.id}
+                    >
+                      <Icon data={EllipsisVertical} />
+                      {t("navigation.more")}
+                    </Button>
                   }
                 >
-                  {t("users.revokeSessions")}
-                </Button>
-                <Button
-                  size="small"
-                  color="error"
-                  disabled={busy || isCurrent}
-                  onClick={() => {
-                    if (window.confirm(t("users.deleteConfirm", { username: user.username }))) {
-                      run(() => remove(user.id), t("users.messages.deleted"));
+                  <MenuItem disabled={busy} onClick={() => setFolderAccessTarget(user)}>
+                    {t("folderAccess.manage")}
+                  </MenuItem>
+                  {user.role === "service" ? (
+                    <MenuItem disabled={busy} onClick={() => rotateToken(user)}>
+                      {t("users.rotateToken")}
+                    </MenuItem>
+                  ) : (
+                    <MenuItem disabled={busy || isCurrent} onClick={() => setResetTarget(user)}>
+                      {t("users.resetPassword")}
+                    </MenuItem>
+                  )}
+                  <MenuItem
+                    disabled={busy}
+                    onClick={() =>
+                      run(() => revokeSessions(user.id), t("users.messages.sessionsRevoked"))
                     }
-                  }}
-                >
-                  {t("common.actions.delete")}
-                </Button>
-              </Stack>
-            </Box>
+                  >
+                    {t("users.revokeSessions")}
+                  </MenuItem>
+                  <MenuDivider />
+                  <MenuItem
+                    theme="danger"
+                    disabled={busy || isCurrent}
+                    onClick={() => setDeleteTarget(user)}
+                  >
+                    {t("common.actions.delete")}
+                  </MenuItem>
+                </Menu>
+              </div>
+            </article>
           );
         })}
-      </Paper>
+      </div>
 
-      <Paper variant="outlined" sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5 }}>
-        <Typography variant="h6">{t("users.createAccount")}</Typography>
-        <Box
-          component="form"
-          onSubmit={add}
-          sx={{
-            mt: 2,
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr) 180px auto" },
-            gap: 1.25,
-            alignItems: "start",
-          }}
-        >
-          <TextField
+      <section className="cm-users-create">
+        <h2>{t("users.createAccount")}</h2>
+        <form className="cm-users-create__form" onSubmit={add}>
+          <TextInput
+            size="l"
             label={t("auth.username")}
             required
             value={form.username}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, username: event.target.value }))
-            }
+            onUpdate={(username) => setForm((current) => ({ ...current, username }))}
             autoComplete="off"
-            helperText={t("auth.usernameRules")}
-            slotProps={{ htmlInput: { autoCapitalize: "none", spellCheck: false } }}
+            note={t("auth.usernameRules")}
+            controlProps={{ autoCapitalize: "none", spellCheck: false }}
           />
           {form.role === "service" ? (
-            <Box />
+            <div />
           ) : (
             <PasswordField
               label={t("users.temporaryPassword")}
+              size="l"
               required
               value={form.temporary_password}
-              onGenerate={(password) =>
-                setForm((current) => ({ ...current, temporary_password: password }))
+              onGenerate={(temporary_password) =>
+                setForm((current) => ({ ...current, temporary_password }))
               }
               disabled={busy}
               onChange={(event) =>
-                setForm((current) => ({ ...current, temporary_password: event.target.value }))
+                setForm((current) => ({
+                  ...current,
+                  temporary_password: event.target.value,
+                }))
               }
               autoComplete="new-password"
             />
           )}
-          <TextField
-            select
-            label={t("users.role")}
-            value={form.role}
-            onChange={(event) =>
+          <Select
+            size="l"
+            aria-label={t("users.role")}
+            value={[form.role]}
+            options={["admin", "member", "service"].map((role) => ({
+              value: role,
+              content: t(`users.roles.${role}`),
+            }))}
+            onUpdate={([role = "member"]) =>
               setForm((current) => ({
                 ...current,
-                role: event.target.value,
-                temporary_password:
-                  event.target.value === "service" ? "" : current.temporary_password,
+                role,
+                temporary_password: role === "service" ? "" : current.temporary_password,
               }))
             }
+          />
+          <Button
+            type="submit"
+            view="action"
+            size="l"
+            disabled={busy || !form.username.trim()}
+            loading={busy}
           >
-            {["admin", "member", "service"].map((role) => (
-              <MenuItem key={role} value={role}>
-                {t(`users.roles.${role}`)}
-              </MenuItem>
-            ))}
-          </TextField>
-          <Button type="submit" variant="contained" disabled={busy || !form.username.trim()}>
             {t("common.actions.create")}
           </Button>
-        </Box>
-      </Paper>
+        </form>
+      </section>
 
       <Dialog
-        open={Boolean(resetTarget)}
-        onClose={() => setResetTarget(null)}
-        maxWidth="xs"
+        aria-label={t("users.resetPasswordFor", { username: resetTarget?.username })}
+        className="cm-secondary-dialog"
         fullWidth
+        maxWidth="s"
+        open={Boolean(resetTarget)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !busy) closeUserAction(setResetTarget, resetTarget);
+        }}
       >
-        <DialogTitle>
-          {t("users.resetPasswordFor", { username: resetTarget?.username })}
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t("users.resetPasswordDescription")}
-          </Typography>
-          <PasswordField
-            label={t("users.temporaryPassword")}
-            value={temporaryPassword}
-            onGenerate={setTemporaryPassword}
-            disabled={busy}
-            onChange={(event) => setTemporaryPassword(event.target.value)}
-            autoComplete="new-password"
-            autoFocus
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResetTarget(null)}>{t("common.actions.cancel")}</Button>
-          <Button variant="contained" disabled={busy || !temporaryPassword} onClick={saveReset}>
-            {t("users.resetPassword")}
-          </Button>
-        </DialogActions>
+        <Dialog.Header caption={t("users.resetPasswordFor", { username: resetTarget?.username })} />
+        <Dialog.Body>
+          <div className="cm-secondary-form">
+            <p className="cm-secondary-copy">{t("users.resetPasswordDescription")}</p>
+            <PasswordField
+              label={t("users.temporaryPassword")}
+              value={temporaryPassword}
+              onGenerate={setTemporaryPassword}
+              disabled={busy}
+              onChange={(event) => setTemporaryPassword(event.target.value)}
+              autoComplete="new-password"
+              autoFocus
+            />
+          </div>
+        </Dialog.Body>
+        <Dialog.Footer
+          onClickButtonApply={saveReset}
+          onClickButtonCancel={() => closeUserAction(setResetTarget, resetTarget)}
+          textButtonApply={t("users.resetPassword")}
+          textButtonCancel={t("common.actions.cancel")}
+          propsButtonApply={{ disabled: busy || !temporaryPassword, loading: busy, view: "action" }}
+          propsButtonCancel={{ disabled: busy }}
+        />
       </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={t("common.actions.delete")}
+        confirmText={t("common.actions.delete")}
+        confirmColor="error"
+        onClose={() => closeUserAction(setDeleteTarget, deleteTarget)}
+        onConfirm={deleteUser}
+      >
+        {t("users.deleteConfirm", { username: deleteTarget?.username })}
+      </ConfirmDialog>
+
       <UserFolderAccessDialog
         open={Boolean(folderAccessTarget)}
         user={folderAccessTarget}
-        onClose={() => setFolderAccessTarget(null)}
+        onClose={() => closeUserAction(setFolderAccessTarget, folderAccessTarget)}
       />
       <GroupManagementDialog open={groupsOpen} onClose={() => setGroupsOpen(false)} />
-    </Stack>
+    </section>
   );
 };
 

@@ -72,7 +72,7 @@ const ru = {
 
     confirmMasterPassword: "Повторите пароль",
     noRecoveryWarning:
-      "CipherMoth не может сбросить пароль единственного администратора. Создайте второго администратора и храните зашифрованную резервную копию.",
+      "CipherMoth не может сбросить пароль единственного администратора. Создайте второго администратора или храните зашифрованную резервную копию.",
     noRecoveryAcknowledgement:
       "Я понимаю: для восстановления нужен другой активный администратор или зашифрованная резервная копия.",
     unlock: "Открыть хранилище",
@@ -107,6 +107,14 @@ const ru = {
     updateAvailable: "Вышла новая версия CipherMoth",
     settings: "Настройки",
   },
+  navigation: {
+    privateVault: "Личное хранилище",
+    workspace: "Рабочая область",
+    manage: "Управление",
+    administration: "Администрирование",
+    more: "Ещё",
+    newEntry: "Новая запись",
+  },
   vault: {
     title: "Хранилище",
     subtitle: {
@@ -130,7 +138,7 @@ const ru = {
       favoritesFirst: "Избранное",
       nameAscending: "Название А–Я",
       nameDescending: "Название Я–А",
-      dateAdded: "По времени добавления",
+      dateAdded: "Сначала новые",
       entries: "Записи хранилища",
       details: "Просмотр записи",
       back: "К списку записей",
@@ -250,6 +258,7 @@ const ru = {
   generator: {
     length: "Длина",
     regenerate: "Сгенерировать заново",
+    undoReplacement: "Вернуть прежний пароль",
   },
   strength: {
     veryWeak: "Очень слабый",
@@ -327,6 +336,7 @@ const ru = {
   settings: {
     title: "Настройки",
     saved: "Настройки сохранены.",
+    rangeValidation: "«{{label}}»: укажите целое число от {{min}} до {{max}} секунд.",
     warningValidation: "Время предупреждения должно быть меньше времени до выхода.",
     fields: {
       inactivity: "Время до выхода",
@@ -374,6 +384,7 @@ const ru = {
     deleteForeverTitle: "Удалить навсегда?",
     deleteForeverMessage:
       "Удалить <strong>{{name}}</strong> навсегда? Вернуть запись уже не получится.",
+    purgeFailed: "Запись осталась в корзине. Удаление не удалось — можно повторить попытку.",
     deleteAll: "Удалить всё",
     deleteAllTitle: "Очистить корзину?",
     deleteAllMessage:
@@ -614,8 +625,9 @@ ru.folderAccess = {
   targetType: "Кому выдать",
   target: "Пользователь или группа",
   targetTypes: { user: "Пользователь", group: "Группа" },
-  expiresAt: "Действует до (необязательно)",
+  expiresAt: "Срок действия (необязательно)",
   expiresHint: "Оставьте пустым для бессрочного доступа. Время — в часовом поясе устройства.",
+  expiresValidation: "Укажите время в будущем или оставьте поле пустым.",
   expired: "Истёк",
   audit: "Журнал действий",
   noAudit: "Действий с доступом пока нет.",

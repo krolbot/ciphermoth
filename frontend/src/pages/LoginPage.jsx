@@ -1,16 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
-import {
-  Box,
-  Button,
-  Checkbox,
-  FormControlLabel,
-  LinearProgress,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { useLocation } from "react-router-dom";
+import { Button, Checkbox, Progress, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
-import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
 
 import LanguageSwitcher from "../components/LanguageSwitcher";
@@ -19,44 +10,30 @@ import MothIcon from "../components/MothIcon";
 import PasswordField from "../components/PasswordField";
 import ThemeToggle from "../components/ThemeToggle";
 import { getMasterPasswordStrength } from "../lib/passwordStrength";
-import { GLOW, GLOW_SOFT, INK, WARN } from "../lib/brand";
 import { LOGOUT_NOTICE } from "../utils";
 
-const unlockButtonSx = {
-  bgcolor: GLOW,
-  color: INK,
-  fontWeight: 700,
-  letterSpacing: "0.06em",
-  py: 1.6,
-  "&:hover": { bgcolor: GLOW_SOFT },
-  "&.Mui-disabled": { bgcolor: "rgba(125,211,192,0.3)", color: "rgba(11,11,12,0.55)" },
-};
+const STRENGTH_THEME = { error: "danger", warning: "warning", success: "success" };
 
 const LoginPage = () => {
   const { t } = useTranslation();
   const { state } = useLocation();
-  const { enqueueSnackbar } = useSnackbar();
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const { fetchStatus, authenticate, setUsername, setValue, setConfirm, setError } =
-    useStoreActions((a) => a.ciphermothModels.masterPassword);
+    useStoreActions((actions) => actions.ciphermothModels.masterPassword);
   const { initialized, error, username, value, confirm, loading } = useStoreState(
-    (s) => s.ciphermothModels.masterPassword
+    (storeState) => storeState.ciphermothModels.masterPassword
   );
 
   useEffect(() => {
     fetchStatus();
-    const notice = sessionStorage.getItem(LOGOUT_NOTICE);
-    if (notice) {
+    const logoutNotice = sessionStorage.getItem(LOGOUT_NOTICE);
+    if (logoutNotice) {
       sessionStorage.removeItem(LOGOUT_NOTICE);
-      enqueueSnackbar(t(notice), { variant: "info" });
+      setNotice(t(logoutNotice));
     }
-  }, [fetchStatus, enqueueSnackbar, t]);
-
-  useEffect(() => {
-    if (error) enqueueSnackbar(error, { variant: "error" });
-  }, [error, enqueueSnackbar]);
-
-  const [acknowledged, setAcknowledged] = useState(false);
+  }, [fetchStatus, t]);
 
   const strength = initialized === false ? getMasterPasswordStrength(value) : null;
 
@@ -66,7 +43,7 @@ const LoginPage = () => {
       return;
     }
     if (!value.trim()) {
-      enqueueSnackbar(t("auth.validation.enterMasterPassword"), { variant: "error" });
+      setError(t("auth.validation.enterMasterPassword"));
       return;
     }
     authenticate({ endpoint: "/auth/login", username, password: value, returnTo: state?.returnTo });
@@ -101,204 +78,142 @@ const LoginPage = () => {
     });
   };
 
-  if (initialized === null) {
-    return <LoadingScreen />;
-  }
+  if (initialized === null) return <LoadingScreen />;
 
   return (
-    <Box
-      sx={{
-        position: "fixed",
-        inset: 0,
-        bgcolor: "background.default",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        p: 3,
-        overflow: "auto",
-        zIndex: (t) => t.zIndex.modal,
-      }}
-    >
-      <Box
-        component="form"
-        onSubmit={(e) => e.preventDefault()}
-        sx={{
-          width: "100%",
-          maxWidth: initialized ? 400 : 440,
-          bgcolor: "background.paper",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
-          px: { xs: 3, sm: 4.25 },
-          py: 5,
-          textAlign: "center",
-        }}
-      >
-        <Box
-          component={Link}
-          to="/passwords"
-          aria-label={`CipherMoth — ${t("users.backToVault")}`}
-          sx={{
-            display: "block",
-            width: 56,
-            mx: "auto",
-            mb: 2.25,
-            color: "text.primary",
-            filter: `drop-shadow(0 0 18px color-mix(in srgb, ${GLOW} 50%, transparent))`,
+    <div className="cm-auth-page">
+      <section className="cm-auth-workspace">
+        <form
+          className="cm-auth-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!loading) (initialized ? handleLogin : handleCreate)();
           }}
         >
-          <MothIcon width="100%" height="100%" style={{ display: "block", overflow: "visible" }} />
-        </Box>
+          <div className="cm-auth-form__brand">
+            <div className="cm-auth-form__brand-identity">
+              <span className="cm-auth-form__brand-mark" aria-hidden="true">
+                <MothIcon />
+              </span>
+              <span className="cm-auth-form__brand-name">
+                Cipher<span className="cm-brand__name-accent">Moth</span>
+              </span>
+            </div>
+            <div className="cm-auth-form__utilities">
+              <ThemeToggle />
+              <LanguageSwitcher placement="auth" />
+            </div>
+          </div>
+          <h2>{t(initialized ? "auth.unlock" : "auth.setupTitle")}</h2>
+          <p className="cm-auth-form__description">
+            {t(initialized ? "auth.tagline" : "auth.setupDescription")}
+          </p>
 
-        {initialized ? (
-          <>
-            <Typography sx={{ fontSize: 24, fontWeight: 700, color: "text.primary" }}>
-              Cipher
-              <Box component="span" sx={{ color: GLOW }}>
-                Moth
-              </Box>
-            </Typography>
-            <Typography
-              sx={{
-                mt: 1,
-                mb: 3.25,
-                fontFamily: "'Space Mono', monospace",
-                fontSize: 12,
-                color: "text.secondary",
-              }}
-            >
-              {t("auth.tagline")}
-            </Typography>
-          </>
-        ) : (
-          <>
-            <Typography sx={{ fontSize: 23, fontWeight: 700, color: "text.primary" }}>
-              {t("auth.setupTitle")}
-            </Typography>
-            <Typography
-              sx={{ mt: 1, mb: 3, fontSize: 13, color: "text.secondary", lineHeight: 1.5 }}
-            >
-              {t("auth.setupDescription")}
-            </Typography>
-          </>
-        )}
+          <div className="cm-auth-form__fields">
+            {notice && (
+              <div className="cm-auth-form__notice" role="status">
+                {notice}
+              </div>
+            )}
+            {error && (
+              <div className="cm-auth-form__error" role="alert">
+                {error}
+              </div>
+            )}
 
-        <TextField
-          label={t(initialized ? "auth.username" : "auth.administratorUsername")}
-          required
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          autoComplete="username"
-          helperText={initialized ? undefined : t("auth.usernameRules")}
-          autoFocus
-          fullWidth
-          sx={{ mb: 1.5 }}
-          slotProps={{ htmlInput: { autoCapitalize: "none", spellCheck: false } }}
-        />
-        <PasswordField
-          label={t("auth.masterPassword")}
-          required
-          value={value}
-          onGenerate={initialized ? undefined : setValue}
-          disabled={loading}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && initialized) handleLogin();
-          }}
-          autoFocus={false}
-          autoComplete={initialized ? "current-password" : "new-password"}
-        />
+            <label className="cm-field" htmlFor="cm-auth-username">
+              <span className="cm-field__label">
+                {t(initialized ? "auth.username" : "auth.administratorUsername")}
+                <span className="cm-field__required" aria-hidden="true">
+                  *
+                </span>
+              </span>
+              <TextInput
+                id="cm-auth-username"
+                size="xl"
+                value={username}
+                onUpdate={(nextUsername) => {
+                  setUsername(nextUsername);
+                  setError(null);
+                }}
+                autoComplete="username"
+                autoFocus
+                note={initialized ? undefined : t("auth.usernameRules")}
+                controlProps={{ autoCapitalize: "none", spellCheck: false, required: true }}
+              />
+            </label>
 
-        {!initialized && value && strength && (
-          <Box sx={{ mt: 2, textAlign: "left" }}>
-            <LinearProgress
-              variant="determinate"
-              value={strength.value}
-              color={strength.color}
-              sx={{ borderRadius: 1, height: 6, bgcolor: "action.hover" }}
-            />
-            <Typography
-              variant="caption"
-              color={`${strength.color}.main`}
-              sx={{ mt: 0.5, display: "block" }}
-            >
-              {t(strength.labelKey)}
-            </Typography>
-          </Box>
-        )}
-
-        {!initialized && (
-          <Box sx={{ mt: 2 }}>
             <PasswordField
-              label={t("auth.confirmMasterPassword")}
+              label={t("auth.masterPassword")}
               required
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
+              size="xl"
+              value={value}
+              onGenerate={initialized ? undefined : setValue}
+              disabled={loading}
+              onUpdate={(nextPassword) => {
+                setValue(nextPassword);
+                setError(null);
               }}
-              autoComplete="new-password"
+              autoComplete={initialized ? "current-password" : "new-password"}
             />
-            <Box
-              sx={{
-                mt: 2,
-                display: "flex",
-                gap: 1.25,
-                textAlign: "left",
-                border: `1px solid ${WARN}`,
-                bgcolor: "rgba(224,152,47,0.08)",
-                borderRadius: 1.5,
-                p: 1.6,
-              }}
-            >
-              <Box component="span" sx={{ color: WARN, lineHeight: 1.4 }}>
-                ⚠
-              </Box>
-              <Typography variant="caption" sx={{ color: WARN, lineHeight: 1.5 }}>
-                {t("auth.noRecoveryWarning")}
-              </Typography>
-            </Box>
-            <FormControlLabel
-              sx={{ mt: 1, ml: 0, alignItems: "center" }}
-              control={
-                <Checkbox
-                  size="small"
-                  checked={acknowledged}
-                  onChange={(e) => {
-                    setAcknowledged(e.target.checked);
+
+            {!initialized && value && strength && (
+              <div className="cm-auth-form__strength" aria-live="polite">
+                <Progress value={strength.value} theme={STRENGTH_THEME[strength.color]} size="s" />
+                <span className="cm-auth-form__strength-label">{t(strength.labelKey)}</span>
+              </div>
+            )}
+
+            {!initialized && (
+              <div className="cm-auth-form__bootstrap">
+                <PasswordField
+                  label={t("auth.confirmMasterPassword")}
+                  required
+                  size="xl"
+                  value={confirm}
+                  onUpdate={(nextConfirm) => {
+                    setConfirm(nextConfirm);
                     setError(null);
                   }}
-                  sx={{ color: GLOW, "&.Mui-checked": { color: GLOW }, py: 0.25 }}
+                  autoComplete="new-password"
                 />
-              }
-              label={
-                <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  {t("auth.noRecoveryAcknowledgement")}
-                </Typography>
-              }
-            />
-          </Box>
-        )}
+                <div className="cm-auth-form__warning" role="note">
+                  {t("auth.noRecoveryWarning")}
+                </div>
+                <Checkbox
+                  size="l"
+                  checked={acknowledged}
+                  onUpdate={(checked) => {
+                    setAcknowledged(checked);
+                    setError(null);
+                  }}
+                  content={
+                    <span className="cm-auth-form__acknowledgement">
+                      {t("auth.noRecoveryAcknowledgement")}
+                    </span>
+                  }
+                />
+              </div>
+            )}
+          </div>
 
-        <Button
-          fullWidth
-          size="large"
-          variant="contained"
-          loading={loading}
-          disabled={!initialized && !acknowledged}
-          onClick={initialized ? handleLogin : handleCreate}
-          sx={{ mt: 3, ...unlockButtonSx }}
-        >
-          {t(initialized ? "auth.unlock" : "auth.create")}
-        </Button>
+          <Button
+            className="cm-auth-form__submit"
+            type="submit"
+            view="action"
+            size="xl"
+            width="max"
+            loading={loading}
+            disabled={!initialized && !acknowledged}
+          >
+            {t(initialized ? "auth.unlock" : "auth.create")}
+          </Button>
 
-        <Typography sx={{ mt: 2.75, fontSize: 11, color: "text.disabled" }}>
-          {t("auth.closeLocks")}
-        </Typography>
-      </Box>
-      <ThemeToggle zIndex={1301} />
-      <LanguageSwitcher placement="floating" />
-    </Box>
+          <p className="cm-auth-form__lock-note">{t("auth.closeLocks")}</p>
+        </form>
+      </section>
+    </div>
   );
 };
 

@@ -1,20 +1,6 @@
-import { useState } from "react";
-import {
-  Box,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-  Stack,
-  Tooltip,
-  Typography,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
-import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
-import RestoreFromTrashIcon from "@mui/icons-material/RestoreFromTrash";
+import { useId, useState } from "react";
+import { ArrowUturnCcwLeft, TrashBin } from "@gravity-ui/icons";
+import { Button, Dialog, Icon, Tooltip } from "@gravity-ui/uikit";
 import { Trans, useTranslation } from "react-i18next";
 
 import ConfirmDialog from "../ConfirmDialog";
@@ -27,108 +13,124 @@ const formatDeleted = (iso, language) => {
 
 const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
   const { t, i18n } = useTranslation();
-  const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
+  const titleId = useId();
   const [purgeTarget, setPurgeTarget] = useState(null);
+  const [purgeError, setPurgeError] = useState("");
+  const [pendingId, setPendingId] = useState(null);
+
+  const handleRestore = async (entry) => {
+    setPendingId(entry.id);
+    try {
+      await onRestore({ passwordName: entry.password_name, entryId: entry.id });
+    } catch {
+      // The parent reports the request error; keep this dialog open for retry.
+    } finally {
+      setPendingId(null);
+    }
+  };
 
   const handlePurge = async () => {
-    await onPurge({ passwordName: purgeTarget.password_name, entryId: purgeTarget.id });
-    setPurgeTarget(null);
+    setPurgeError("");
+    setPendingId(purgeTarget.id);
+    try {
+      await onPurge({ passwordName: purgeTarget.password_name, entryId: purgeTarget.id });
+      setPurgeTarget(null);
+    } catch {
+      setPurgeError(t("trashDialog.purgeFailed"));
+    } finally {
+      setPendingId(null);
+    }
   };
 
   return (
     <Dialog
-      open={open}
-      onClose={onClose}
-      maxWidth="sm"
+      aria-labelledby={titleId}
+      className="cm-secondary-dialog cm-secondary-dialog--trash"
+      contentOverflow="auto"
       fullWidth
-      fullScreen={fullScreen}
-      aria-labelledby="trash-title"
+      hasCloseButton={false}
+      maxWidth="m"
+      modalClassName="cm-secondary-dialog-modal"
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && pendingId === null) onClose();
+      }}
+      open={open}
     >
-      <DialogTitle id="trash-title">{t("vault.trash")}</DialogTitle>
-      <DialogContent dividers>
+      <Dialog.Header caption={t("vault.trash")} id={titleId} />
+      <Dialog.Body hasBorders>
         {trash.length === 0 ? (
-          <Typography variant="body2" sx={{ color: "text.secondary", py: 4, textAlign: "center" }}>
-            {t("trashDialog.empty")}
-          </Typography>
+          <p className="cm-trash__empty">{t("trashDialog.empty")}</p>
         ) : (
-          <Box component="ul" aria-label={t("vault.trash")} sx={{ listStyle: "none", p: 0, m: 0 }}>
+          <ul aria-label={t("vault.trash")} className="cm-trash__list">
             {trash.map((entry) => (
-              <Stack
-                component="li"
-                key={entry.id}
-                direction="row"
-                spacing={1}
-                sx={{
-                  py: 1.5,
-                  alignItems: "center",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                  "&:last-child": { borderBottom: 0 },
-                }}
-              >
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600, overflowWrap: "anywhere" }}>
-                    {entry.password_name}
-                  </Typography>
-                  {entry.username && (
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ overflowWrap: "anywhere" }}
-                    >
-                      {entry.username}
-                    </Typography>
-                  )}
-                  <Typography variant="caption" color="text.secondary">
+              <li className="cm-trash__row" key={entry.id}>
+                <div className="cm-trash__details">
+                  <span className="cm-trash__name">{entry.password_name}</span>
+                  {entry.username && <span className="cm-trash__username">{entry.username}</span>}
+                  <span className="cm-trash__deleted">
                     {t("trashDialog.deleted")}:{" "}
                     {formatDeleted(entry.deleted, i18n.resolvedLanguage)}
-                  </Typography>
-                </Box>
-                <Tooltip title={t("trashDialog.restore")}>
-                  <IconButton
-                    aria-label={`${t("trashDialog.restore")}: ${entry.password_name}`}
-                    color="primary"
-                    onClick={() =>
-                      onRestore({ passwordName: entry.password_name, entryId: entry.id })
-                    }
-                    sx={{ width: 44, height: 44 }}
-                  >
-                    <RestoreFromTrashIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={t("trashDialog.deleteForever")}>
-                  <IconButton
-                    aria-label={`${t("trashDialog.deleteForever")}: ${entry.password_name}`}
-                    color="error"
-                    onClick={() => setPurgeTarget(entry)}
-                    sx={{ width: 44, height: 44 }}
-                  >
-                    <DeleteForeverIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
+                  </span>
+                </div>
+                <div className="cm-trash__actions">
+                  <Tooltip content={t("trashDialog.restore")} role="label">
+                    <Button
+                      aria-label={`${t("trashDialog.restore")}: ${entry.password_name}`}
+                      className="cm-trash__action"
+                      disabled={pendingId !== null}
+                      loading={pendingId === entry.id && !purgeTarget}
+                      onClick={() => handleRestore(entry)}
+                      size="l"
+                      type="button"
+                      view="flat"
+                    >
+                      <Icon data={ArrowUturnCcwLeft} />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content={t("trashDialog.deleteForever")} role="label">
+                    <Button
+                      aria-label={`${t("trashDialog.deleteForever")}: ${entry.password_name}`}
+                      className="cm-trash__action"
+                      disabled={pendingId !== null}
+                      onClick={() => {
+                        setPurgeError("");
+                        setPurgeTarget(entry);
+                      }}
+                      size="l"
+                      type="button"
+                      view="flat-danger"
+                    >
+                      <Icon data={TrashBin} />
+                    </Button>
+                  </Tooltip>
+                </div>
+              </li>
             ))}
-          </Box>
+          </ul>
         )}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} sx={{ minHeight: 44 }}>
-          {t("common.actions.close")}
-        </Button>
-      </DialogActions>
+      </Dialog.Body>
+      <Dialog.Footer
+        onClickButtonCancel={onClose}
+        propsButtonCancel={{ disabled: pendingId !== null }}
+        textButtonCancel={t("common.actions.close")}
+      />
       <ConfirmDialog
-        open={!!purgeTarget}
-        title={t("trashDialog.deleteForeverTitle")}
-        confirmText={t("trashDialog.deleteForever")}
         confirmColor="error"
-        onClose={() => setPurgeTarget(null)}
+        confirmText={t(purgeError ? "common.actions.retry" : "trashDialog.deleteForever")}
+        error={purgeError}
+        onClose={() => {
+          setPurgeError("");
+          setPurgeTarget(null);
+        }}
         onConfirm={handlePurge}
+        open={Boolean(purgeTarget)}
+        pending={pendingId !== null}
+        title={t("trashDialog.deleteForeverTitle")}
       >
         <Trans
+          components={{ strong: <strong /> }}
           i18nKey="trashDialog.deleteForeverMessage"
           values={{ name: purgeTarget?.password_name }}
-          components={{ strong: <strong /> }}
         />
       </ConfirmDialog>
     </Dialog>

@@ -1,111 +1,84 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Box,
-  Button,
-  Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  MenuItem,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
+import { Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
-import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
 
+import { useSnackbar } from "../../hooks/useNotify";
+import { isInvalidExpiry, toLocalExpiry, toUtcExpiry } from "../../lib/accessExpiry";
 import { getCurrentUser } from "../../utils";
+import ConfirmDialog from "../ConfirmDialog";
 
-const toUtc = (value) => (value ? new Date(value).toISOString() : null);
 const eventDate = (value, language) => {
   const iso = /[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`;
   return new Date(iso).toLocaleString(language);
 };
-const toLocalInput = (value) => {
-  if (!value) return "";
-  const parsed = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
-  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-};
+
+const permissionOptions = (t) => [
+  { value: "read", content: t("sharing.read") },
+  { value: "write", content: t("sharing.readWrite") },
+];
 
 const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
   const { t } = useTranslation();
   const [permission, setPermission] = useState(grant.permission);
-  const [expiresAt, setExpiresAt] = useState(toLocalInput(grant.expires_at));
+  const [expiresAt, setExpiresAt] = useState(toLocalExpiry(grant.expires_at));
+  const expiryInvalid = isInvalidExpiry(expiresAt);
 
   useEffect(() => {
     setPermission(grant.permission);
-    setExpiresAt(toLocalInput(grant.expires_at));
+    setExpiresAt(toLocalExpiry(grant.expires_at));
   }, [grant.expires_at, grant.permission]);
 
   return (
-    <Paper
-      variant="outlined"
-      sx={{
-        p: 1.25,
-        display: "grid",
-        gridTemplateColumns: { xs: "1fr", sm: "minmax(140px, 1fr) 130px 190px auto auto" },
-        gap: 1,
-        alignItems: "center",
-      }}
-    >
-      <Box sx={{ minWidth: 0 }}>
-        <Typography sx={{ fontWeight: 650, overflowWrap: "anywhere" }}>
-          {grant.target_name}
-        </Typography>
-        <Stack direction="row" spacing={0.75} sx={{ mt: 0.5 }}>
-          <Chip size="small" label={t(`folderAccess.targetTypes.${grant.target_type}`)} />
-          {grant.expired && <Chip size="small" color="warning" label={t("folderAccess.expired")} />}
-        </Stack>
-      </Box>
-      <TextField
-        select
-        size="small"
-        label={t("sharing.permission")}
-        value={permission}
+    <article className="cm-grant-row">
+      <div className="cm-grant-row__target">
+        <strong>{grant.target_name}</strong>
+        <span>
+          <Label size="s">{t(`folderAccess.targetTypes.${grant.target_type}`)}</Label>
+          {grant.expired && (
+            <Label size="s" theme="warning">
+              {t("folderAccess.expired")}
+            </Label>
+          )}
+        </span>
+      </div>
+      <Select
+        size="m"
+        aria-label={t("sharing.permission")}
+        value={[permission]}
         disabled={busy}
-        onChange={(event) => setPermission(event.target.value)}
-      >
-        <MenuItem value="read">{t("sharing.read")}</MenuItem>
-        <MenuItem value="write">{t("sharing.readWrite")}</MenuItem>
-      </TextField>
-      <TextField
-        size="small"
+        options={permissionOptions(t)}
+        onUpdate={([value = "read"]) => setPermission(value)}
+      />
+      <TextInput
+        size="m"
         type="datetime-local"
         label={t("folderAccess.expiresAt")}
-        helperText={t("folderAccess.expiresHint")}
+        note={t("folderAccess.expiresHint")}
         value={expiresAt}
         disabled={busy}
-        onChange={(event) => setExpiresAt(event.target.value)}
-        slotProps={{
-          inputLabel: { shrink: true },
-          htmlInput: { min: toLocalInput(new Date().toISOString()) },
-        }}
+        onUpdate={setExpiresAt}
+        validationState={expiryInvalid ? "invalid" : undefined}
+        errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
+        controlProps={{ min: toLocalExpiry(new Date().toISOString()) }}
       />
       <Button
-        variant="outlined"
-        disabled={busy}
-        onClick={() => onSave(permission, toUtc(expiresAt))}
+        type="button"
+        view="outlined"
+        disabled={busy || expiryInvalid}
+        onClick={() => onSave(permission, toUtcExpiry(expiresAt))}
       >
         {t("common.actions.save")}
       </Button>
-      <Button color="error" disabled={busy} onClick={onRevoke}>
+      <Button type="button" view="flat-danger" disabled={busy} onClick={onRevoke}>
         {t("sharing.revoke")}
       </Button>
-    </Paper>
+    </article>
   );
 };
 
 const FolderAccessDialog = ({ open, onClose }) => {
   const { t, i18n } = useTranslation();
-  const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
   const { enqueueSnackbar } = useSnackbar();
   const folders = useStoreState((state) => state.ciphermothModels.access.folders);
   const groups = useStoreState((state) => state.ciphermothModels.access.groups);
@@ -133,6 +106,8 @@ const FolderAccessDialog = ({ open, onClose }) => {
   const [permission, setPermission] = useState("read");
   const [expiresAt, setExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const expiryInvalid = isInvalidExpiry(expiresAt);
   const currentUserId = getCurrentUser()?.id;
   const selected = folders.find((folder) => folder.id === Number(folderId)) ?? null;
   const ownsSelected = selected?.owner_id === currentUserId;
@@ -146,7 +121,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
     setTargets(nextTargets);
     setFolderId((current) => {
       if (nextFolders.some((folder) => folder.id === Number(current))) return current;
-      return nextFolders[0]?.id ?? "";
+      return String(nextFolders[0]?.id ?? "");
     });
     return { nextFolders, nextGroups };
   }, [getFolders, getGroups, shareTargets]);
@@ -196,7 +171,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
     const source = targetType === "user" ? targets : groups;
     return source.filter(
       (target) =>
-        target.id !== selected?.owner_id &&
+        !(targetType === "user" && target.id === selected?.owner_id) &&
         !grants.some((grant) => grant.target_type === targetType && grant.target_id === target.id)
     );
   }, [targetType, targets, groups, grants, selected?.owner_id]);
@@ -221,9 +196,9 @@ const FolderAccessDialog = ({ open, onClose }) => {
         setFolderGrant({
           folderId: selected.id,
           targetType,
-          targetId,
+          targetId: Number(targetId),
           permission,
-          expiresAt: toUtc(expiresAt),
+          expiresAt: toUtcExpiry(expiresAt),
         }),
       t("folderAccess.saved")
     );
@@ -242,97 +217,92 @@ const FolderAccessDialog = ({ open, onClose }) => {
     if (created) setNewFolderName("");
   };
 
+  const removeSelectedFolder = async () => {
+    const removed = await run(
+      () => deleteFolder(deleteTarget.id),
+      t("folderAccess.folderDeleted"),
+      { refreshBase: true }
+    );
+    if (removed) setDeleteTarget(null);
+  };
+
   return (
-    <Dialog
-      open={open}
-      onClose={busy ? undefined : onClose}
-      maxWidth="lg"
-      fullWidth
-      fullScreen={fullScreen}
-      slotProps={{
-        paper: {
-          sx: {
-            "& .MuiButton-root": { minHeight: { xs: 44, sm: 36 } },
-            "& .MuiInputBase-root": { minHeight: { xs: 44, sm: "initial" } },
-          },
-        },
-      }}
-    >
-      <DialogTitle>{t("folderAccess.title")}</DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2.5}>
-          <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              {t("folderAccess.createFolder")}
-            </Typography>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-              <TextField
-                size="small"
-                label={t("common.fields.name")}
-                value={newFolderName}
-                onChange={(event) => setNewFolderName(event.target.value)}
-                sx={{ flex: 1 }}
-              />
-              <Button
-                variant="contained"
-                disabled={busy || !newFolderName.trim()}
-                onClick={addFolder}
-              >
-                {t("common.actions.create")}
-              </Button>
-            </Stack>
-          </Paper>
+    <>
+      <Dialog
+        aria-label={t("folderAccess.title")}
+        className="cm-secondary-dialog cm-access-dialog cm-access-dialog--wide"
+        contentOverflow="auto"
+        fullWidth
+        hasCloseButton={!busy}
+        maxWidth="l"
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !busy) onClose();
+        }}
+      >
+        <Dialog.Header caption={t("folderAccess.title")} />
+        <Dialog.Body>
+          <div className="cm-access-dialog__content">
+            <section className="cm-access-panel">
+              <h3>{t("folderAccess.createFolder")}</h3>
+              <div className="cm-access-inline-form">
+                <TextInput
+                  size="m"
+                  label={t("common.fields.name")}
+                  value={newFolderName}
+                  onUpdate={setNewFolderName}
+                />
+                <Button
+                  type="button"
+                  view="action"
+                  disabled={busy || !newFolderName.trim()}
+                  onClick={addFolder}
+                >
+                  {t("common.actions.create")}
+                </Button>
+              </div>
+            </section>
 
-          {folders.length === 0 ? (
-            <Typography color="text.secondary">{t("folderAccess.empty")}</Typography>
-          ) : (
-            <>
-              <TextField
-                select
-                label={t("common.fields.folder")}
-                value={folderId}
-                onChange={(event) => setFolderId(event.target.value)}
-              >
-                {folders.map((folder) => (
-                  <MenuItem key={folder.id} value={folder.id}>
-                    {folder.name} · {folder.owner_username}
-                  </MenuItem>
-                ))}
-              </TextField>
+            {folders.length === 0 ? (
+              <p className="cm-secondary-copy">{t("folderAccess.empty")}</p>
+            ) : (
+              <>
+                <Select
+                  size="l"
+                  aria-label={t("common.fields.folder")}
+                  value={folderId ? [folderId] : []}
+                  options={folders.map((folder) => ({
+                    value: String(folder.id),
+                    content: `${folder.name} · ${folder.owner_username}`,
+                  }))}
+                  onUpdate={([value = ""]) => setFolderId(value)}
+                />
 
-              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
-                <Stack spacing={1.25}>
-                  <Stack
-                    direction={{ xs: "column", sm: "row" }}
-                    spacing={1}
-                    sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
-                  >
-                    <Box>
-                      <Typography variant="h6">{selected?.name}</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {t("folderAccess.ownerLabel", { owner: selected?.owner_username })}
-                      </Typography>
-                    </Box>
-                    <Chip
-                      label={t(
+                <section className="cm-access-panel">
+                  <header className="cm-access-panel__header">
+                    <div>
+                      <h3>{selected?.name}</h3>
+                      <p>{t("folderAccess.ownerLabel", { owner: selected?.owner_username })}</p>
+                    </div>
+                    <Label size="s">
+                      {t(
                         selected?.access
                           ? `folderAccess.permissions.${selected.access}`
                           : "folderAccess.managementOnly"
                       )}
-                      variant="outlined"
-                    />
-                  </Stack>
+                    </Label>
+                  </header>
                   {ownsSelected && (
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <TextField
-                        size="small"
+                    <div className="cm-access-inline-form cm-access-inline-form--danger">
+                      <TextInput
+                        size="m"
                         label={t("folderAccess.rename")}
                         value={renameName}
-                        onChange={(event) => setRenameName(event.target.value)}
-                        sx={{ flex: 1 }}
+                        onUpdate={setRenameName}
                       />
                       <Button
-                        variant="outlined"
+                        type="button"
+                        view="outlined"
                         disabled={busy || !renameName.trim() || renameName.trim() === selected.name}
                         onClick={() =>
                           run(
@@ -349,168 +319,159 @@ const FolderAccessDialog = ({ open, onClose }) => {
                         {t("common.actions.save")}
                       </Button>
                       <Button
-                        color="error"
+                        type="button"
+                        view="outlined-danger"
                         disabled={busy}
-                        onClick={() =>
-                          window.confirm(
-                            t("folderAccess.deleteConfirm", { name: selected.name })
-                          ) &&
-                          run(() => deleteFolder(selected.id), t("folderAccess.folderDeleted"), {
-                            refreshBase: true,
-                          })
-                        }
+                        onClick={() => setDeleteTarget(selected)}
                       >
                         {t("common.actions.delete")}
                       </Button>
-                    </Stack>
+                    </div>
                   )}
-                </Stack>
-              </Paper>
+                </section>
 
-              {selected?.can_manage && (
-                <>
-                  <Box>
-                    <Typography variant="h6" sx={{ mb: 1 }}>
-                      {t("folderAccess.grants")}
-                    </Typography>
-                    <Stack spacing={1}>
-                      {grants.length === 0 && (
-                        <Typography color="text.secondary">{t("folderAccess.noGrants")}</Typography>
-                      )}
-                      {grants.map((grant) => (
-                        <GrantRow
-                          key={`${grant.target_type}-${grant.target_id}`}
-                          grant={grant}
-                          busy={busy}
-                          onSave={(nextPermission, nextExpiry) =>
-                            saveGrant(grant, nextPermission, nextExpiry)
-                          }
-                          onRevoke={() =>
-                            run(
-                              () =>
-                                revokeFolderGrant({
-                                  folderId: selected.id,
-                                  targetType: grant.target_type,
-                                  targetId: grant.target_id,
-                                }),
-                              t("folderAccess.revoked")
-                            )
-                          }
-                        />
-                      ))}
-                    </Stack>
-                  </Box>
-
-                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
-                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                      {t("sharing.grantAccess")}
-                    </Typography>
-                    <Box
-                      sx={{
-                        display: "grid",
-                        gridTemplateColumns: {
-                          xs: "1fr",
-                          md: "130px minmax(160px, 1fr) 130px 190px auto",
-                        },
-                        gap: 1,
-                      }}
-                    >
-                      <TextField
-                        select
-                        size="small"
-                        label={t("folderAccess.targetType")}
-                        value={targetType}
-                        disabled={busy}
-                        onChange={(event) => {
-                          setTargetType(event.target.value);
-                          setTargetId("");
-                        }}
-                      >
-                        <MenuItem value="user">{t("folderAccess.targetTypes.user")}</MenuItem>
-                        <MenuItem value="group">{t("folderAccess.targetTypes.group")}</MenuItem>
-                      </TextField>
-                      <TextField
-                        select
-                        size="small"
-                        label={t("folderAccess.target")}
-                        value={targetId}
-                        disabled={busy || grantTargets.length === 0}
-                        onChange={(event) => setTargetId(event.target.value)}
-                      >
-                        {grantTargets.map((target) => (
-                          <MenuItem key={target.id} value={target.id}>
-                            {target.name ?? target.username}
-                          </MenuItem>
-                        ))}
-                      </TextField>
-                      <TextField
-                        select
-                        size="small"
-                        label={t("sharing.permission")}
-                        value={permission}
-                        disabled={busy}
-                        onChange={(event) => setPermission(event.target.value)}
-                      >
-                        <MenuItem value="read">{t("sharing.read")}</MenuItem>
-                        <MenuItem value="write">{t("sharing.readWrite")}</MenuItem>
-                      </TextField>
-                      <TextField
-                        size="small"
-                        type="datetime-local"
-                        label={t("folderAccess.expiresAt")}
-                        helperText={t("folderAccess.expiresHint")}
-                        value={expiresAt}
-                        disabled={busy}
-                        onChange={(event) => setExpiresAt(event.target.value)}
-                        slotProps={{
-                          inputLabel: { shrink: true },
-                          htmlInput: { min: toLocalInput(new Date().toISOString()) },
-                        }}
-                      />
-                      <Button variant="contained" disabled={busy || !targetId} onClick={addGrant}>
-                        {t("sharing.grant")}
-                      </Button>
-                    </Box>
-                  </Paper>
-
-                  <Divider />
-                  <Box>
-                    <Typography variant="h6" sx={{ mb: 1 }}>
-                      {t("folderAccess.audit")}
-                    </Typography>
-                    <Stack spacing={0.75}>
-                      {audit.length === 0 ? (
-                        <Typography color="text.secondary">{t("folderAccess.noAudit")}</Typography>
+                {selected?.can_manage && (
+                  <>
+                    <section className="cm-access-section">
+                      <h3>{t("folderAccess.grants")}</h3>
+                      {grants.length === 0 ? (
+                        <p className="cm-secondary-copy">{t("folderAccess.noGrants")}</p>
                       ) : (
-                        audit.slice(0, 20).map((event) => (
-                          <Paper key={event.id} variant="outlined" sx={{ p: 1.25 }}>
-                            <Typography variant="body2">
-                              {t(`folderAccess.actions.${event.action}`, {
-                                defaultValue: event.action,
-                                actor: event.actor_username || t("folderAccess.systemActor"),
-                                target: event.target_username || event.target_group_name || "",
-                              })}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {eventDate(event.created, i18n.resolvedLanguage)}
-                            </Typography>
-                          </Paper>
-                        ))
+                        <div className="cm-grant-list">
+                          {grants.map((grant) => (
+                            <GrantRow
+                              key={`${grant.target_type}-${grant.target_id}`}
+                              grant={grant}
+                              busy={busy}
+                              onSave={(nextPermission, nextExpiry) =>
+                                saveGrant(grant, nextPermission, nextExpiry)
+                              }
+                              onRevoke={() =>
+                                run(
+                                  () =>
+                                    revokeFolderGrant({
+                                      folderId: selected.id,
+                                      targetType: grant.target_type,
+                                      targetId: grant.target_id,
+                                    }),
+                                  t("folderAccess.revoked")
+                                )
+                              }
+                            />
+                          ))}
+                        </div>
                       )}
-                    </Stack>
-                  </Box>
-                </>
-              )}
-            </>
-          )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={busy}>
-          {t("common.actions.close")}
-        </Button>
-      </DialogActions>
-    </Dialog>
+                    </section>
+
+                    <section className="cm-access-panel">
+                      <h3>{t("sharing.grantAccess")}</h3>
+                      <div className="cm-grant-form">
+                        <Select
+                          size="m"
+                          aria-label={t("folderAccess.targetType")}
+                          value={[targetType]}
+                          disabled={busy}
+                          options={[
+                            { value: "user", content: t("folderAccess.targetTypes.user") },
+                            { value: "group", content: t("folderAccess.targetTypes.group") },
+                          ]}
+                          onUpdate={([value = "user"]) => {
+                            setTargetType(value);
+                            setTargetId("");
+                          }}
+                        />
+                        <Select
+                          size="m"
+                          aria-label={t("folderAccess.target")}
+                          placeholder={t("folderAccess.target")}
+                          value={targetId ? [targetId] : []}
+                          disabled={busy || grantTargets.length === 0}
+                          options={grantTargets.map((target) => ({
+                            value: String(target.id),
+                            content: target.name ?? target.username,
+                          }))}
+                          onUpdate={([value = ""]) => setTargetId(value)}
+                        />
+                        <Select
+                          size="m"
+                          aria-label={t("sharing.permission")}
+                          value={[permission]}
+                          disabled={busy}
+                          options={permissionOptions(t)}
+                          onUpdate={([value = "read"]) => setPermission(value)}
+                        />
+                        <TextInput
+                          size="m"
+                          type="datetime-local"
+                          label={t("folderAccess.expiresAt")}
+                          note={t("folderAccess.expiresHint")}
+                          value={expiresAt}
+                          disabled={busy}
+                          onUpdate={setExpiresAt}
+                          validationState={expiryInvalid ? "invalid" : undefined}
+                          errorMessage={
+                            expiryInvalid ? t("folderAccess.expiresValidation") : undefined
+                          }
+                          controlProps={{ min: toLocalExpiry(new Date().toISOString()) }}
+                        />
+                        <Button
+                          type="button"
+                          view="action"
+                          disabled={busy || !targetId || expiryInvalid}
+                          onClick={addGrant}
+                        >
+                          {t("sharing.grant")}
+                        </Button>
+                      </div>
+                    </section>
+
+                    <section className="cm-access-section">
+                      <h3>{t("folderAccess.audit")}</h3>
+                      {audit.length === 0 ? (
+                        <p className="cm-secondary-copy">{t("folderAccess.noAudit")}</p>
+                      ) : (
+                        <ol className="cm-audit-list">
+                          {audit.slice(0, 20).map((event) => (
+                            <li key={event.id}>
+                              <span>
+                                {t(`folderAccess.actions.${event.action}`, {
+                                  defaultValue: event.action,
+                                  actor: event.actor_username || t("folderAccess.systemActor"),
+                                  target: event.target_username || event.target_group_name || "",
+                                })}
+                              </span>
+                              <time dateTime={event.created}>
+                                {eventDate(event.created, i18n.resolvedLanguage)}
+                              </time>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </Dialog.Body>
+        <Dialog.Footer
+          onClickButtonApply={onClose}
+          textButtonApply={t("common.actions.close")}
+          propsButtonApply={{ disabled: busy, view: "action" }}
+        />
+      </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={t("common.actions.delete")}
+        confirmText={t("common.actions.delete")}
+        confirmColor="error"
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={removeSelectedFolder}
+      >
+        {t("folderAccess.deleteConfirm", { name: deleteTarget?.name })}
+      </ConfirmDialog>
+    </>
   );
 };
 

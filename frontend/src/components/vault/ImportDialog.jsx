@@ -1,49 +1,31 @@
 import { useEffect, useState } from "react";
-import {
-  Box,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  FormControl,
-  FormControlLabel,
-  FormLabel,
-  Radio,
-  RadioGroup,
-  Stack,
-  ToggleButton,
-  ToggleButtonGroup,
-  Typography,
-} from "@mui/material";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
+import { FileArrowUp } from "@gravity-ui/icons";
+import { Alert, Button, Dialog, Icon, RadioGroup, SegmentedRadioGroup } from "@gravity-ui/uikit";
 import { Trans, useTranslation } from "react-i18next";
 
 import { IS_DESKTOP, chooseBackup } from "../../platform";
 import PasswordField from "../PasswordField";
 
-const ReportedRows = ({ rows = [], count, titleKey, color }) => {
+const ReportedRows = ({ rows = [], count, titleKey, warning = false }) => {
   const { t } = useTranslation();
   const hidden = count - rows.length;
   return (
-    <>
-      <Typography variant="body2" sx={{ color, mt: 1 }}>
+    <div
+      className={warning ? "cm-import-result__reported is-warning" : "cm-import-result__reported"}
+    >
+      <p>
         <strong>{count}</strong> {t(titleKey, { count })}
-      </Typography>
-      <Box component="ul" sx={{ m: 0, pl: 2.5, maxHeight: 160, overflowY: "auto" }}>
+      </p>
+      <ul>
         {rows.map((row) => (
-          <Typography component="li" variant="body2" key={row.where}>
+          <li key={row.where}>
             {row.where}
             {row.name ? ` (${row.name})` : ""}: {row.reason}
-          </Typography>
+          </li>
         ))}
-        {hidden > 0 && (
-          <Typography component="li" variant="body2">
-            {t("importDialog.andMore", { count: hidden })}
-          </Typography>
-        )}
-      </Box>
-    </>
+        {hidden > 0 && <li>{t("importDialog.andMore", { count: hidden })}</li>}
+      </ul>
+    </div>
   );
 };
 
@@ -61,55 +43,46 @@ const ImportResult = ({ result }) => {
   const { t } = useTranslation();
   const extras = restoredExtras(result, t);
   if (result.total === 0 && !result.ignored && extras.length === 0) {
-    return (
-      <Typography variant="body2" sx={{ color: "text.secondary" }}>
-        {t("importDialog.noPasswords")}
-      </Typography>
-    );
+    return <p className="cm-secondary-copy">{t("importDialog.noPasswords")}</p>;
   }
   return (
-    <>
+    <div className="cm-import-result">
       {result.imported > 0 && (
-        <Typography variant="body2">
+        <p>
           <Trans
             i18nKey="importDialog.imported"
             count={result.imported}
             values={{ count: result.imported }}
             components={{ strong: <strong /> }}
           />
-        </Typography>
+        </p>
       )}
       {result.overwritten > 0 && (
-        <Typography variant="body2">
+        <p>
           <Trans
             i18nKey="importDialog.overwritten"
             count={result.overwritten}
             values={{ count: result.overwritten }}
             components={{ strong: <strong /> }}
           />
-        </Typography>
+        </p>
       )}
-      {extras.length > 0 && (
-        <Typography variant="body2">
-          {t("importDialog.alsoRestored", { items: extras.join(", ") })}
-        </Typography>
-      )}
+      {extras.length > 0 && <p>{t("importDialog.alsoRestored", { items: extras.join(", ") })}</p>}
       {result.skipped > 0 && (
-        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+        <p className="cm-secondary-copy">
           <Trans
             i18nKey="importDialog.skipped"
             count={result.skipped}
             values={{ count: result.skipped }}
             components={{ strong: <strong /> }}
           />
-        </Typography>
+        </p>
       )}
       {result.renamed > 0 && (
         <ReportedRows
           rows={result.renamed_rows}
           count={result.renamed}
           titleKey="importDialog.renamed"
-          color="text.secondary"
         />
       )}
       {result.ignored > 0 && (
@@ -117,10 +90,10 @@ const ImportResult = ({ result }) => {
           rows={result.ignored_rows}
           count={result.ignored}
           titleKey="importDialog.ignored"
-          color="warning.main"
+          warning
         />
       )}
-    </>
+    </div>
   );
 };
 
@@ -147,8 +120,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
   const isCsv = mode === "csv";
 
-  const changeMode = (_, next) => {
-    if (!next) return;
+  const changeMode = (next) => {
     setMode(next);
     setFile(null);
     setError("");
@@ -164,70 +136,82 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
       return;
     }
     setLoading(true);
+    setError("");
     try {
       const data = isCsv
         ? await onImportCsv({ file, onConflict })
         : await onImport({ file, masterPassword: password, onConflict });
       setResult(data);
-    } catch (err) {
-      setError(err.message);
-      // Native selections are single-use grants; a retry needs a fresh picker.
+    } catch (requestError) {
+      setError(requestError.message);
       if (IS_DESKTOP && !isCsv) setFile(null);
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{t(result ? "importDialog.completeTitle" : "importDialog.title")}</DialogTitle>
-      <DialogContent>
-        {result ? (
-          <Stack spacing={1} sx={{ mt: 1 }}>
-            <ImportResult result={result} />
-          </Stack>
-        ) : (
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <ToggleButtonGroup value={mode} exclusive onChange={changeMode} size="small" fullWidth>
-              <ToggleButton value="ciphermoth" sx={{ textTransform: "none" }}>
-                {t("importDialog.backupMode")}
-              </ToggleButton>
-              <ToggleButton value="csv" sx={{ textTransform: "none" }}>
-                {t("importDialog.csvMode")}
-              </ToggleButton>
-            </ToggleButtonGroup>
+  const chooseFile = async () => {
+    try {
+      setFile(await chooseBackup());
+      setError("");
+    } catch {
+      setError(t("importDialog.filePickerError"));
+    }
+  };
 
-            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+  return (
+    <Dialog
+      aria-label={t(result ? "importDialog.completeTitle" : "importDialog.title")}
+      className="cm-secondary-dialog cm-import-dialog"
+      contentOverflow="auto"
+      fullWidth
+      hasCloseButton={!loading}
+      maxWidth="s"
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !loading) onClose();
+      }}
+    >
+      <Dialog.Header caption={t(result ? "importDialog.completeTitle" : "importDialog.title")} />
+      <Dialog.Body>
+        {result ? (
+          <ImportResult result={result} />
+        ) : (
+          <div className="cm-import-form">
+            <SegmentedRadioGroup name="import-mode" width="max" value={mode} onUpdate={changeMode}>
+              <SegmentedRadioGroup.Option value="ciphermoth">
+                {t("importDialog.backupMode")}
+              </SegmentedRadioGroup.Option>
+              <SegmentedRadioGroup.Option value="csv">
+                {t("importDialog.csvMode")}
+              </SegmentedRadioGroup.Option>
+            </SegmentedRadioGroup>
+
+            <p className="cm-secondary-copy">
               {isCsv ? t("importDialog.csvDescription") : t("importDialog.backupDescription")}
-            </Typography>
+            </p>
 
             <Button
+              type="button"
               component={IS_DESKTOP && !isCsv ? "button" : "label"}
-              onClick={
-                IS_DESKTOP && !isCsv
-                  ? async () => {
-                      try {
-                        setFile(await chooseBackup());
-                        setError("");
-                      } catch {
-                        setError(t("importDialog.filePickerError"));
-                      }
-                    }
-                  : undefined
-              }
-              variant="outlined"
-              startIcon={<UploadFileIcon />}
-              fullWidth
-              sx={{ justifyContent: "flex-start", textTransform: "none" }}
+              view="outlined"
+              size="l"
+              width="max"
+              onClick={IS_DESKTOP && !isCsv ? chooseFile : undefined}
             >
-              {file ? file.name : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
+              <Icon data={FileArrowUp} />
+              <span className="cm-import-form__filename">
+                {file
+                  ? file.name
+                  : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
+              </span>
               {(!IS_DESKTOP || isCsv) && (
                 <input
                   type="file"
                   hidden
                   accept={isCsv ? ".csv" : ".cmbackup,.zip"}
-                  onChange={(e) => {
-                    setFile(e.target.files[0] ?? null);
+                  onChange={(event) => {
+                    setFile(event.target.files[0] ?? null);
                     setError("");
                   }}
                 />
@@ -238,61 +222,46 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               <PasswordField
                 label={t("importDialog.backupPassword")}
                 value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
+                onChange={(event) => {
+                  setPassword(event.target.value);
                   setError("");
                 }}
-                error={!!error}
+                error={Boolean(error)}
                 helperText={error || t("importDialog.backupPasswordHelp")}
                 required
                 autoFocus
                 autoComplete="current-password"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleImport();
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") handleImport();
                 }}
               />
             )}
 
-            {isCsv && error && (
-              <Typography variant="body2" color="error">
-                {error}
-              </Typography>
-            )}
+            {isCsv && error && <Alert theme="danger" view="outlined" message={error} />}
 
-            <FormControl>
-              <FormLabel sx={{ fontSize: "0.875rem" }}>{t("importDialog.existingLabel")}</FormLabel>
-              <RadioGroup value={onConflict} onChange={(e) => setOnConflict(e.target.value)}>
-                <FormControlLabel
-                  value="skip"
-                  control={<Radio size="small" />}
-                  label={t("importDialog.keepExisting")}
-                />
-                <FormControlLabel
-                  value="overwrite"
-                  control={<Radio size="small" />}
-                  label={t("importDialog.overwrite")}
-                />
-              </RadioGroup>
-            </FormControl>
-          </Stack>
+            <fieldset className="cm-import-form__conflict">
+              <legend>{t("importDialog.existingLabel")}</legend>
+              <RadioGroup
+                direction="vertical"
+                value={onConflict}
+                onUpdate={setOnConflict}
+                options={[
+                  { value: "skip", content: t("importDialog.keepExisting") },
+                  { value: "overwrite", content: t("importDialog.overwrite") },
+                ]}
+              />
+            </fieldset>
+          </div>
         )}
-      </DialogContent>
-      <DialogActions>
-        {result ? (
-          <Button variant="contained" onClick={onClose}>
-            {t("common.actions.done")}
-          </Button>
-        ) : (
-          <>
-            <Button onClick={onClose} disabled={loading}>
-              {t("common.actions.cancel")}
-            </Button>
-            <Button variant="contained" onClick={handleImport} loading={loading}>
-              {t("common.actions.import")}
-            </Button>
-          </>
-        )}
-      </DialogActions>
+      </Dialog.Body>
+      <Dialog.Footer
+        onClickButtonApply={result ? onClose : handleImport}
+        onClickButtonCancel={result ? undefined : onClose}
+        textButtonApply={t(result ? "common.actions.done" : "common.actions.import")}
+        textButtonCancel={result ? undefined : t("common.actions.cancel")}
+        propsButtonApply={{ loading, disabled: loading, view: "action" }}
+        propsButtonCancel={{ disabled: loading }}
+      />
     </Dialog>
   );
 };

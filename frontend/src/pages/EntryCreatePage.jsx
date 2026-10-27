@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Box, CircularProgress } from "@mui/material";
+import { Alert, Button, Loader } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useSnackbar } from "notistack";
+import { useSnackbar } from "../hooks/useNotify";
 import { useStoreActions, useStoreState } from "easy-peasy";
 
 import apiClient from "../api/client";
@@ -21,10 +21,14 @@ const EntryCreatePage = () => {
   const [initialDraft, setInitialDraft] = useState(undefined);
   const [draftStore, setDraftStore] = useState(null);
   const [draftError, setDraftError] = useState(false);
+  const [draftAttempt, setDraftAttempt] = useState(0);
   const entryType = location.state?.entryType === "note" ? "note" : "password";
 
   useEffect(() => {
     let active = true;
+    setInitialDraft(undefined);
+    setDraftStore(null);
+    setDraftError(false);
     const initialize = async () => {
       let availableFolders = [];
       try {
@@ -51,16 +55,14 @@ const EntryCreatePage = () => {
       } catch {
         if (!active) return;
         setDraftError(true);
-        setInitialDraft(
-          initialFolder ? { folder: initialFolder.name, folder_id: initialFolder.id } : null
-        );
+        setInitialDraft(null);
       }
     };
     initialize();
     return () => {
       active = false;
     };
-  }, [enqueueSnackbar, getFolders, location.state?.folderId]);
+  }, [draftAttempt, enqueueSnackbar, getFolders, location.state?.folderId]);
 
   const folderOptions = useMemo(
     () => folders.filter((folder) => ["owner", "write"].includes(folder.access)),
@@ -99,9 +101,54 @@ const EntryCreatePage = () => {
 
   if (initialDraft === undefined) {
     return (
-      <Box sx={{ display: "grid", placeItems: "center", minHeight: "50vh" }}>
-        <CircularProgress />
-      </Box>
+      <div className="cm-entry-create-loader">
+        <Loader size="l" />
+      </div>
+    );
+  }
+
+  if (draftError) {
+    return (
+      <div className="cm-entry-create-loader">
+        <div role="alert">
+          <Alert
+            theme="danger"
+            view="outlined"
+            message={t("entry.draft.unavailable")}
+            actions={
+              <>
+                <Button
+                  type="button"
+                  view="flat-danger"
+                  onClick={() => setDraftAttempt((n) => n + 1)}
+                >
+                  {t("common.actions.retry")}
+                </Button>
+                {draftStore && (
+                  <Button
+                    type="button"
+                    view="flat-danger"
+                    onClick={() => {
+                      try {
+                        draftStore.clear();
+                        setDraftAttempt((n) => n + 1);
+                      } catch {
+                        enqueueSnackbar(t("entry.draft.unavailable"), { variant: "error" });
+                      }
+                    }}
+                  >
+                    {t("entry.draft.discard")}
+                  </Button>
+                )}
+                <Button type="button" view="flat-secondary" onClick={close}>
+                  {t("common.actions.cancel")}
+                </Button>
+              </>
+            }
+            actionsLayout="horizontal"
+          />
+        </div>
+      </div>
     );
   }
 

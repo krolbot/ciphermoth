@@ -1,13 +1,5 @@
-import { useEffect, useState } from "react";
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { useEffect, useId, useState } from "react";
+import { Dialog } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
@@ -15,6 +7,7 @@ import { IS_DESKTOP } from "../../platform";
 
 const BackupDialog = ({ open, onClose, onBackup }) => {
   const { t } = useTranslation();
+  const titleId = useId();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -43,43 +36,53 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
   };
 
   return (
-    <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{t("backup.title")}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            {t("backup.descriptionFull")}
-          </Typography>
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+    <Dialog
+      aria-labelledby={titleId}
+      className="cm-secondary-dialog cm-secondary-dialog--backup"
+      contentOverflow="auto"
+      disableEscapeKeyDown={loading}
+      disableOutsideClick={loading}
+      fullWidth
+      hasCloseButton={false}
+      maxWidth="s"
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !loading) onClose();
+      }}
+      open={open}
+    >
+      <Dialog.Header caption={t("backup.title")} id={titleId} />
+      <Dialog.Body>
+        <div className="cm-secondary-form">
+          <p className="cm-secondary-copy">{t("backup.descriptionFull")}</p>
+          <p className="cm-secondary-copy">
             {t("backup.restoreAdvice")}{" "}
             {t(IS_DESKTOP ? "backup.desktopAdvice" : "backup.webAdvice")}
-          </Typography>
+          </p>
           <PasswordField
+            autoComplete="current-password"
+            autoFocus
+            helperText={error}
             label={t("auth.masterPassword")}
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
+            onChange={(event) => {
+              setPassword(event.target.value);
               setError("");
             }}
-            error={!!error}
-            helperText={error}
-            required
-            autoFocus
-            autoComplete="current-password"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleBackup();
+            onKeyDown={(event) => {
+              if (event.key === "Enter") handleBackup();
             }}
+            required
+            validationState={error ? "invalid" : undefined}
+            value={password}
           />
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={loading}>
-          {t("common.actions.cancel")}
-        </Button>
-        <Button variant="contained" onClick={handleBackup} loading={loading}>
-          {t("backup.title")}
-        </Button>
-      </DialogActions>
+        </div>
+      </Dialog.Body>
+      <Dialog.Footer
+        loading={loading}
+        onClickButtonApply={handleBackup}
+        onClickButtonCancel={onClose}
+        textButtonApply={t("backup.title")}
+        textButtonCancel={t("common.actions.cancel")}
+      />
     </Dialog>
   );
 };

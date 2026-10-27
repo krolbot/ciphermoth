@@ -1,39 +1,69 @@
-import { useRef, useState } from "react";
-import {
-  Box,
-  ButtonBase,
-  Dialog,
-  IconButton,
-  Paper,
-  Stack,
-  Tooltip,
-  Typography,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
-import AttachFileIcon from "@mui/icons-material/AttachFile";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
-import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import StarIcon from "@mui/icons-material/Star";
-import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
+import { useEffect, useRef, useState } from "react";
+import { ChevronRight, Copy, FileText, Key, Paperclip, StarFill } from "@gravity-ui/icons";
+import { Button, Dialog, Icon, Label, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import EntryDetails from "./EntryDetails";
 import EntryListActions from "./EntryListActions";
+import "../../styles/vault.css";
 
-const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
+const DESKTOP_QUERY = "(min-width: 1200px)";
+
+const EntryBrowser = ({
+  entries,
+  emptyMessage,
+  onCopy,
+  requestedEntryId,
+  onRequestedEntryOpen,
+  ...actions
+}) => {
   const { t } = useTranslation();
-  const theme = useTheme();
-  const desktop = useMediaQuery(theme.breakpoints.up("md"));
+  const [desktop, setDesktop] = useState(() => window.matchMedia?.(DESKTOP_QUERY).matches ?? false);
   const [selectedId, setSelectedId] = useState(null);
+  const browserRef = useRef(null);
+  const focusRequested = useRef(false);
   const selectedTrigger = useRef(null);
   const selected = entries.find((entry) => entry.id === selectedId);
+
+  useEffect(() => {
+    const query = window.matchMedia?.(DESKTOP_QUERY);
+    if (!query) return undefined;
+    const update = ({ matches }) => setDesktop(matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (selectedId !== null && !selected) setSelectedId(null);
+  }, [selected, selectedId]);
+
+  useEffect(() => {
+    if (requestedEntryId == null || !entries.some((entry) => entry.id === requestedEntryId)) return;
+    selectedTrigger.current = browserRef.current?.querySelector(
+      `[data-entry-id="${requestedEntryId}"]`
+    );
+    focusRequested.current = true;
+    setSelectedId(requestedEntryId);
+    onRequestedEntryOpen?.();
+  }, [entries, requestedEntryId, onRequestedEntryOpen]);
+
+  useEffect(() => {
+    if (!focusRequested.current || selectedId === null) return;
+    focusRequested.current = false;
+    [
+      ...(browserRef.current?.querySelectorAll(
+        ".cm-entry-detail__back, .cm-entry-detail__close .g-button"
+      ) ?? []),
+    ]
+      .find((element) => element.offsetParent !== null)
+      ?.focus();
+  }, [selectedId]);
+
   const closeDetails = () => {
     setSelectedId(null);
-    if (desktop) selectedTrigger.current?.focus();
+    window.requestAnimationFrame(() => selectedTrigger.current?.focus());
   };
+
   const details = selected && (
     <EntryDetails
       key={selected.id}
@@ -45,223 +75,134 @@ const EntryBrowser = ({ entries, emptyMessage, onCopy, ...actions }) => {
   );
 
   return (
-    <Paper
-      variant="outlined"
+    <div
+      ref={browserRef}
+      className={`cm-entry-browser${desktop && selected ? " cm-entry-browser--split" : ""}`}
       onKeyDown={(event) => {
         if (desktop && selected && event.key === "Escape" && !event.defaultPrevented) {
           event.stopPropagation();
           closeDetails();
         }
       }}
-      sx={{
-        display: "grid",
-        gridTemplateColumns: {
-          xs: "minmax(0, 1fr)",
-          md: selected ? "minmax(0, 0.9fr) minmax(0, 1.1fr)" : "minmax(0, 1fr)",
-        },
-        borderRadius: 2.5,
-        overflow: "hidden",
-        minWidth: 0,
-      }}
     >
-      <Box
-        sx={{
-          minWidth: 0,
-          borderRight: { md: selected ? "1px solid" : 0 },
-          borderColor: { md: "divider" },
-        }}
-      >
-        <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {t("vault.browser.entries")}{" "}
-            <Box
-              component="span"
-              sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums", ml: 0.5 }}
-            >
-              {entries.length}
-            </Box>
-          </Typography>
-        </Box>
+      <section className="cm-entry-list-pane" aria-label={t("vault.browser.entries")}>
+        <header className="cm-entry-list-header">
+          <span>{t("vault.browser.entries")}</span>
+          <span className="cm-entry-list-count">{entries.length}</span>
+        </header>
         {entries.length === 0 ? (
-          <Typography role="status" variant="body2" color="text.secondary" sx={{ p: 3 }}>
+          <p className="cm-entry-list-empty" role="status">
             {emptyMessage}
-          </Typography>
+          </p>
         ) : (
-          <Box
-            component="ul"
-            aria-label={t("vault.browser.entries")}
-            sx={{
-              listStyle: "none",
-              m: 0,
-              p: 0,
-              maxHeight: { md: "min(72vh, 760px)" },
-              overflowY: { md: "auto" },
-            }}
-          >
+          <ul className="cm-entry-list">
             {entries.map((entry) => {
               const isNote = entry.kind === "note";
-              const Icon = isNote ? StickyNote2OutlinedIcon : KeyOutlinedIcon;
               const copyLabel = t(isNote ? "vault.browser.copyNote" : "vault.columns.copyPassword");
+              const current = entry.id === selected?.id;
               return (
-                <Box
-                  component="li"
+                <li
                   key={entry.id}
-                  sx={{
-                    display: selected ? "flex" : "grid",
-                    gridTemplateColumns: {
-                      xs: "minmax(0, 1fr)",
-                      md: "minmax(0, 1fr) minmax(0, 1.35fr)",
-                    },
-                    alignItems: "center",
-                    minWidth: 0,
-                    borderBottom: "1px solid",
-                    borderColor: "divider",
-                    "&:last-child": { borderBottom: 0 },
-                    bgcolor: entry.id === selected?.id ? "action.selected" : "transparent",
-                  }}
+                  className={`cm-entry-row${current ? " cm-entry-row--selected" : ""}`}
                 >
-                  <ButtonBase
-                    aria-label={t("vault.browser.open", { name: entry.password_name })}
-                    aria-current={entry.id === selected?.id ? "true" : undefined}
+                  <button
+                    type="button"
+                    className="cm-entry-row__open"
+                    data-entry-id={entry.id}
+                    aria-current={current ? "true" : undefined}
                     onClick={(event) => {
                       selectedTrigger.current = event.currentTarget;
                       setSelectedId(entry.id);
                     }}
-                    sx={{
-                      flex: 1,
-                      minWidth: 0,
-                      alignSelf: "stretch",
-                      justifyContent: "flex-start",
-                      textAlign: "left",
-                      gap: 1.5,
-                      p: 2,
-                      minHeight: 88,
-                      "&:hover": { bgcolor: "action.hover" },
-                      "&.Mui-focusVisible": {
-                        outline: "2px solid",
-                        outlineColor: "primary.main",
-                        outlineOffset: -2,
-                      },
-                    }}
                   >
-                    <Box
-                      sx={{
-                        width: 40,
-                        height: 40,
-                        flexShrink: 0,
-                        display: "grid",
-                        placeItems: "center",
-                        bgcolor: "action.hover",
-                        borderRadius: 1.5,
-                        color: "text.secondary",
-                      }}
-                    >
-                      <Icon fontSize="small" />
-                    </Box>
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Stack
-                        direction="row"
-                        spacing={0.5}
-                        sx={{ alignItems: "center", minWidth: 0 }}
-                      >
-                        <Typography noWrap variant="body2" sx={{ fontWeight: 650, minWidth: 0 }}>
-                          {entry.password_name}
-                        </Typography>
+                    <span className="cm-entry-row__type" aria-hidden="true">
+                      <Icon data={isNote ? FileText : Key} size={18} />
+                    </span>
+                    <span className="cm-entry-row__content">
+                      <span className="cm-entry-row__title-line">
+                        <span className="cm-entry-row__title">{entry.password_name}</span>
                         {entry.favorite && (
-                          <StarIcon
-                            color="secondary"
-                            sx={{ fontSize: 14, flexShrink: 0 }}
-                            aria-label={t("vault.browser.favorite")}
-                          />
+                          <Tooltip content={t("vault.columns.favorite")}>
+                            <span className="cm-entry-row__status-icon" aria-hidden="true">
+                              <Icon data={StarFill} size={14} />
+                            </span>
+                          </Tooltip>
                         )}
-                        {entry.access === "read" && (
-                          <LockOutlinedIcon
-                            sx={{ fontSize: 14, color: "text.secondary", flexShrink: 0 }}
-                            aria-label={t("sharing.readOnlyAccess")}
-                          />
-                        )}
-                      </Stack>
-                      <Typography noWrap variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                      </span>
+                      <span className="cm-entry-row__summary">
                         {isNote
                           ? t("entry.kind.note")
                           : entry.username || entry.url || t("entry.kind.login")}
-                      </Typography>
-                      {(entry.folder || entry.attachment_count > 0) && (
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          sx={{ alignItems: "center", mt: 0.25, minWidth: 0 }}
-                        >
-                          <Typography
-                            noWrap
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ minWidth: 0 }}
-                          >
-                            {entry.folder}
-                          </Typography>
-                          {entry.attachment_count > 0 && (
-                            <AttachFileIcon
-                              sx={{ fontSize: 14, flexShrink: 0, color: "text.secondary" }}
-                              aria-label={t("vault.columns.attachment", {
-                                count: entry.attachment_count,
-                              })}
-                            />
+                      </span>
+                      {(entry.access === "read" || entry.folder || entry.attachment_count > 0) && (
+                        <span className="cm-entry-row__meta-line">
+                          {entry.access === "read" && (
+                            <Label size="s" theme="normal">
+                              {t("sharing.readOnlyAccess")}
+                            </Label>
                           )}
-                        </Stack>
+                          {entry.folder && (
+                            <span className="cm-entry-row__meta">{entry.folder}</span>
+                          )}
+                          {entry.attachment_count > 0 && (
+                            <>
+                              <Icon data={Paperclip} size={13} />
+                              <span>{entry.attachment_count}</span>
+                            </>
+                          )}
+                        </span>
                       )}
-                    </Box>
-                  </ButtonBase>
-                  {!selected ? (
-                    <EntryListActions entry={entry} onCopy={onCopy} {...actions} />
-                  ) : (
-                    <>
-                      <Tooltip title={copyLabel}>
-                        <IconButton
+                    </span>
+                    <Icon className="cm-entry-row__chevron" data={ChevronRight} size={16} />
+                  </button>
+
+                  {desktop && selected ? (
+                    <div className="cm-entry-row__actions">
+                      <Tooltip content={copyLabel} role="label">
+                        <Button
+                          type="button"
+                          view="flat-secondary"
+                          size="l"
                           aria-label={`${copyLabel}: ${entry.password_name}`}
                           onClick={() => onCopy(entry.password_value)}
-                          sx={{ width: 44, height: 44, mr: 1, flexShrink: 0 }}
                         >
-                          <ContentCopyIcon fontSize="small" />
-                        </IconButton>
+                          <Icon data={Copy} />
+                        </Button>
                       </Tooltip>
-                      <ChevronRightIcon
-                        sx={{
-                          color: "text.secondary",
-                          fontSize: 18,
-                          mr: 1,
-                          display: { xs: "none", sm: "block" },
-                        }}
-                      />
-                    </>
+                    </div>
+                  ) : (
+                    <EntryListActions entry={entry} onCopy={onCopy} {...actions} />
                   )}
-                </Box>
+                </li>
               );
             })}
-          </Box>
+          </ul>
         )}
-      </Box>
+      </section>
+
       {desktop && selected && (
-        <Box
-          component="section"
-          aria-label={t("vault.browser.details")}
-          sx={{ minWidth: 0, maxHeight: "min(80vh, 840px)", overflowY: "auto" }}
-        >
+        <section className="cm-entry-detail-pane" aria-label={t("vault.browser.details")}>
           {details}
-        </Box>
+        </section>
       )}
+
       {!desktop && (
         <Dialog
-          fullScreen
           open={Boolean(selected)}
-          onClose={closeDetails}
+          onOpenChange={(open) => {
+            if (!open) closeDetails();
+          }}
           aria-labelledby="entry-detail-title"
-          slotProps={{ paper: { sx: { borderRadius: 0 } } }}
+          hasCloseButton={false}
+          fullWidth
+          maxWidth="l"
+          contentOverflow="auto"
+          className="cm-entry-mobile-dialog"
         >
-          {details}
+          <Dialog.Body>{details}</Dialog.Body>
         </Dialog>
       )}
-    </Paper>
+    </div>
   );
 };
 

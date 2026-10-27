@@ -1,29 +1,25 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { Box, Container, CssBaseline, GlobalStyles, Toolbar } from "@mui/material";
+import { BrowserRouter as Router, Navigate, Route, Routes } from "react-router-dom";
 import { useStoreActions } from "easy-peasy";
+import { ToasterComponent } from "@gravity-ui/uikit";
 
 import DesktopGate from "./platform/DesktopGate";
 import apiClient from "./api/client";
 import PasswordChangeDialog from "./components/PasswordChangeDialog";
-import ThemeToggle from "./components/ThemeToggle";
 import TopMenu from "./components/TopMenu";
 import { ColorModeProvider } from "./hooks/useColorMode";
 import useAutoLogout from "./hooks/useAutoLogout";
 import routes from "./routes";
 import { getCurrentUser, isAuth, setCurrentUser } from "./utils";
-import { GLOW, INFO, PAPER_DARK, TEXT_ON_DARK, WARN, WEAK } from "./lib/brand";
-
-const SANS = "'Space Grotesk Variable', system-ui, sans-serif";
 
 const AppContent = () => {
-  const { pathname } = useLocation();
   useAutoLogout();
 
   const authed = isAuth();
   const [currentUser, setUser] = useState(getCurrentUser);
   const passwordChangeRequired = Boolean(currentUser?.must_change_password);
-  const getSettings = useStoreActions((a) => a.ciphermothModels.settings.get);
+  const getSettings = useStoreActions((actions) => actions.ciphermothModels.settings.get);
+
   useEffect(() => {
     if (!authed || passwordChangeRequired) return;
     getSettings();
@@ -45,94 +41,31 @@ const AppContent = () => {
     </Routes>
   );
 
-  if (!authed) {
-    return (
-      <>
-        <CssBaseline />
-        {appRoutes}
-      </>
-    );
-  }
+  if (!authed) return appRoutes;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column" }}>
-      <CssBaseline />
+    <div className="cm-app">
       <TopMenu />
-      <Box
-        component="main"
-        sx={{
-          bgcolor: "background.default",
-          flexGrow: 1,
-          minHeight: "100vh",
-          overflow: "auto",
-          pb: "calc(84px + env(safe-area-inset-bottom, 0px))",
-        }}
-      >
-        <Toolbar />
-        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-          {!passwordChangeRequired && appRoutes}
-        </Container>
-      </Box>
+      <main className="cm-main">
+        <div className="cm-page">{!passwordChangeRequired && appRoutes}</div>
+      </main>
       <PasswordChangeDialog
         open={passwordChangeRequired}
         required
         onClose={() => {}}
         onChanged={setUser}
       />
-      {pathname !== "/entries/new" && <ThemeToggle />}
-    </Box>
+    </div>
   );
 };
-
-const snackbarStyles = (
-  <GlobalStyles
-    styles={{
-      // Toasts share a single dark surface with a coloured accent stripe so the
-      // outcome reads at a glance without breaking the black-and-glow palette.
-      ".notistack-MuiContent": {
-        backgroundColor: `${PAPER_DARK} !important`,
-        color: `${TEXT_ON_DARK} !important`,
-        fontFamily: `${SANS} !important`,
-        borderRadius: "10px !important",
-        border: "1px solid rgba(255,255,255,0.12)",
-      },
-      ".notistack-MuiContent-success": { borderLeft: `3px solid ${GLOW} !important` },
-      ".notistack-MuiContent-error": { borderLeft: `3px solid ${WEAK} !important` },
-      ".notistack-MuiContent-warning": { borderLeft: `3px solid ${WARN} !important` },
-      ".notistack-MuiContent-info": { borderLeft: `3px solid ${INFO} !important` },
-      "@media (max-width: 599.95px)": {
-        ".notistack-SnackbarContainer": {
-          right: "8px !important",
-          left: "8px !important",
-          width: "auto !important",
-          maxWidth: "calc(100% - 16px) !important",
-          top: "calc(8px + env(safe-area-inset-top, 0px)) !important",
-          bottom: "auto !important",
-        },
-      },
-    }}
-  />
-);
-
-const themeTransitionStyles = (
-  <GlobalStyles
-    styles={{
-      "html.cm-theming, html.cm-theming *, html.cm-theming *::before, html.cm-theming *::after": {
-        transition:
-          "background-color 420ms ease, border-color 420ms ease, color 300ms ease, fill 300ms ease !important",
-      },
-    }}
-  />
-);
 
 const App = () => (
   <Router>
     <ColorModeProvider>
-      {snackbarStyles}
-      {themeTransitionStyles}
       <DesktopGate>
         <AppContent />
       </DesktopGate>
+      <ToasterComponent />
     </ColorModeProvider>
   </Router>
 );

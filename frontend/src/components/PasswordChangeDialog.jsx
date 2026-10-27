@@ -1,15 +1,5 @@
-import { useEffect, useState } from "react";
-import {
-  Alert,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  LinearProgress,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { useEffect, useId, useState } from "react";
+import { Alert, Dialog, Progress } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import apiClient from "../api/client";
@@ -18,8 +8,11 @@ import { getMasterPasswordStrength } from "../lib/passwordStrength";
 import { setCurrentUser, setSessionToken } from "../utils";
 import PasswordField from "./PasswordField";
 
+const STRENGTH_THEME = { error: "danger", warning: "warning", success: "success" };
+
 const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) => {
   const { t } = useTranslation();
+  const titleId = useId();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -64,18 +57,32 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
   };
 
   return (
-    <Dialog open={open} onClose={required ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>
-        {t(required ? "auth.changeTemporaryPassword" : "auth.changePassword")}
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          {required && (
-            <Typography variant="body2" color="text.secondary">
-              {t("auth.passwordChangeRequired")}
-            </Typography>
+    <Dialog
+      aria-labelledby={titleId}
+      className="cm-secondary-dialog cm-secondary-dialog--password-change"
+      contentOverflow="auto"
+      disableEscapeKeyDown={required || busy}
+      disableOutsideClick={required || busy}
+      fullWidth
+      hasCloseButton={false}
+      maxWidth="s"
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !required && !busy) onClose();
+      }}
+      open={open}
+    >
+      <Dialog.Header
+        caption={t(required ? "auth.changeTemporaryPassword" : "auth.changePassword")}
+        id={titleId}
+      />
+      <Dialog.Body>
+        <div className="cm-secondary-form">
+          {required && <p className="cm-secondary-copy">{t("auth.passwordChangeRequired")}</p>}
+          {error && (
+            <div role="alert">
+              <Alert message={error} size="s" theme="danger" />
+            </div>
           )}
-          {error && <Alert severity="error">{error}</Alert>}
           <PasswordField
             label={t("auth.currentPassword")}
             value={currentPassword}
@@ -92,7 +99,14 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
             autoComplete="new-password"
           />
           {newPassword && strength && (
-            <LinearProgress variant="determinate" value={strength.value} color={strength.color} />
+            <div
+              aria-label={t(strength.labelKey)}
+              aria-live="polite"
+              className="cm-secondary-strength"
+              role="status"
+            >
+              <Progress size="s" theme={STRENGTH_THEME[strength.color]} value={strength.value} />
+            </div>
           )}
           <PasswordField
             label={t("auth.confirmNewPassword")}
@@ -100,19 +114,16 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
             onChange={(event) => setConfirm(event.target.value)}
             autoComplete="new-password"
           />
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        {!required && <Button onClick={onClose}>{t("common.actions.cancel")}</Button>}
-        <Button
-          variant="contained"
-          loading={busy}
-          disabled={!currentPassword || !newPassword || !confirm}
-          onClick={save}
-        >
-          {t("auth.changePassword")}
-        </Button>
-      </DialogActions>
+        </div>
+      </Dialog.Body>
+      <Dialog.Footer
+        loading={busy}
+        onClickButtonApply={save}
+        onClickButtonCancel={onClose}
+        propsButtonApply={{ disabled: !currentPassword || !newPassword || !confirm }}
+        textButtonApply={t("auth.changePassword")}
+        textButtonCancel={required ? undefined : t("common.actions.cancel")}
+      />
     </Dialog>
   );
 };

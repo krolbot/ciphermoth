@@ -1,108 +1,28 @@
-import { useEffect, useRef, useState } from "react";
-import { IconButton, Tooltip } from "@mui/material";
+import { Moon, Sun } from "@gravity-ui/icons";
+import { Button, Icon, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { useColorMode } from "../hooks/useColorMode";
-import MothIcon from "./MothIcon";
-import { GLOW } from "../lib/brand";
 
-const FLIGHT_MS = 1050;
-
-const ThemeToggle = ({ zIndex = 1200, sx }) => {
+const ThemeToggle = ({ placement = "inline", showLabel = false }) => {
   const { t } = useTranslation();
   const { mode, toggle } = useColorMode();
-  const [flying, setFlying] = useState(false);
-  const timer = useRef();
   const dark = mode === "dark";
-
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  const handleClick = () => {
-    setFlying(true);
-    toggle();
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setFlying(false), FLIGHT_MS);
-  };
+  const label = t(dark ? "theme.switchToLight" : "theme.switchToDark");
 
   return (
-    <Tooltip placement="left" title={t(dark ? "theme.toLight" : "theme.toDark")}>
-      <IconButton
-        aria-label={t(dark ? "theme.switchToLight" : "theme.switchToDark")}
-        onClick={handleClick}
-        className={flying ? "cmFlying" : undefined}
-        sx={{
-          position: "fixed",
-          bottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
-          right: "calc(24px + env(safe-area-inset-right, 0px))",
-          zIndex,
-          width: 52,
-          height: 52,
-          color: GLOW,
-          bgcolor: dark ? "rgba(20,20,22,0.72)" : "rgba(255,255,255,0.82)",
-          border: "1px solid",
-          borderColor: dark ? "rgba(125,211,192,0.28)" : "rgba(11,11,12,0.1)",
-          backdropFilter: "blur(6px)",
-          boxShadow: "0 4px 18px rgba(0,0,0,0.18)",
-          overflow: "visible",
-          transition:
-            "transform 200ms ease, box-shadow 320ms ease, background-color 320ms ease, border-color 320ms ease",
-          "&:hover": {
-            transform: "translateY(-2px)",
-            boxShadow: `0 8px 22px rgba(0,0,0,0.22), 0 0 22px color-mix(in srgb, ${GLOW} 42%, transparent)`,
-          },
-          "&:hover .cmMoth": { animationDuration: "0.9s" },
-          "& .cmMoth": {
-            width: 26,
-            height: 26,
-            display: "flex",
-            transformOrigin: "50% 45%",
-            filter: `drop-shadow(0 0 6px color-mix(in srgb, ${GLOW} 55%, transparent))`,
-            animation: "cmMothIdle 3.2s ease-in-out infinite",
-          },
-          "&.cmFlying": { zIndex: zIndex + 1 },
-          "&.cmFlying .cmMoth": {
-            animation: `cmMothFly ${FLIGHT_MS}ms cubic-bezier(0.34, 0.6, 0.4, 1) both`,
-            filter: `drop-shadow(0 0 14px color-mix(in srgb, ${GLOW} 80%, transparent))`,
-          },
-          "&.cmFlying .cmMoth svg": {
-            animation: "cmWingFlutter 90ms ease-in-out 10",
-            transformOrigin: "50% 42%",
-          },
-          "&.cmFlying::after": {
-            content: '""',
-            position: "absolute",
-            inset: 0,
-            borderRadius: "50%",
-            animation: "cmMothBurst 700ms ease-out",
-          },
-          "@keyframes cmMothIdle": {
-            "0%, 100%": { transform: "scaleX(1) translateY(0)" },
-            "50%": { transform: "scaleX(0.88) translateY(-1px)" },
-          },
-          "@keyframes cmMothFly": {
-            "0%": { transform: "translate(0, 0) rotate(0deg) scale(1)" },
-            "14%": { transform: "translate(-9px, -18px) rotate(-20deg) scale(1.14)" },
-            "32%": { transform: "translate(14px, -40px) rotate(18deg) scale(1.18)" },
-            "50%": { transform: "translate(-12px, -56px) rotate(-14deg) scale(1.12)" },
-            "66%": { transform: "translate(10px, -42px) rotate(12deg) scale(1.1)" },
-            "82%": { transform: "translate(-5px, -20px) rotate(-7deg) scale(1.05)" },
-            "100%": { transform: "translate(0, 0) rotate(0deg) scale(1)" },
-          },
-          "@keyframes cmWingFlutter": {
-            "0%, 100%": { transform: "scaleX(1)" },
-            "50%": { transform: "scaleX(0.62)" },
-          },
-          "@keyframes cmMothBurst": {
-            "0%": { boxShadow: `0 0 0 0 color-mix(in srgb, ${GLOW} 55%, transparent)` },
-            "100%": { boxShadow: "0 0 0 26px transparent" },
-          },
-          ...sx,
-        }}
+    <Tooltip content={label} role={showLabel ? "tooltip" : "label"}>
+      <Button
+        type="button"
+        view="flat-secondary"
+        size="l"
+        aria-label={label}
+        onClick={toggle}
+        className={placement === "floating" ? "cm-theme-toggle--floating" : undefined}
       >
-        <span className="cmMoth">
-          <MothIcon width="100%" height="100%" style={{ display: "block", overflow: "visible" }} />
-        </span>
-      </IconButton>
+        <Icon data={dark ? Sun : Moon} />
+        {showLabel && t(dark ? "theme.toLight" : "theme.toDark")}
+      </Button>
     </Tooltip>
   );
 };

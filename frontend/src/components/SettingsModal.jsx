@@ -1,22 +1,8 @@
-import { useEffect, useState } from "react";
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  FormControlLabel,
-  InputAdornment,
-  Stack,
-  Switch,
-  TextField,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import HelpOutlineIcon from "@mui/icons-material/HelpOutlined";
+import { useEffect, useId, useState } from "react";
+import { CircleQuestion } from "@gravity-ui/icons";
+import { Alert, Button, Dialog, Icon, Switch, TextInput, Tooltip } from "@gravity-ui/uikit";
+import { toaster } from "@gravity-ui/uikit/toaster-singleton";
 import { useStoreActions, useStoreState } from "easy-peasy";
-import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
 
 const FIELDS = [
@@ -71,7 +57,8 @@ const isDirty = (form, settings) =>
 
 const SettingsModal = ({ open, onClose }) => {
   const { t } = useTranslation();
-  const { enqueueSnackbar } = useSnackbar();
+  const titleId = useId();
+  const updatesLabelId = `${titleId}-updates`;
 
   const { update } = useStoreActions((a) => a.ciphermothModels.settings);
   const settings = useStoreState((s) => s.ciphermothModels.settings.settings);
@@ -93,6 +80,20 @@ const SettingsModal = ({ open, onClose }) => {
   };
 
   const handleSave = async () => {
+    const invalidField = FIELDS.find(({ key, min, max }) => {
+      const value = Number(form[key]);
+      return !Number.isInteger(value) || value < min || value > max;
+    });
+    if (invalidField) {
+      setFormError(
+        t("settings.rangeValidation", {
+          label: t(invalidField.labelKey),
+          min: invalidField.min,
+          max: invalidField.max,
+        })
+      );
+      return;
+    }
     if (Number(form.warn_before_ms) >= Number(form.inactivity_ms)) {
       setFormError(t("settings.warningValidation"));
       return;
@@ -103,7 +104,7 @@ const SettingsModal = ({ open, onClose }) => {
         ...Object.fromEntries(FIELDS.map(({ key }) => [key, toMs(form[key])])),
         update_check_enabled: form.update_check_enabled,
       });
-      enqueueSnackbar(t("settings.saved"), { variant: "success" });
+      toaster.add({ name: "settings-saved", theme: "success", title: t("settings.saved") });
       onClose();
     } catch (err) {
       setFormError(err.message);
@@ -115,81 +116,101 @@ const SettingsModal = ({ open, onClose }) => {
   const dirty = isDirty(form, settings);
 
   return (
-    <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{t("settings.title")}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={1.5} sx={{ mt: 1 }}>
-          {FIELDS.map(({ key, labelKey, tooltipKey, min, max }) => (
-            <TextField
-              key={key}
-              label={t(labelKey)}
-              type="number"
-              size="small"
-              value={form[key]}
-              onChange={handleChange(key)}
-              fullWidth
-              slotProps={{
-                htmlInput: { min, max, step: 1 },
-                input: {
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <Typography variant="caption" sx={{ color: "text.disabled", mr: 0.5 }}>
+    <Dialog
+      aria-labelledby={titleId}
+      className="cm-secondary-dialog cm-secondary-dialog--settings"
+      contentOverflow="auto"
+      disableEscapeKeyDown={saving}
+      disableOutsideClick={saving}
+      fullWidth
+      hasCloseButton={false}
+      maxWidth="s"
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !saving) onClose();
+      }}
+      open={open}
+    >
+      <Dialog.Header caption={t("settings.title")} id={titleId} />
+      <Dialog.Body>
+        <div className="cm-secondary-form cm-settings-form">
+          {FIELDS.map(({ key, labelKey, tooltipKey, min, max }) => {
+            const inputId = `${titleId}-${key}`;
+            return (
+              <div className="cm-field cm-settings-form__field" key={key}>
+                <label className="cm-field__label" htmlFor={inputId}>
+                  {t(labelKey)}
+                </label>
+                <TextInput
+                  controlProps={{ min, max, step: 1 }}
+                  endContent={
+                    <span className="cm-settings-form__input-actions">
+                      <span className="cm-settings-form__unit">
                         {t("common.labels.secondsShort")}
-                      </Typography>
-                      <Tooltip title={t(tooltipKey)} arrow placement="top">
-                        <HelpOutlineIcon
-                          fontSize="small"
-                          sx={{ color: "text.disabled", cursor: "help" }}
-                        />
+                      </span>
+                      <Tooltip content={t(tooltipKey)} placement="top" role="label">
+                        <Button
+                          aria-label={t(tooltipKey)}
+                          className="cm-settings-form__help"
+                          size="s"
+                          type="button"
+                          view="flat-secondary"
+                        >
+                          <Icon data={CircleQuestion} />
+                        </Button>
                       </Tooltip>
-                    </InputAdornment>
-                  ),
-                },
-              }}
+                    </span>
+                  }
+                  id={inputId}
+                  onChange={handleChange(key)}
+                  size="m"
+                  type="number"
+                  value={form[key]}
+                />
+              </div>
+            );
+          })}
+          <hr className="cm-settings-form__separator" />
+          <div className="cm-settings-form__updates">
+            <div className="cm-settings-form__updates-copy">
+              <span className="cm-field__label" id={updatesLabelId}>
+                {t("settings.fields.updates")}
+              </span>
+              <Tooltip content={t("settings.fields.updatesHelp")} placement="top" role="label">
+                <Button
+                  aria-label={t("settings.fields.updatesHelp")}
+                  className="cm-settings-form__help"
+                  size="s"
+                  type="button"
+                  view="flat-secondary"
+                >
+                  <Icon data={CircleQuestion} />
+                </Button>
+              </Tooltip>
+            </div>
+            <Switch
+              checked={form.update_check_enabled}
+              controlProps={{ "aria-labelledby": updatesLabelId }}
+              onUpdate={(checked) =>
+                setForm((prev) => ({ ...prev, update_check_enabled: checked }))
+              }
+              size="l"
             />
-          ))}
-          <Divider sx={{ my: 0.5 }} />
-          <FormControlLabel
-            sx={{ ml: 0, justifyContent: "space-between" }}
-            labelPlacement="start"
-            control={
-              <Switch
-                checked={form.update_check_enabled}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    update_check_enabled: e.target.checked,
-                  }))
-                }
-              />
-            }
-            label={
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <Typography variant="body2">{t("settings.fields.updates")}</Typography>
-                <Tooltip title={t("settings.fields.updatesHelp")} arrow placement="top">
-                  <HelpOutlineIcon
-                    fontSize="small"
-                    sx={{ color: "text.disabled", cursor: "help" }}
-                  />
-                </Tooltip>
-              </Stack>
-            }
-          />
+          </div>
           {formError && (
-            <Typography variant="body2" color="error">
-              {formError}
-            </Typography>
+            <div role="alert">
+              <Alert message={formError} size="s" theme="danger" />
+            </div>
           )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving}>
-          {t("common.actions.cancel")}
-        </Button>
-        <Button variant="contained" onClick={handleSave} loading={saving} disabled={!dirty}>
-          {t("common.actions.save")}
-        </Button>
-      </DialogActions>
+        </div>
+      </Dialog.Body>
+      <Dialog.Footer
+        loading={saving}
+        onClickButtonApply={handleSave}
+        onClickButtonCancel={onClose}
+        propsButtonApply={{ disabled: !dirty }}
+        textButtonApply={t("common.actions.save")}
+        textButtonCancel={t("common.actions.cancel")}
+      />
     </Dialog>
   );
 };

@@ -1,57 +1,67 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { ThemeProvider } from "@mui/material/styles";
+import { Provider as GravityProvider } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
-import { createAppTheme } from "../lib/theme";
-
 const STORAGE_KEY = "ciphermoth-theme";
-const ColorModeContext = createContext({ mode: "dark", toggle: () => {} });
+const MOBILE_QUERY = "(max-width: 899px)";
+const ModeContext = createContext(null);
 
-const readStoredMode = () => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
-  } catch {
-    return "dark";
-  }
-  return "dark";
+const initialMode = () => {
+  const saved = window.localStorage.getItem(STORAGE_KEY);
+  return saved === "light" || saved === "dark" ? saved : "dark";
 };
+
+const initialMobile = () => window.matchMedia?.(MOBILE_QUERY).matches ?? false;
 
 export const ColorModeProvider = ({ children }) => {
   const { i18n } = useTranslation();
-  const [mode, setMode] = useState(readStoredMode);
+  const [mode, setMode] = useState(initialMode);
+  const [mobile, setMobile] = useState(initialMobile);
+  const language = (i18n.resolvedLanguage ?? i18n.language)?.startsWith("ru") ? "ru" : "en";
 
   useEffect(() => {
+    const query = window.matchMedia?.(MOBILE_QUERY);
+    if (!query) return undefined;
+    const update = ({ matches }) => setMobile(matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, mode);
     document.documentElement.dataset.theme = mode;
     document.documentElement.style.colorScheme = mode;
-    try {
-      localStorage.setItem(STORAGE_KEY, mode);
-    } catch {
-      return;
-    }
   }, [mode]);
 
   const value = useMemo(
     () => ({
       mode,
+      setMode,
       toggle: () => {
-        const root = document.documentElement;
-        root.classList.add("cm-theming");
-        window.setTimeout(() => root.classList.remove("cm-theming"), 520);
-        setMode((prev) => (prev === "dark" ? "light" : "dark"));
+        document.documentElement.classList.add("cm-theming");
+        window.setTimeout(() => document.documentElement.classList.remove("cm-theming"), 460);
+        setMode((current) => (current === "dark" ? "light" : "dark"));
       },
     }),
     [mode]
   );
 
-  const language = i18n.resolvedLanguage ?? i18n.language;
-  const theme = useMemo(() => createAppTheme(mode, language), [mode, language]);
-
   return (
-    <ColorModeContext.Provider value={value}>
-      <ThemeProvider theme={theme}>{children}</ThemeProvider>
-    </ColorModeContext.Provider>
+    <ModeContext.Provider value={value}>
+      <GravityProvider
+        theme={mode}
+        lang={language}
+        mobile={mobile}
+        defaultProps={{ TooltipDelayGroup: { skipDelay: 300 } }}
+      >
+        {children}
+      </GravityProvider>
+    </ModeContext.Provider>
   );
 };
 
-export const useColorMode = () => useContext(ColorModeContext);
+export const useColorMode = () => {
+  const context = useContext(ModeContext);
+  if (!context) throw new Error("useColorMode must be used inside ColorModeProvider");
+  return context;
+};

@@ -1,11 +1,12 @@
-import { IS_DESKTOP } from "../platform";
-import { useState } from "react";
-import { IconButton, InputAdornment, TextField, Tooltip } from "@mui/material";
-import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
-import VisibilityIcon from "@mui/icons-material/Visibility";
-import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import { useId, useState } from "react";
+import { MagicWand } from "@gravity-ui/icons";
+import { Button, Icon, PasswordInput, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
+
+import { IS_DESKTOP } from "../platform";
 import { generatePassword } from "../lib/passwordGenerator";
+
+const SIZE_MAP = { small: "m", medium: "l", large: "xl" };
 
 const PasswordField = ({
   show: showProp,
@@ -13,71 +14,88 @@ const PasswordField = ({
   onGenerate,
   adornment = null,
   slotProps,
+  label,
+  helperText,
+  required = false,
+  size = "l",
+  id: idProp,
+  className,
+  fullWidth: _fullWidth,
+  sx: _sx,
   ...props
 }) => {
+  // Legacy layout props are intentionally consumed here while callers migrate from MUI.
+  void _fullWidth;
+  void _sx;
   const { t } = useTranslation();
+  const generatedId = useId();
+  const id = idProp ?? `cm-password-${generatedId}`;
+  const labelId = `${id}-label`;
   const [showInternal, setShowInternal] = useState(false);
   const controlled = showProp !== undefined;
   const show = controlled ? showProp : showInternal;
-  const toggle = controlled ? onToggleShow : () => setShowInternal((v) => !v);
+  const readOnly = props.readOnly || slotProps?.input?.readOnly || slotProps?.htmlInput?.readOnly;
+
+  const updateReveal = (visible) => {
+    if (controlled) onToggleShow?.(visible);
+    else setShowInternal(visible);
+  };
+
+  const generateAction = onGenerate && !readOnly && (
+    <Tooltip content={t("entry.actions.generatePassword")} role="label">
+      <Button
+        type="button"
+        view="flat-secondary"
+        size="m"
+        aria-label={t("entry.actions.generatePassword")}
+        onClick={() => onGenerate(generatePassword())}
+        disabled={props.disabled}
+      >
+        <Icon data={MagicWand} />
+      </Button>
+    </Tooltip>
+  );
 
   return (
-    <TextField
-      fullWidth
-      type={show ? "text" : "password"}
-      {...props}
-      autoComplete={IS_DESKTOP ? "off" : props.autoComplete}
-      slotProps={{
-        ...slotProps,
-        htmlInput: {
+    <div className={`cm-password-field${className ? ` ${className}` : ""}`}>
+      {label && (
+        <span id={labelId} className="cm-field__label">
+          {label}
+          {required && (
+            <span className="cm-field__required" aria-hidden="true">
+              *
+            </span>
+          )}
+        </span>
+      )}
+      <PasswordInput
+        {...props}
+        id={id}
+        size={SIZE_MAP[size] ?? size}
+        hideCopyButton
+        showRevealTooltip
+        revealValue={show}
+        onRevealValueUpdate={updateReveal}
+        endContent={
+          adornment || generateAction ? (
+            <span className="cm-password-field__actions">
+              {adornment}
+              {generateAction}
+            </span>
+          ) : undefined
+        }
+        autoComplete={IS_DESKTOP ? "off" : props.autoComplete}
+        controlProps={{
           spellCheck: false,
           autoCorrect: "off",
           autoCapitalize: "none",
+          required,
+          ...(label ? { "aria-labelledby": labelId } : {}),
           ...slotProps?.htmlInput,
-        },
-        input: {
-          ...slotProps?.input,
-          endAdornment: (
-            <InputAdornment position="end">
-              {adornment}
-              {onGenerate && !slotProps?.input?.readOnly && !slotProps?.htmlInput?.readOnly && (
-                <Tooltip title={t("entry.actions.generatePassword")}>
-                  <span>
-                    <IconButton
-                      type="button"
-                      aria-label={t("entry.actions.generatePassword")}
-                      onClick={() => onGenerate(generatePassword())}
-                      disabled={props.disabled}
-                      size="small"
-                      sx={{ width: 44, height: 44 }}
-                    >
-                      <AutoFixHighIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              )}
-              <Tooltip title={t(show ? "passwordField.hide" : "passwordField.show")}>
-                <IconButton
-                  type="button"
-                  aria-label={t(show ? "passwordField.hide" : "passwordField.show")}
-                  onClick={toggle}
-                  disabled={props.disabled}
-                  edge="end"
-                  size="small"
-                  sx={{ width: 44, height: 44 }}
-                >
-                  {show ? (
-                    <VisibilityOffIcon fontSize="small" />
-                  ) : (
-                    <VisibilityIcon fontSize="small" />
-                  )}
-                </IconButton>
-              </Tooltip>
-            </InputAdornment>
-          ),
-        },
-      }}
-    />
+        }}
+      />
+      {helperText && <span className="cm-password-field__note">{helperText}</span>}
+    </div>
   );
 };
 

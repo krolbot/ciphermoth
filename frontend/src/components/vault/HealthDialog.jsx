@@ -1,25 +1,11 @@
-import { useMemo } from "react";
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  ListItemButton,
-  ListItemText,
-  Stack,
-  Typography,
-} from "@mui/material";
-import CheckCircleOutlinedIcon from "@mui/icons-material/CheckCircleOutlined";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
-import GppMaybeOutlinedIcon from "@mui/icons-material/GppMaybeOutlined";
-import ScheduleOutlinedIcon from "@mui/icons-material/ScheduleOutlined";
+import { useId, useMemo } from "react";
+import { Check, ChevronRight, Clock, Copy, ShieldExclamation } from "@gravity-ui/icons";
+import { Button, Dialog, Icon, Progress } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { analyzeVault } from "../../lib/vaultHealth";
+
+const SCORE_THEME = { error: "danger", success: "success", warning: "warning" };
 
 const scoreColor = (score) => {
   if (score >= 80) return "success";
@@ -36,190 +22,145 @@ const scoreLabelKey = (score) => {
 const ScoreGauge = ({ score }) => {
   const { t } = useTranslation();
   const color = scoreColor(score);
+
   return (
-    <Stack spacing={1} sx={{ alignItems: "center" }}>
-      <Box sx={{ position: "relative", display: "inline-flex" }}>
-        <CircularProgress
-          variant="determinate"
-          value={100}
-          size={120}
-          thickness={4}
-          sx={{ color: "divider" }}
-        />
-        <CircularProgress
-          variant="determinate"
-          value={score}
-          size={120}
-          thickness={4}
-          color={color}
-          sx={{ position: "absolute", left: 0, strokeLinecap: "round" }}
-        />
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1 }}>
-            {score}
-          </Typography>
-          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            / 100
-          </Typography>
-        </Box>
-      </Box>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700, color: `${color}.main` }}>
-        {t(scoreLabelKey(score))}
-      </Typography>
-    </Stack>
+    <section className={`cm-health__score cm-health__score--${color}`}>
+      <div className="cm-health__score-value">
+        <output>{score}</output>
+        <span>/ 100</span>
+      </div>
+      <Progress size="s" theme={SCORE_THEME[color]} value={score} />
+      <strong className="cm-health__score-label">{t(scoreLabelKey(score))}</strong>
+    </section>
   );
 };
 
-const StatTile = ({ icon: Icon, label, count, color }) => (
-  <Box
-    sx={{
-      flex: 1,
-      textAlign: "center",
-      p: 1.25,
-      borderRadius: 2,
-      border: "1px solid",
-      borderColor: "divider",
-    }}
+const StatTile = ({ icon, label, count, color }) => (
+  <div
+    className={`cm-health__stat cm-health__stat--${color}${count ? "" : " cm-health__stat--empty"}`}
   >
-    <Icon fontSize="small" sx={{ color: count ? `${color}.main` : "text.disabled" }} />
-    <Typography
-      variant="h6"
-      sx={{ fontWeight: 700, lineHeight: 1.2, color: count ? "text.primary" : "text.disabled" }}
-    >
-      {count}
-    </Typography>
-    <Typography variant="caption" sx={{ color: "text.secondary" }}>
-      {label}
-    </Typography>
-  </Box>
+    <Icon data={icon} />
+    <strong>{count}</strong>
+    <span>{label}</span>
+  </div>
 );
 
-const IssueGroup = ({ icon: Icon, title, hint, color, entries, onSelect }) => {
+const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
   if (entries.length === 0) return null;
+
   return (
-    <Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-        <Icon fontSize="small" sx={{ color: `${color}.main` }} />
-        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-          {title}
-        </Typography>
-        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-          ({entries.length})
-        </Typography>
-      </Stack>
-      <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 0.75 }}>
-        {hint}
-      </Typography>
-      <Stack spacing={0.5}>
+    <section className={`cm-health__issue cm-health__issue--${color}`}>
+      <div className="cm-health__issue-heading">
+        <Icon data={icon} />
+        <strong>{title}</strong>
+        <span>({entries.length})</span>
+      </div>
+      <p className="cm-health__issue-hint">{hint}</p>
+      <div className="cm-health__issue-list">
         {entries.map((entry) => (
-          <ListItemButton
+          <Button
+            className="cm-health__issue-row"
             key={entry.password_name}
             onClick={() => onSelect(entry)}
-            sx={{ borderRadius: 1.5, border: "1px solid", borderColor: "divider", py: 0.75 }}
+            type="button"
+            view="flat-secondary"
+            width="max"
           >
-            <ListItemText
-              primary={
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                  {entry.password_name}
-                </Typography>
-              }
-              secondary={entry.username || undefined}
-            />
-            <ChevronRightIcon fontSize="small" sx={{ color: "text.disabled" }} />
-          </ListItemButton>
+            <span className="cm-health__issue-row-content">
+              <span>
+                <strong>{entry.password_name}</strong>
+                {entry.username && <small>{entry.username}</small>}
+              </span>
+              <Icon data={ChevronRight} />
+            </span>
+          </Button>
         ))}
-      </Stack>
-    </Box>
+      </div>
+    </section>
   );
 };
 
 const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
   const { t } = useTranslation();
+  const titleId = useId();
   const report = useMemo(() => analyzeVault(passwords), [passwords]);
   const allClear =
     report.weak.length === 0 && report.reused.length === 0 && report.stale.length === 0;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{t("health.title")}</DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2.5} sx={{ py: 1 }}>
+    <Dialog
+      aria-labelledby={titleId}
+      className="cm-secondary-dialog cm-secondary-dialog--health"
+      contentOverflow="auto"
+      fullWidth
+      hasCloseButton={false}
+      maxWidth="m"
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+      open={open}
+    >
+      <Dialog.Header caption={t("health.title")} id={titleId} />
+      <Dialog.Body hasBorders>
+        <div className="cm-health">
           <ScoreGauge score={report.score} />
-
-          <Stack direction="row" spacing={1}>
+          <div className="cm-health__stats">
             <StatTile
-              icon={GppMaybeOutlinedIcon}
-              label={t("health.weak")}
-              count={report.weak.length}
               color="error"
+              count={report.weak.length}
+              icon={ShieldExclamation}
+              label={t("health.weak")}
             />
             <StatTile
-              icon={ContentCopyOutlinedIcon}
-              label={t("health.reused")}
-              count={report.reused.length}
               color="warning"
+              count={report.reused.length}
+              icon={Copy}
+              label={t("health.reused")}
             />
             <StatTile
-              icon={ScheduleOutlinedIcon}
-              label={t("health.old")}
-              count={report.stale.length}
               color="info"
+              count={report.stale.length}
+              icon={Clock}
+              label={t("health.old")}
             />
-          </Stack>
-
-          <Typography variant="caption" align="center" sx={{ color: "text.secondary" }}>
-            {t("health.localOnly")}
-          </Typography>
-
+          </div>
+          <p className="cm-health__local-only">{t("health.localOnly")}</p>
           {allClear ? (
-            <Stack spacing={1} sx={{ alignItems: "center", py: 1 }}>
-              <CheckCircleOutlinedIcon sx={{ color: "success.main", fontSize: 34 }} />
-              <Typography variant="body2">{t("health.allClear")}</Typography>
-            </Stack>
+            <div className="cm-health__all-clear">
+              <Icon data={Check} />
+              <span>{t("health.allClear")}</span>
+            </div>
           ) : (
-            <Stack spacing={2}>
+            <div className="cm-health__issues">
               <IssueGroup
-                icon={GppMaybeOutlinedIcon}
-                title={t("health.weak")}
-                hint={t("health.weakHint")}
                 color="error"
                 entries={report.weak}
+                hint={t("health.weakHint")}
+                icon={ShieldExclamation}
                 onSelect={onSelect}
+                title={t("health.weak")}
               />
               <IssueGroup
-                icon={ContentCopyOutlinedIcon}
-                title={t("health.reused")}
-                hint={t("health.reusedHint")}
                 color="warning"
                 entries={report.reused}
+                hint={t("health.reusedHint")}
+                icon={Copy}
                 onSelect={onSelect}
+                title={t("health.reused")}
               />
               <IssueGroup
-                icon={ScheduleOutlinedIcon}
-                title={t("health.old")}
-                hint={t("health.oldHint")}
                 color="info"
                 entries={report.stale}
+                hint={t("health.oldHint")}
+                icon={Clock}
                 onSelect={onSelect}
+                title={t("health.old")}
               />
-            </Stack>
+            </div>
           )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button variant="contained" onClick={onClose}>
-          {t("common.actions.done")}
-        </Button>
-      </DialogActions>
+        </div>
+      </Dialog.Body>
+      <Dialog.Footer onClickButtonApply={onClose} textButtonApply={t("common.actions.done")} />
     </Dialog>
   );
 };

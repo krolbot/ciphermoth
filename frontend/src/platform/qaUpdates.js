@@ -173,12 +173,8 @@ async function run() {
         }
       } else if (command.action === "install") {
         if (!command.reject) {
-          const chip = await until(() =>
-            [...document.querySelectorAll(".MuiChip-root")].find(
-              (node) => node.textContent === "Update"
-            )
-          );
-          chip.click();
+          const updateButton = await until(() => button("Update"));
+          updateButton.click();
           (await until(() => button("Download and install"))).click();
           // Successful installation restarts this native process.
           await new Promise(() => {});

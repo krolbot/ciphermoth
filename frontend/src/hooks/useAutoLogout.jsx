@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStoreState } from "easy-peasy";
-import { useSnackbar } from "notistack";
+import { useSnackbar } from "./useNotify";
 import { useTranslation } from "react-i18next";
 
 import { endSession, readSession, touchSession } from "../api/session";

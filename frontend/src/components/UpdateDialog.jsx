@@ -1,81 +1,62 @@
-import {
-  Box,
-  Button,
-  Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Link,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Dialog, Label } from "@gravity-ui/uikit";
 import { useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
-import { GLOW } from "../lib/brand";
 import { MANUAL_UPDATE_COMMAND } from "../lib/updateCommands";
 import { IS_DESKTOP } from "../platform";
 import DesktopUpdateDialog from "./DesktopUpdateDialog";
 
-const stripV = (v) => String(v ?? "").replace(/^v/, "");
-
-const Command = ({ children }) => (
-  <Box
-    component="pre"
-    sx={{
-      m: 0,
-      p: 1.5,
-      borderRadius: 1,
-      border: "1px solid",
-      borderColor: "divider",
-      bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(255,255,255,0.06)" : "#141416"),
-      color: (t) => (t.palette.mode === "dark" ? t.palette.text.primary : "#f4f4f2"),
-      fontSize: 12,
-      overflowX: "auto",
-      whiteSpace: "pre-wrap",
-    }}
-  >
-    {children}
-  </Box>
-);
+const stripV = (value) => String(value ?? "").replace(/^v/, "");
 
 const UpdateDialog = ({ open, onClose }) => {
   const { t } = useTranslation();
-  const { current, latest, releaseUrl } = useStoreState((s) => s.ciphermothModels.updates);
+  const { current, latest, releaseUrl } = useStoreState((state) => state.ciphermothModels.updates);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{t("updateDialog.title")}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 0.5 }}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Chip label={current ? `v${stripV(current)}` : "-"} size="small" />
-            <Typography sx={{ color: "text.disabled" }}>→</Typography>
-            <Chip
-              label={latest ?? "-"}
-              size="small"
-              sx={{ bgcolor: GLOW, color: "#0b0b0c", fontWeight: 700 }}
-            />
-          </Stack>
+    <Dialog
+      aria-label={t("updateDialog.title")}
+      className="cm-secondary-dialog cm-update-dialog"
+      contentOverflow="auto"
+      fullWidth
+      maxWidth="s"
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
+      <Dialog.Header caption={t("updateDialog.title")} />
+      <Dialog.Body>
+        <div className="cm-update-dialog__content">
+          <div className="cm-update-dialog__versions" aria-label={t("updateDialog.title")}>
+            <Label size="s">{current ? `v${stripV(current)}` : "-"}</Label>
+            <span aria-hidden="true">→</span>
+            <Label size="s" theme="success">
+              {latest ?? "-"}
+            </Label>
+          </div>
 
           {releaseUrl && (
-            <Link href={releaseUrl} target="_blank" rel="noopener noreferrer" variant="body2">
+            <a
+              className="cm-inline-link"
+              href={releaseUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               {t("updateDialog.releaseNotes")}
-            </Link>
+            </a>
           )}
 
-          <Box>
-            <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>
-              {t("updateDialog.manualBackupDescription")}
-            </Typography>
-            <Command>{MANUAL_UPDATE_COMMAND}</Command>
-          </Box>
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>{t("common.actions.close")}</Button>
-      </DialogActions>
+          <div>
+            <p className="cm-secondary-copy">{t("updateDialog.manualBackupDescription")}</p>
+            <pre className="cm-command-block">{MANUAL_UPDATE_COMMAND}</pre>
+          </div>
+        </div>
+      </Dialog.Body>
+      <Dialog.Footer
+        onClickButtonApply={onClose}
+        textButtonApply={t("common.actions.close")}
+        propsButtonApply={{ view: "action" }}
+      />
     </Dialog>
   );
 };

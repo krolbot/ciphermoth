@@ -1,12 +1,14 @@
 import ReactDOM from "react-dom/client";
 import { StoreProvider } from "easy-peasy";
-import { SnackbarProvider } from "notistack";
-import "@fontsource-variable/space-grotesk";
-import "@fontsource/space-mono/400.css";
-import "@fontsource/space-mono/700.css";
+import { ToasterProvider } from "@gravity-ui/uikit";
+import { toaster } from "@gravity-ui/uikit/toaster-singleton";
+import "@gravity-ui/uikit/styles/styles.css";
+import "./styles/ciphermoth.css";
+import "./styles/ciphermoth-secondary.css";
+import "./styles/access.css";
+import "./i18n";
 
 import App from "./App";
-import "./i18n";
 import { store } from "./store";
 import { forgetLegacyKey } from "./utils";
 
@@ -16,16 +18,9 @@ const root = ReactDOM.createRoot(document.getElementById("root"));
 
 root.render(
   <StoreProvider store={store}>
-    <SnackbarProvider
-      preventDuplicate
-      maxSnack={3}
-      anchorOrigin={{
-        vertical: "bottom",
-        horizontal: "right",
-      }}
-    >
+    <ToasterProvider toaster={toaster}>
       <App />
-    </SnackbarProvider>
+    </ToasterProvider>
   </StoreProvider>
 );
 

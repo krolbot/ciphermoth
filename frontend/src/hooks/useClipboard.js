@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useSnackbar } from "notistack";
+import { useSnackbar } from "./useNotify";
 import { useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 

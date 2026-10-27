@@ -1,48 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Autocomplete,
-  Box,
+  ChevronDown,
+  CircleQuestion,
+  Copy,
+  FileText,
+  Key,
+  Lock,
+  LockOpen,
+  MagicWand,
+  Plus,
+  Star,
+  StarFill,
+  TrashBin,
+} from "@gravity-ui/icons";
+import {
   Button,
-  ButtonBase,
-  Collapse,
   Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-  Stack,
-  TextField,
-  ToggleButton,
-  ToggleButtonGroup,
+  Icon,
+  SegmentedRadioGroup,
+  TextArea,
+  TextInput,
   Tooltip,
-  Typography,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
-import AddIcon from "@mui/icons-material/Add";
-import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import HelpOutlineIcon from "@mui/icons-material/HelpOutlined";
-import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
-import LockOpenOutlinedIcon from "@mui/icons-material/LockOpenOutlined";
-import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import StarIcon from "@mui/icons-material/Star";
-import StarBorderIcon from "@mui/icons-material/StarBorder";
-import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
-import VisibilityIcon from "@mui/icons-material/Visibility";
-import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+} from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
-import { useSnackbar } from "notistack";
 
+import { useSnackbar } from "../../hooks/useNotify";
+import { DEFAULT_PASSWORD_OPTIONS, generatePassword } from "../../lib/passwordGenerator";
+import { isAuth } from "../../utils";
 import PasswordField from "../PasswordField";
 import AttachmentsSection from "./AttachmentsSection";
 import PasswordGenerator, { CHAR_KEYS } from "./PasswordGenerator";
 import StrengthBar from "./StrengthBar";
-import { DEFAULT_PASSWORD_OPTIONS, generatePassword } from "../../lib/passwordGenerator";
-import { GLOW } from "../../lib/brand";
-import { isAuth } from "../../utils";
 
 const EMPTY_FORM = {
   password_name: "",
@@ -61,130 +49,115 @@ const EMPTY_FORM = {
 
 const normalizeCustomFields = (fields) =>
   (fields ?? [])
-    .map((f) => ({ label: f.label.trim(), value: f.value, hidden: !!f.hidden }))
-    .filter((f) => f.label);
+    .map((field) => ({
+      label: field.label.trim(),
+      value: field.value,
+      hidden: Boolean(field.hidden),
+    }))
+    .filter((field) => field.label);
 
-const toForm = (target) =>
-  target
-    ? {
-        password_name: target.password_name ?? "",
-        kind: target.kind ?? "login",
-        username: target.username ?? "",
-        password_value: target.password_value ?? "",
-        url: target.url ?? "",
-        totp_secret: target.totp_secret ?? "",
-        description: target.description ?? "",
-        tags: target.tags ?? [],
-        custom_fields: (target.custom_fields ?? []).map((f) => ({
-          label: f.label ?? "",
-          value: f.value ?? "",
-          hidden: !!f.hidden,
-        })),
-        folder: target.folder ?? "",
-        folder_id: target.folder_id ?? null,
-        favorite: target.favorite ?? false,
-      }
-    : EMPTY_FORM;
+const parseTags = (value) => [
+  ...new Set(
+    value
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+  ),
+];
+
+const toForm = (target, entryType) => {
+  if (!target) return { ...EMPTY_FORM, kind: entryType === "note" ? "note" : "login" };
+  return {
+    password_name: target.password_name ?? "",
+    kind: target.kind ?? (entryType === "note" ? "note" : "login"),
+    username: target.username ?? "",
+    password_value: target.password_value ?? "",
+    url: target.url ?? "",
+    totp_secret: target.totp_secret ?? "",
+    description: target.description ?? "",
+    tags: target.tags ?? [],
+    custom_fields: (target.custom_fields ?? []).map((field) => ({
+      label: field.label ?? "",
+      value: field.value ?? "",
+      hidden: Boolean(field.hidden),
+    })),
+    folder: target.folder ?? "",
+    folder_id: target.folder_id ?? null,
+    favorite: target.favorite ?? false,
+  };
+};
 
 const sectionsForTarget = (target) => ({
-  totp: !!target?.totp_secret,
+  totp: Boolean(target?.totp_secret),
   tags: (target?.tags?.length ?? 0) > 0,
   custom: (target?.custom_fields?.length ?? 0) > 0,
-  notes: !!target?.description,
+  notes: Boolean(target?.description),
   attachments: (target?.attachment_count ?? 0) > 0,
   history: false,
 });
 
 const FormSection = ({ label, count, preview, open, onToggle, children }) => (
-  <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-    <ButtonBase
+  <section className={`cm-entry-section${open ? " is-open" : ""}`}>
+    <button
+      type="button"
+      className="cm-entry-section__trigger"
       onClick={onToggle}
-      sx={{
-        width: "100%",
-        justifyContent: "space-between",
-        px: 0.5,
-        py: 1,
-        borderRadius: 1,
-        "&:hover": { bgcolor: "action.hover" },
-      }}
+      aria-expanded={open}
     >
-      <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
-        <ExpandMoreIcon
-          fontSize="small"
-          sx={{
-            color: "text.secondary",
-            transition: "transform 150ms ease",
-            transform: open ? "none" : "rotate(-90deg)",
-          }}
-        />
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {label}
-        </Typography>
-        {count > 0 && (
-          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            ({count})
-          </Typography>
-        )}
-      </Stack>
-      {!open && preview && (
-        <Typography
-          variant="caption"
-          sx={{
-            color: "text.disabled",
-            ml: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            maxWidth: 190,
-          }}
-        >
-          {preview}
-        </Typography>
-      )}
-    </ButtonBase>
-    <Collapse in={open}>
-      <Box sx={{ px: 0.5, pt: 0.5, pb: 1.5 }}>{children}</Box>
-    </Collapse>
-  </Box>
+      <span className="cm-entry-section__title">
+        <Icon data={ChevronDown} size={16} />
+        <strong>{label}</strong>
+        {count > 0 && <span>({count})</span>}
+      </span>
+      {!open && preview && <span className="cm-entry-section__preview">{preview}</span>}
+    </button>
+    {open && <div className="cm-entry-section__body">{children}</div>}
+  </section>
 );
 
 const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
   const { t } = useTranslation();
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-      <TextField
+    <div className="cm-custom-field">
+      <TextInput
         label={t("entry.labels.label")}
-        size="small"
+        size="m"
         value={field.label}
-        onChange={(e) => onChange({ ...field, label: e.target.value })}
-        sx={{ flex: "0 0 34%" }}
+        onUpdate={(value) => onChange({ ...field, label: value })}
         placeholder={t("entry.placeholders.customLabel")}
       />
-      <TextField
+      <TextInput
         label={t("entry.labels.value")}
-        size="small"
+        size="m"
         type={field.hidden ? "password" : "text"}
         value={field.value}
-        onChange={(e) => onChange({ ...field, value: e.target.value })}
-        sx={{ flex: 1 }}
+        onUpdate={(value) => onChange({ ...field, value })}
         autoComplete="off"
-        slotProps={{ htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" } }}
+        controlProps={{ spellCheck: false, autoCorrect: "off", autoCapitalize: "none" }}
       />
-      <Tooltip title={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}>
-        <IconButton size="small" onClick={onToggleHidden}>
-          {field.hidden ? (
-            <LockOutlinedIcon fontSize="small" />
-          ) : (
-            <LockOpenOutlinedIcon fontSize="small" />
-          )}
-        </IconButton>
+      <Tooltip content={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}>
+        <Button
+          type="button"
+          size="m"
+          view="flat-secondary"
+          onClick={onToggleHidden}
+          aria-label={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}
+        >
+          <Icon data={field.hidden ? Lock : LockOpen} />
+        </Button>
       </Tooltip>
-      <Tooltip title={t("entry.actions.removeField")}>
-        <IconButton size="small" color="error" onClick={onRemove}>
-          <DeleteOutlineIcon fontSize="small" />
-        </IconButton>
+      <Tooltip content={t("entry.actions.removeField")}>
+        <Button
+          type="button"
+          size="m"
+          view="flat-danger"
+          onClick={onRemove}
+          aria-label={t("entry.actions.removeField")}
+        >
+          <Icon data={TrashBin} />
+        </Button>
       </Tooltip>
-    </Stack>
+    </div>
   );
 };
 
@@ -193,27 +166,32 @@ const HistoryRow = ({ entry, onCopy }) => {
   const [show, setShow] = useState(false);
   const when = new Date(entry.changed_at).toLocaleDateString(i18n.resolvedLanguage);
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-      <Typography
-        variant="body2"
-        sx={{ fontFamily: "'Space Mono', monospace", flex: 1, color: "text.secondary" }}
-      >
-        {show ? entry.value : "••••••••••••"}
-      </Typography>
-      <Typography variant="caption" sx={{ color: "text.disabled" }}>
-        {when}
-      </Typography>
-      <Tooltip title={t(show ? "passwordField.hide" : "passwordField.show")}>
-        <IconButton size="small" onClick={() => setShow((v) => !v)}>
-          {show ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-        </IconButton>
+    <div className="cm-entry-history__row">
+      <code>{show ? entry.value : "••••••••••••"}</code>
+      <time dateTime={entry.changed_at}>{when}</time>
+      <Tooltip content={t(show ? "passwordField.hide" : "passwordField.show")}>
+        <Button
+          type="button"
+          size="s"
+          view="flat-secondary"
+          onClick={() => setShow((value) => !value)}
+          aria-label={t(show ? "passwordField.hide" : "passwordField.show")}
+        >
+          <Icon data={show ? Lock : LockOpen} />
+        </Button>
       </Tooltip>
-      <Tooltip title={t("vault.columns.copyPassword")}>
-        <IconButton size="small" onClick={() => onCopy?.(entry.value)}>
-          <ContentCopyIcon fontSize="small" />
-        </IconButton>
+      <Tooltip content={t("vault.columns.copyPassword")}>
+        <Button
+          type="button"
+          size="s"
+          view="flat-secondary"
+          onClick={() => onCopy?.(entry.value)}
+          aria-label={t("vault.columns.copyPassword")}
+        >
+          <Icon data={Copy} />
+        </Button>
       </Tooltip>
-    </Stack>
+    </div>
   );
 };
 
@@ -227,21 +205,23 @@ const PasswordFormDialog = ({
   onDraftChange,
   draftError,
   folderOptions = [],
+  entryType,
   page = false,
 }) => {
   const { t } = useTranslation();
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
-  const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
-  const Root = page ? Box : Dialog;
-  const [form, setFormState] = useState(() => toForm(editTarget ?? initialDraft));
+  const initialTarget = editTarget ?? initialDraft;
+  const initialForm = toForm(initialTarget, entryType);
+  const [form, setFormState] = useState(initialForm);
+  const [tagsValue, setTagsValue] = useState(initialForm.tags.join(", "));
   const formRef = useRef(form);
   const nameInputRef = useRef(null);
   const valueInputRef = useRef(null);
   const [showValue, setShowValue] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
-  const [sections, setSections] = useState(() => sectionsForTarget(editTarget ?? initialDraft));
+  const [generatorUndo, setGeneratorUndo] = useState(null);
+  const [sections, setSections] = useState(() => sectionsForTarget(initialTarget));
   const [genOpts, setGenOpts] = useState(DEFAULT_PASSWORD_OPTIONS);
   const [submitting, setSubmitting] = useState(false);
   const [attachmentsDirty, setAttachmentsDirty] = useState(false);
@@ -272,7 +252,7 @@ const PasswordFormDialog = ({
   }, [draftError, enqueueSnackbar, closeSnackbar, t]);
 
   useEffect(() => {
-    if (editTarget || !dirty) return;
+    if (editTarget || !dirty) return undefined;
     const beforeUnload = (event) => {
       if (!isAuth()) return;
       event.preventDefault();
@@ -283,13 +263,13 @@ const PasswordFormDialog = ({
   }, [editTarget, dirty]);
 
   const isNote = form.kind === "note";
-
-  const toggleSection = (key) => () => setSections((prev) => ({ ...prev, [key]: !prev[key] }));
-
-  const setField = (field) => (e) => {
-    setForm((prev) => ({ ...prev, [field]: e.target.value }));
+  const toggleSection = (key) => () =>
+    setSections((previous) => ({ ...previous, [key]: !previous[key] }));
+  const setValue = (field) => (value) => {
+    setForm((previous) => ({ ...previous, [field]: value }));
     closeSnackbar("entry-form-error");
   };
+  const setField = (field) => (event) => setValue(field)(event.target.value);
 
   const showError = (message, inputRef) => {
     enqueueSnackbar(message, {
@@ -302,57 +282,78 @@ const PasswordFormDialog = ({
   };
 
   const addCustomField = () => {
-    setSections((prev) => ({ ...prev, custom: true }));
-    setForm((prev) => ({
-      ...prev,
-      custom_fields: [...prev.custom_fields, { label: "", value: "", hidden: false }],
+    setSections((previous) => ({ ...previous, custom: true }));
+    setForm((previous) => ({
+      ...previous,
+      custom_fields: [...previous.custom_fields, { label: "", value: "", hidden: false }],
     }));
   };
 
   const updateCustomField = (index, next) => {
-    setForm((prev) => ({
-      ...prev,
-      custom_fields: prev.custom_fields.map((f, i) => (i === index ? next : f)),
+    setForm((previous) => ({
+      ...previous,
+      custom_fields: previous.custom_fields.map((field, fieldIndex) =>
+        fieldIndex === index ? next : field
+      ),
     }));
   };
 
   const removeCustomField = (index) => {
-    setForm((prev) => ({
-      ...prev,
-      custom_fields: prev.custom_fields.filter((_, i) => i !== index),
+    setForm((previous) => ({
+      ...previous,
+      custom_fields: previous.custom_fields.filter((_, fieldIndex) => fieldIndex !== index),
     }));
   };
 
-  const applyGenerated = (opts) => {
-    setForm((prev) => ({ ...prev, password_value: generatePassword(opts) }));
+  const applyGenerated = (options) => {
+    const previousValue = formRef.current.password_value;
+    if (previousValue && generatorUndo === null) setGeneratorUndo(previousValue);
+    setForm((previous) => ({ ...previous, password_value: generatePassword(options) }));
     setShowValue(true);
   };
 
-  const toggleGenerator = () => {
-    if (!showGenerator) applyGenerated(genOpts);
-    setShowGenerator((v) => !v);
-  };
+  const toggleGenerator = () => setShowGenerator((value) => !value);
 
   const changeGenLength = (length) => {
-    const next = { ...genOpts, length };
-    setGenOpts(next);
-    applyGenerated(next);
+    setGenOpts((previous) => ({ ...previous, length }));
   };
 
   const toggleGenClass = (key) => {
-    const wouldHaveNone = CHAR_KEYS.every((k) => (k === key ? genOpts[k] : !genOpts[k]));
+    const wouldHaveNone = CHAR_KEYS.every((item) =>
+      item === key ? genOpts[item] : !genOpts[item]
+    );
     if (wouldHaveNone) return;
-    const next = { ...genOpts, [key]: !genOpts[key] };
-    setGenOpts(next);
-    applyGenerated(next);
+    setGenOpts((previous) => ({ ...previous, [key]: !previous[key] }));
   };
+
+  const undoGenerated = () => {
+    if (generatorUndo === null) return;
+    setForm((previous) => ({ ...previous, password_value: generatorUndo }));
+    setGeneratorUndo(null);
+  };
+
+  const history = editTarget?.password_history ?? [];
+  const customCount = normalizeCustomFields(form.custom_fields).length;
+  const parsedTags = parseTags(tagsValue);
+  const unchanged =
+    Boolean(editTarget) &&
+    form.username === (editTarget.username ?? "") &&
+    form.password_value === editTarget.password_value &&
+    form.url === (editTarget.url ?? "") &&
+    form.totp_secret === (editTarget.totp_secret ?? "") &&
+    form.description === (editTarget.description ?? "") &&
+    form.favorite === (editTarget.favorite ?? false) &&
+    (form.folder.trim() || "") === (editTarget.folder ?? "") &&
+    form.folder_id === (editTarget.folder_id ?? null) &&
+    parsedTags.join(" ") === (editTarget.tags ?? []).join(" ") &&
+    JSON.stringify(normalizeCustomFields(form.custom_fields)) ===
+      JSON.stringify(normalizeCustomFields(editTarget.custom_fields));
 
   const handleSubmit = async () => {
     if (!form.password_name.trim()) {
       showError(t("entry.validation.nameRequired"), nameInputRef);
       return;
     }
-
     if (!form.password_value.trim()) {
       showError(
         t(isNote ? "entry.validation.noteRequired" : "entry.validation.passwordRequired"),
@@ -360,14 +361,12 @@ const PasswordFormDialog = ({
       );
       return;
     }
-
     if (editTarget && unchanged) {
       onClose();
       return;
     }
 
     setSubmitting(true);
-
     try {
       await onSubmit({
         password_name: form.password_name.trim(),
@@ -377,35 +376,18 @@ const PasswordFormDialog = ({
         url: isNote ? null : form.url.trim() || null,
         totp_secret: isNote ? null : form.totp_secret.trim() || null,
         description: isNote ? null : form.description.trim() || null,
-        tags: form.tags,
+        tags: parsedTags,
         custom_fields: normalizeCustomFields(form.custom_fields),
         folder: form.folder.trim() || null,
         folder_id: form.folder_id,
         favorite: form.favorite,
       });
-    } catch (err) {
-      showError(err.message || t("errors.generic"));
+    } catch (error) {
+      showError(error.message || t("errors.generic"));
     } finally {
       setSubmitting(false);
     }
   };
-
-  const history = editTarget?.password_history ?? [];
-  const customCount = normalizeCustomFields(form.custom_fields).length;
-
-  const unchanged =
-    !!editTarget &&
-    form.username === (editTarget.username ?? "") &&
-    form.password_value === editTarget.password_value &&
-    form.url === (editTarget.url ?? "") &&
-    form.totp_secret === (editTarget.totp_secret ?? "") &&
-    form.description === (editTarget.description ?? "") &&
-    form.favorite === (editTarget.favorite ?? false) &&
-    (form.folder.trim() || "") === (editTarget.folder ?? "") &&
-    form.folder_id === (editTarget.folder_id ?? null) &&
-    form.tags.join(" ") === (editTarget.tags ?? []).join(" ") &&
-    JSON.stringify(normalizeCustomFields(form.custom_fields)) ===
-      JSON.stringify(normalizeCustomFields(editTarget.custom_fields));
 
   const titleKey = editTarget
     ? isNote
@@ -414,356 +396,368 @@ const PasswordFormDialog = ({
     : isNote
       ? "entry.title.addNote"
       : "entry.title.addPassword";
+  const submitLabel = t(
+    editTarget
+      ? unchanged && attachmentsDirty
+        ? "common.actions.done"
+        : "common.actions.update"
+      : "common.actions.create"
+  );
 
-  return (
-    <Root
-      {...(page
-        ? {
-            component: "section",
-            "aria-label": t(titleKey),
-            sx: { width: "100%", maxWidth: 960, mx: "auto", py: { xs: 1, sm: 3 } },
-          }
-        : {
-            open,
-            onClose: submitting ? undefined : onClose,
-            maxWidth: "sm",
-            fullWidth: true,
-            fullScreen,
-          })}
+  const favoriteButton = (
+    <Tooltip
+      content={t(form.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
     >
-      <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        {t(titleKey)}
-        <Tooltip
-          title={t(form.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite")}
+      <Button
+        type="button"
+        view="flat-secondary"
+        size="m"
+        selected={form.favorite}
+        onClick={() => setForm((previous) => ({ ...previous, favorite: !previous.favorite }))}
+        aria-pressed={form.favorite}
+        aria-label={t(
+          form.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
+        )}
+      >
+        <Icon data={form.favorite ? StarFill : Star} />
+      </Button>
+    </Tooltip>
+  );
+
+  const body = (
+    <div className="cm-entry-form">
+      <div className="cm-entry-form__favorite">{favoriteButton}</div>
+      {!editTarget && !draftError && (
+        <p className="cm-entry-form__draft-status" role="status">
+          {t("entry.draft.savedLocally")}
+        </p>
+      )}
+      {!editTarget && (
+        <SegmentedRadioGroup
+          name="entry-kind"
+          width="max"
+          value={form.kind}
+          onUpdate={(value) => setForm((previous) => ({ ...previous, kind: value }))}
         >
-          <IconButton onClick={() => setForm((p) => ({ ...p, favorite: !p.favorite }))}>
-            {form.favorite ? <StarIcon sx={{ color: GLOW }} /> : <StarBorderIcon />}
-          </IconButton>
-        </Tooltip>
-      </DialogTitle>
-      <DialogContent dividers>
-        {!editTarget && !draftError && (
-          <Typography role="status" variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t("entry.draft.savedLocally")}
-          </Typography>
-        )}
-        {!editTarget && (
-          <ToggleButtonGroup
-            exclusive
-            fullWidth
-            size="small"
-            value={form.kind}
-            onChange={(_, value) => value && setForm((prev) => ({ ...prev, kind: value }))}
-            sx={{ mb: 2 }}
-          >
-            <ToggleButton value="login">
-              <KeyOutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
+          <SegmentedRadioGroup.Option value="login">
+            <span className="cm-entry-kind-option">
+              <Icon data={Key} />
               {t("entry.kind.login")}
-            </ToggleButton>
-            <ToggleButton value="note">
-              <StickyNote2OutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
+            </span>
+          </SegmentedRadioGroup.Option>
+          <SegmentedRadioGroup.Option value="note">
+            <span className="cm-entry-kind-option">
+              <Icon data={FileText} />
               {t("entry.kind.note")}
-            </ToggleButton>
-          </ToggleButtonGroup>
-        )}
+            </span>
+          </SegmentedRadioGroup.Option>
+        </SegmentedRadioGroup>
+      )}
 
-        <Stack spacing={1.5}>
-          <TextField
-            label={t("common.fields.name")}
-            size="small"
-            value={form.password_name}
-            onChange={setField("password_name")}
-            disabled={!!editTarget}
+      <div className="cm-entry-form__primary">
+        <TextInput
+          label={t("common.fields.name")}
+          size="l"
+          value={form.password_name}
+          onUpdate={setValue("password_name")}
+          disabled={Boolean(editTarget)}
+          required
+          autoFocus
+          controlRef={nameInputRef}
+          controlProps={{ maxLength: 255 }}
+          note={
+            editTarget
+              ? t("entry.help.nameCannotChange")
+              : isNote
+                ? t("entry.placeholders.noteName")
+                : t("entry.placeholders.passwordName")
+          }
+        />
+
+        {isNote ? (
+          <TextArea
+            label={t("entry.labels.note")}
+            size="l"
+            value={form.password_value}
+            onUpdate={setValue("password_value")}
+            controlRef={valueInputRef}
             required
-            fullWidth
-            autoFocus
-            inputRef={nameInputRef}
-            slotProps={{ htmlInput: { maxLength: 255 } }}
-            helperText={
-              editTarget
-                ? t("entry.help.nameCannotChange")
-                : isNote
-                  ? t("entry.placeholders.noteName")
-                  : t("entry.placeholders.passwordName")
-            }
+            minRows={6}
+            maxRows={10}
+            autoComplete="off"
+            placeholder={t("entry.placeholders.note")}
+            controlProps={{ spellCheck: false }}
           />
-
-          {isNote ? (
-            <TextField
-              label={t("entry.labels.note")}
-              size="small"
+        ) : (
+          <>
+            <TextInput
+              label={t("entry.labels.usernameOptional")}
+              size="l"
+              value={form.username}
+              onUpdate={setValue("username")}
+              placeholder={t("entry.placeholders.username")}
+              controlProps={{ spellCheck: false, autoCorrect: "off", autoCapitalize: "none" }}
+            />
+            <TextInput
+              label={t("entry.labels.websiteOptional")}
+              size="l"
+              value={form.url}
+              onUpdate={setValue("url")}
+              placeholder={t("entry.placeholders.website")}
+              controlProps={{ spellCheck: false, autoCorrect: "off", autoCapitalize: "none" }}
+            />
+            <PasswordField
+              label={t("common.fields.password")}
+              size="l"
               value={form.password_value}
-              onChange={setField("password_value")}
+              onChange={(event) => {
+                setField("password_value")(event);
+                setGeneratorUndo(null);
+                if (showGenerator) setShowGenerator(false);
+              }}
               inputRef={valueInputRef}
               required
-              fullWidth
-              multiline
-              minRows={6}
-              maxRows={6}
-              autoComplete="off"
-              placeholder={t("entry.placeholders.note")}
-              slotProps={{ htmlInput: { spellCheck: false, style: { overflow: "auto" } } }}
-            />
-          ) : (
-            <>
-              <TextField
-                label={t("entry.labels.usernameOptional")}
-                size="small"
-                value={form.username}
-                onChange={setField("username")}
-                fullWidth
-                placeholder={t("entry.placeholders.username")}
-                slotProps={{
-                  htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" },
-                }}
-              />
-              <TextField
-                label={t("entry.labels.websiteOptional")}
-                size="small"
-                value={form.url}
-                onChange={setField("url")}
-                fullWidth
-                placeholder={t("entry.placeholders.website")}
-                slotProps={{
-                  htmlInput: { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" },
-                }}
-              />
-              <PasswordField
-                label={t("common.fields.password")}
-                size="small"
-                value={form.password_value}
-                onChange={(e) => {
-                  setField("password_value")(e);
-                  if (showGenerator) setShowGenerator(false);
-                }}
-                inputRef={valueInputRef}
-                required
-                autoComplete="new-password"
-                show={showValue}
-                onToggleShow={() => setShowValue((v) => !v)}
-                adornment={
-                  <Tooltip
-                    title={t(
+              autoComplete="new-password"
+              show={showValue}
+              onToggleShow={() => setShowValue((value) => !value)}
+              adornment={
+                <Tooltip
+                  content={t(
+                    showGenerator
+                      ? "entry.actions.closeGenerator"
+                      : "entry.actions.generatePassword"
+                  )}
+                >
+                  <Button
+                    type="button"
+                    size="s"
+                    view={showGenerator ? "action" : "flat-secondary"}
+                    onClick={toggleGenerator}
+                    aria-label={t(
                       showGenerator
                         ? "entry.actions.closeGenerator"
                         : "entry.actions.generatePassword"
                     )}
                   >
-                    <IconButton
-                      onClick={toggleGenerator}
-                      size="small"
-                      color={showGenerator ? "primary" : "default"}
-                    >
-                      <AutoFixHighIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                }
-              />
-              {showGenerator && (
-                <PasswordGenerator
-                  options={genOpts}
-                  onChangeLength={changeGenLength}
-                  onToggleClass={toggleGenClass}
-                  onRegenerate={() => applyGenerated(genOpts)}
-                />
-              )}
-              <StrengthBar password={form.password_value} />
-            </>
-          )}
-        </Stack>
-
-        <Autocomplete
-          freeSolo
-          size="small"
-          disabled={Boolean(editTarget && editTarget.access !== "owner")}
-          options={folderOptions}
-          value={
-            folderOptions.find((folder) => folder.id === form.folder_id) ?? form.folder ?? null
-          }
-          getOptionLabel={(option) => (typeof option === "string" ? option : option.name)}
-          isOptionEqualToValue={(option, value) =>
-            typeof value === "object" && option.id === value.id
-          }
-          onChange={(_, value) => {
-            setForm((prev) => ({
-              ...prev,
-              folder: typeof value === "string" ? value : (value?.name ?? ""),
-              folder_id: typeof value === "object" && value ? value.id : null,
-            }));
-            closeSnackbar("entry-form-error");
-          }}
-          onInputChange={(_, value, reason) => {
-            if (reason !== "input" && reason !== "clear") return;
-            setForm((prev) => ({ ...prev, folder: value, folder_id: null }));
-            closeSnackbar("entry-form-error");
-          }}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label={t("entry.labels.folderOptional")}
-              placeholder={t("entry.placeholders.folder")}
-            />
-          )}
-          sx={{ mt: 1.5 }}
-        />
-
-        <Box sx={{ mt: 1.5 }}>
-          {!isNote && (
-            <FormSection
-              label={t("entry.labels.twoFactor")}
-              preview={form.totp_secret ? t("common.labels.configured") : ""}
-              open={sections.totp}
-              onToggle={toggleSection("totp")}
-            >
-              <PasswordField
-                label={t("entry.labels.twoFactorSecret")}
-                size="small"
-                value={form.totp_secret}
-                onChange={setField("totp_secret")}
-                autoComplete="off"
-                show={showTotp}
-                onToggleShow={() => setShowTotp((v) => !v)}
-                helperText={t("entry.help.twoFactor")}
-                adornment={
-                  <Tooltip arrow placement="top" title={t("entry.help.twoFactorTooltip")}>
-                    <HelpOutlineIcon
-                      fontSize="small"
-                      sx={{ color: "text.disabled", cursor: "help", mr: 0.5 }}
-                    />
-                  </Tooltip>
-                }
-              />
-            </FormSection>
-          )}
-
-          <FormSection
-            label={t("common.fields.tags")}
-            count={form.tags.length}
-            preview={form.tags.slice(0, 3).join(", ")}
-            open={sections.tags}
-            onToggle={toggleSection("tags")}
-          >
-            <Autocomplete
-              multiple
-              freeSolo
-              size="small"
-              options={[]}
-              value={form.tags}
-              onChange={(_, newValue) =>
-                setForm((prev) => ({
-                  ...prev,
-                  tags: [...new Set(newValue.map((t) => t.trim()).filter(Boolean))],
-                }))
+                    <Icon data={MagicWand} />
+                  </Button>
+                </Tooltip>
               }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label={t("common.fields.tags")}
-                  placeholder={t("entry.placeholders.tags")}
-                />
-              )}
+            />
+            {showGenerator && (
+              <PasswordGenerator
+                options={genOpts}
+                onChangeLength={changeGenLength}
+                onToggleClass={toggleGenClass}
+                onRegenerate={() => applyGenerated(genOpts)}
+                canUndo={generatorUndo !== null}
+                onUndo={undoGenerated}
+              />
+            )}
+            <StrengthBar password={form.password_value} />
+          </>
+        )}
+      </div>
+
+      <TextInput
+        label={t("entry.labels.folderOptional")}
+        size="l"
+        value={form.folder}
+        onUpdate={(value) => {
+          const match = folderOptions.find((folder) => folder.name === value);
+          setForm((previous) => ({
+            ...previous,
+            folder: value,
+            folder_id: match?.id ?? null,
+          }));
+          closeSnackbar("entry-form-error");
+        }}
+        disabled={Boolean(editTarget && editTarget.access !== "owner")}
+        placeholder={t("entry.placeholders.folder")}
+        controlProps={{ list: "cm-entry-folder-options" }}
+      />
+      <datalist id="cm-entry-folder-options">
+        {folderOptions.map((folder) => (
+          <option key={folder.id} value={folder.name} />
+        ))}
+      </datalist>
+
+      <div className="cm-entry-form__sections">
+        {!isNote && (
+          <FormSection
+            label={t("entry.labels.twoFactor")}
+            preview={form.totp_secret ? t("common.labels.configured") : ""}
+            open={sections.totp}
+            onToggle={toggleSection("totp")}
+          >
+            <PasswordField
+              label={t("entry.labels.twoFactorSecret")}
+              size="m"
+              value={form.totp_secret}
+              onChange={setField("totp_secret")}
+              autoComplete="off"
+              show={showTotp}
+              onToggleShow={() => setShowTotp((value) => !value)}
+              helperText={t("entry.help.twoFactor")}
+              adornment={
+                <Tooltip content={t("entry.help.twoFactorTooltip")}>
+                  <Icon data={CircleQuestion} className="cm-entry-form__help-icon" />
+                </Tooltip>
+              }
             />
           </FormSection>
+        )}
 
-          <FormSection
-            label={t("entry.labels.customFields")}
-            count={customCount}
-            preview={normalizeCustomFields(form.custom_fields)
-              .map((f) => f.label)
-              .join(", ")}
-            open={sections.custom}
-            onToggle={toggleSection("custom")}
-          >
-            <Stack spacing={1}>
-              {form.custom_fields.map((field, index) => (
-                <CustomFieldRow
-                  key={index}
-                  field={field}
-                  onChange={(next) => updateCustomField(index, next)}
-                  onToggleHidden={() =>
-                    updateCustomField(index, { ...field, hidden: !field.hidden })
-                  }
-                  onRemove={() => removeCustomField(index)}
-                />
-              ))}
-              <Box>
-                <Button size="small" startIcon={<AddIcon />} onClick={addCustomField}>
-                  {t("entry.actions.addField")}
-                </Button>
-              </Box>
-            </Stack>
-          </FormSection>
-
-          {!isNote && (
-            <FormSection
-              label={t("entry.labels.notes")}
-              preview={form.description}
-              open={sections.notes}
-              onToggle={toggleSection("notes")}
-            >
-              <TextField
-                label={t("common.fields.description")}
-                size="small"
-                value={form.description}
-                onChange={setField("description")}
-                fullWidth
-                multiline
-                rows={2}
-                placeholder={t("entry.placeholders.description")}
-              />
-            </FormSection>
-          )}
-
-          {editTarget && (
-            <FormSection
-              label={t("entry.labels.attachments")}
-              count={editTarget.attachment_count ?? 0}
-              open={sections.attachments}
-              onToggle={toggleSection("attachments")}
-            >
-              <AttachmentsSection
-                passwordName={editTarget.password_name}
-                onChanged={() => setAttachmentsDirty(true)}
-              />
-            </FormSection>
-          )}
-
-          {!isNote && editTarget && history.length > 0 && (
-            <FormSection
-              label={t("entry.labels.passwordHistory")}
-              count={history.length}
-              open={sections.history}
-              onToggle={toggleSection("history")}
-            >
-              <Stack spacing={1}>
-                {history.map((entry, index) => (
-                  <HistoryRow key={index} entry={entry} onCopy={onCopy} />
-                ))}
-              </Stack>
-            </FormSection>
-          )}
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={submitting}>
-          {t("common.actions.cancel")}
-        </Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          loading={submitting}
-          disabled={unchanged && !attachmentsDirty}
+        <FormSection
+          label={t("common.fields.tags")}
+          count={parsedTags.length}
+          preview={parsedTags.slice(0, 3).join(", ")}
+          open={sections.tags}
+          onToggle={toggleSection("tags")}
         >
-          {t(
-            editTarget
-              ? unchanged && attachmentsDirty
-                ? "common.actions.done"
-                : "common.actions.update"
-              : "common.actions.create"
-          )}
-        </Button>
-      </DialogActions>
-    </Root>
+          <TextInput
+            label={t("common.fields.tags")}
+            size="m"
+            value={tagsValue}
+            onUpdate={setTagsValue}
+            onBlur={() =>
+              setForm((previous) => ({
+                ...previous,
+                tags: parseTags(tagsValue),
+              }))
+            }
+            placeholder={t("entry.placeholders.tags")}
+          />
+        </FormSection>
+
+        <FormSection
+          label={t("entry.labels.customFields")}
+          count={customCount}
+          preview={normalizeCustomFields(form.custom_fields)
+            .map((field) => field.label)
+            .join(", ")}
+          open={sections.custom}
+          onToggle={toggleSection("custom")}
+        >
+          <div className="cm-custom-fields">
+            {form.custom_fields.map((field, index) => (
+              <CustomFieldRow
+                key={index}
+                field={field}
+                onChange={(next) => updateCustomField(index, next)}
+                onToggleHidden={() => updateCustomField(index, { ...field, hidden: !field.hidden })}
+                onRemove={() => removeCustomField(index)}
+              />
+            ))}
+            <Button type="button" size="m" view="flat" onClick={addCustomField}>
+              <Icon data={Plus} />
+              {t("entry.actions.addField")}
+            </Button>
+          </div>
+        </FormSection>
+
+        {!isNote && (
+          <FormSection
+            label={t("entry.labels.notes")}
+            preview={form.description}
+            open={sections.notes}
+            onToggle={toggleSection("notes")}
+          >
+            <TextArea
+              label={t("common.fields.description")}
+              size="m"
+              value={form.description}
+              onUpdate={setValue("description")}
+              minRows={2}
+              maxRows={5}
+              placeholder={t("entry.placeholders.description")}
+            />
+          </FormSection>
+        )}
+
+        {editTarget && (
+          <FormSection
+            label={t("entry.labels.attachments")}
+            count={editTarget.attachment_count ?? 0}
+            open={sections.attachments}
+            onToggle={toggleSection("attachments")}
+          >
+            <AttachmentsSection
+              passwordName={editTarget.password_name}
+              onChanged={() => setAttachmentsDirty(true)}
+            />
+          </FormSection>
+        )}
+
+        {!isNote && editTarget && history.length > 0 && (
+          <FormSection
+            label={t("entry.labels.passwordHistory")}
+            count={history.length}
+            open={sections.history}
+            onToggle={toggleSection("history")}
+          >
+            <div className="cm-entry-history">
+              {history.map((entry, index) => (
+                <HistoryRow key={index} entry={entry} onCopy={onCopy} />
+              ))}
+            </div>
+          </FormSection>
+        )}
+      </div>
+    </div>
+  );
+
+  const footer = (
+    <div className="cm-entry-form__footer">
+      <Button type="button" view="flat" onClick={onClose} disabled={submitting}>
+        {t("common.actions.cancel")}
+      </Button>
+      <Button
+        type="button"
+        view="action"
+        onClick={handleSubmit}
+        loading={submitting}
+        disabled={
+          submitting ||
+          (unchanged && !attachmentsDirty) ||
+          !form.password_name.trim() ||
+          !form.password_value.trim()
+        }
+      >
+        {submitLabel}
+      </Button>
+    </div>
+  );
+
+  if (page) {
+    return (
+      <section className="cm-entry-form-page" aria-label={t(titleKey)}>
+        <header className="cm-entry-form-page__header">
+          <h1>{t(titleKey)}</h1>
+        </header>
+        {body}
+        {footer}
+      </section>
+    );
+  }
+
+  return (
+    <Dialog
+      aria-label={t(titleKey)}
+      className="cm-entry-form-dialog"
+      contentOverflow="auto"
+      fullWidth
+      hasCloseButton={!submitting}
+      maxWidth="m"
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !submitting) onClose();
+      }}
+    >
+      <Dialog.Header caption={t(titleKey)} />
+      <Dialog.Body>{body}</Dialog.Body>
+      {footer}
+    </Dialog>
   );
 };
 

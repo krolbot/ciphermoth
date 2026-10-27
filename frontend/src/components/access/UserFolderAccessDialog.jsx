@@ -1,150 +1,106 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Box,
-  Button,
-  Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  MenuItem,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-  useMediaQuery,
-  useTheme,
-} from "@mui/material";
+import { Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
-import { useSnackbar } from "notistack";
 import { useTranslation } from "react-i18next";
 
-const asUtc = (value) => (value ? new Date(value).toISOString() : null);
-const asLocalInput = (value) => {
-  if (!value) return "";
-  const parsed = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
-  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-};
+import { useSnackbar } from "../../hooks/useNotify";
+import { isInvalidExpiry, toLocalExpiry, toUtcExpiry } from "../../lib/accessExpiry";
 
 const AccessRow = ({ item, busy, onSave, onRevoke }) => {
   const { t } = useTranslation();
   const [permission, setPermission] = useState(item.direct_permission ?? "read");
-  const [expiresAt, setExpiresAt] = useState(asLocalInput(item.direct_expires_at));
+  const [expiresAt, setExpiresAt] = useState(toLocalExpiry(item.direct_expires_at));
   const owned = item.folder.owner_id === item.userId;
+  const expiryInvalid = isInvalidExpiry(expiresAt);
 
   useEffect(() => {
     setPermission(item.direct_permission ?? "read");
-    setExpiresAt(asLocalInput(item.direct_expires_at));
+    setExpiresAt(toLocalExpiry(item.direct_expires_at));
   }, [item.direct_expires_at, item.direct_permission]);
 
   return (
-    <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
-      <Stack spacing={1.25}>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1}
-          sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
-        >
-          <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontWeight: 650, overflowWrap: "anywhere" }}>
-              {item.folder.name}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t("folderAccess.ownerLabel", { owner: item.folder.owner_username })}
-            </Typography>
-          </Box>
-          <Chip
-            size="small"
-            label={t(
-              item.effective_permission
-                ? `folderAccess.permissions.${item.effective_permission}`
-                : "folderAccess.permissions.none"
-            )}
-            color={item.effective_permission ? "primary" : "default"}
-            variant="outlined"
-          />
-        </Stack>
+    <article className="cm-access-card">
+      <header className="cm-access-card__header">
+        <div>
+          <h3>{item.folder.name}</h3>
+          <p>{t("folderAccess.ownerLabel", { owner: item.folder.owner_username })}</p>
+        </div>
+        <Label size="s" theme={item.effective_permission ? "success" : "unknown"}>
+          {t(
+            item.effective_permission
+              ? `folderAccess.permissions.${item.effective_permission}`
+              : "folderAccess.permissions.none"
+          )}
+        </Label>
+      </header>
 
-        <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap" }}>
-          {item.sources.map((source, index) => (
-            <Chip
-              key={`${source.source}-${source.source_id}-${index}`}
-              size="small"
-              variant="outlined"
-              color={source.expired ? "default" : "success"}
-              label={t("folderAccess.source", {
-                source: t(`folderAccess.sources.${source.source}`),
-                name: source.name || "",
-                permission: t(`folderAccess.permissions.${source.permission}`),
-              })}
-            />
-          ))}
-        </Stack>
-
-        {owned ? (
-          <Typography variant="body2" color="text.secondary">
-            {t("folderAccess.ownerCannotChange")}
-          </Typography>
-        ) : (
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", sm: "140px minmax(180px, 1fr) auto auto" },
-              gap: 1,
-              alignItems: "center",
-            }}
+      <div className="cm-access-card__sources">
+        {item.sources.map((source, index) => (
+          <Label
+            key={`${source.source}-${source.source_id}-${index}`}
+            size="s"
+            theme={source.expired ? "unknown" : "success"}
           >
-            <TextField
-              select
-              size="small"
-              label={t("sharing.permission")}
-              value={permission}
-              disabled={busy}
-              onChange={(event) => setPermission(event.target.value)}
-            >
-              <MenuItem value="read">{t("sharing.read")}</MenuItem>
-              <MenuItem value="write">{t("sharing.readWrite")}</MenuItem>
-            </TextField>
-            <TextField
-              size="small"
-              type="datetime-local"
-              label={t("folderAccess.expiresAt")}
-              helperText={t("folderAccess.expiresHint")}
-              value={expiresAt}
-              disabled={busy}
-              onChange={(event) => setExpiresAt(event.target.value)}
-              slotProps={{
-                inputLabel: { shrink: true },
-                htmlInput: { min: asLocalInput(new Date().toISOString()) },
-              }}
-            />
-            <Button
-              variant="contained"
-              disabled={busy}
-              onClick={() => onSave(item.folder.id, permission, asUtc(expiresAt))}
-            >
-              {t("common.actions.save")}
-            </Button>
-            <Button
-              color="error"
-              variant="outlined"
-              disabled={busy || !item.direct_permission}
-              onClick={() => onRevoke(item.folder.id)}
-            >
-              {t("sharing.revoke")}
-            </Button>
-          </Box>
-        )}
-      </Stack>
-    </Paper>
+            {t("folderAccess.source", {
+              source: t(`folderAccess.sources.${source.source}`),
+              name: source.name || "",
+              permission: t(`folderAccess.permissions.${source.permission}`),
+            })}
+          </Label>
+        ))}
+      </div>
+
+      {owned ? (
+        <p className="cm-secondary-copy">{t("folderAccess.ownerCannotChange")}</p>
+      ) : (
+        <div className="cm-access-card__controls">
+          <Select
+            size="m"
+            aria-label={t("sharing.permission")}
+            value={[permission]}
+            disabled={busy}
+            options={[
+              { value: "read", content: t("sharing.read") },
+              { value: "write", content: t("sharing.readWrite") },
+            ]}
+            onUpdate={([value = "read"]) => setPermission(value)}
+          />
+          <TextInput
+            size="m"
+            type="datetime-local"
+            label={t("folderAccess.expiresAt")}
+            note={t("folderAccess.expiresHint")}
+            value={expiresAt}
+            disabled={busy}
+            onUpdate={setExpiresAt}
+            validationState={expiryInvalid ? "invalid" : undefined}
+            errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
+            controlProps={{ min: toLocalExpiry(new Date().toISOString()) }}
+          />
+          <Button
+            type="button"
+            view="action"
+            disabled={busy || expiryInvalid}
+            onClick={() => onSave(item.folder.id, permission, toUtcExpiry(expiresAt))}
+          >
+            {t("common.actions.save")}
+          </Button>
+          <Button
+            type="button"
+            view="outlined-danger"
+            disabled={busy || !item.direct_permission}
+            onClick={() => onRevoke(item.folder.id)}
+          >
+            {t("sharing.revoke")}
+          </Button>
+        </div>
+      )}
+    </article>
   );
 };
 
 const UserFolderAccessDialog = ({ open, user, onClose }) => {
   const { t } = useTranslation();
-  const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
   const { enqueueSnackbar } = useSnackbar();
   const { userFolderAccess, setFolderGrant, revokeFolderGrant } = useStoreActions(
     (actions) => actions.ciphermothModels.access
@@ -177,28 +133,23 @@ const UserFolderAccessDialog = ({ open, user, onClose }) => {
 
   return (
     <Dialog
-      open={open}
-      onClose={busy ? undefined : onClose}
-      maxWidth="md"
+      aria-label={t("folderAccess.userTitle", { username: user?.username })}
+      className="cm-secondary-dialog cm-access-dialog"
+      contentOverflow="auto"
       fullWidth
-      fullScreen={fullScreen}
-      slotProps={{
-        paper: {
-          sx: {
-            "& .MuiButton-root": { minHeight: { xs: 44, sm: 36 } },
-            "& .MuiInputBase-root": { minHeight: { xs: 44, sm: "initial" } },
-          },
-        },
+      hasCloseButton={!busy}
+      maxWidth="m"
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !busy) onClose();
       }}
     >
-      <DialogTitle>{t("folderAccess.userTitle", { username: user?.username })}</DialogTitle>
-      <DialogContent dividers>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {t("folderAccess.userDescription")}
-        </Typography>
-        <Stack spacing={1.25}>
+      <Dialog.Header caption={t("folderAccess.userTitle", { username: user?.username })} />
+      <Dialog.Body>
+        <div className="cm-access-dialog__content">
+          <p className="cm-secondary-copy">{t("folderAccess.userDescription")}</p>
           {items.length === 0 ? (
-            <Typography color="text.secondary">{t("folderAccess.empty")}</Typography>
+            <p className="cm-secondary-copy">{t("folderAccess.empty")}</p>
           ) : (
             items.map((item) => (
               <AccessRow
@@ -232,13 +183,13 @@ const UserFolderAccessDialog = ({ open, user, onClose }) => {
               />
             ))
           )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={busy}>
-          {t("common.actions.close")}
-        </Button>
-      </DialogActions>
+        </div>
+      </Dialog.Body>
+      <Dialog.Footer
+        onClickButtonApply={onClose}
+        textButtonApply={t("common.actions.close")}
+        propsButtonApply={{ disabled: busy, view: "action" }}
+      />
     </Dialog>
   );
 };

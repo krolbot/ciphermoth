@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
-import { Box, Button, Typography } from "@mui/material";
+import { Button } from "@gravity-ui/uikit";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
-import { IS_DESKTOP, openExternal, clearClipboard } from "./index";
-import { coreStatus, coreRestart, onCoreStatus } from "./core";
-import { clearSession, isAuth } from "../utils";
+
+import { IS_DESKTOP, clearClipboard, openExternal } from "./index";
+import { coreRestart, coreStatus, onCoreStatus } from "./core";
 import LoadingScreen from "../components/LoadingScreen";
+import { clearSession, isAuth } from "../utils";
 
 export default function DesktopGate({ children }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState(null);
+
   useEffect(() => {
-    if (!IS_DESKTOP) return;
+    if (!IS_DESKTOP) return undefined;
     let disposed = false;
     let generation;
     const unlisten = [];
@@ -57,14 +59,17 @@ export default function DesktopGate({ children }) {
       document.removeEventListener("keydown", keydown);
     };
   }, []);
+
   if (!IS_DESKTOP || status?.state === "ready") return children;
   if (status?.state === "failed")
     return (
-      <Box sx={{ minHeight: "100vh", display: "grid", placeContent: "center", gap: 2, p: 4 }}>
-        <Typography variant="h5">{t("desktopGate.openFailedTitle")}</Typography>
-        <Typography>{t("desktopGate.openFailedDescription")}</Typography>
-        <Button onClick={() => coreRestart()}>{t("common.actions.retry")}</Button>
-      </Box>
+      <main className="cm-desktop-gate">
+        <h1>{t("desktopGate.openFailedTitle")}</h1>
+        <p>{t("desktopGate.openFailedDescription")}</p>
+        <Button type="button" view="action" size="l" onClick={() => coreRestart()}>
+          {t("common.actions.retry")}
+        </Button>
+      </main>
     );
   return <LoadingScreen label={t("desktopGate.opening")} />;
 }
