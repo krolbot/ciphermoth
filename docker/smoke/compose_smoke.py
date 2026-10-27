@@ -642,8 +642,8 @@ def fresh_install(
 
         stack.dc("stop", "backend")
         stack.python(
-            "import sqlite3; c = sqlite3.connect('/data/vault.db');"
-            "c.execute('PRAGMA user_version=4'); c.commit()"
+            "import sqlite3, storage; c = sqlite3.connect('/data/vault.db');"
+            "c.execute(f'PRAGMA user_version={storage.SCHEMA_VERSION + 1}'); c.commit()"
         )
         before = stack.vault_sha256()
         stack.dc("start", "backend")
