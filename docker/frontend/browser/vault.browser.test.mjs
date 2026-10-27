@@ -846,10 +846,9 @@ for (const width of [375, 1440]) {
             await dialog
                 .getByRole("heading", { name: "Folder access for team-member" })
                 .waitFor();
-            assert.equal(
-                await dialog.getByText("No access", { exact: true }).count(),
-                1,
-            );
+            const noAccess = dialog.getByText("No access", { exact: true });
+            await noAccess.waitFor();
+            assert.equal(await noAccess.count(), 1);
             await dialog
                 .getByRole("button", { name: "Save", exact: true })
                 .click();
