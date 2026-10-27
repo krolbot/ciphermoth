@@ -113,6 +113,25 @@ describe("backup", () => {
   });
 });
 
+describe("sharing", () => {
+  it("preserves an entry grant expiry when its permission changes", async () => {
+    const expiresAt = "2026-12-01T09:30:00.000Z";
+    const actions = build({ "PUT /passwords/7/shares/3": [200, {}] });
+
+    await actions.setShare({
+      entryId: 7,
+      userId: 3,
+      permission: "write",
+      expiresAt,
+    });
+
+    expect(JSON.parse(seen[0].data)).toEqual({
+      permission: "write",
+      expires_at: expiresAt,
+    });
+  });
+});
+
 describe("entry names in URLs", () => {
   it("binds Trash actions to the selected row even when names are shared", async () => {
     const actions = build({

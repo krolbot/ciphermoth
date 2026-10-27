@@ -1,6 +1,6 @@
 # CipherMoth vault format 2 and backup format 2
 
-This is the specification of how CipherMoth stores a vault on disk (vault format 2, SQLite schema 3) and how it writes an encrypted portable backup (backup format 2, `.cmbackup`). It is written for reviewers and for anyone implementing a second reader. The desktop core runs this same Python code; cryptographic vectors remain in `testdata/vectors/vault-v2.json` and `backup-v2.json`.
+This is the specification of how CipherMoth stores a vault on disk (vault format 2, SQLite schema 4) and how it writes an encrypted portable backup (backup cryptographic format 2 with payload version 3, `.cmbackup`). It is written for reviewers and for anyone implementing a second reader. The desktop core runs this same Python code; cryptographic vectors remain in `testdata/vectors/vault-v2.json` and `backup-v2.json`.
 
 The reference implementation is `backend/helpers.py` (primitives and associated data), `backend/crud/auth.py` (accounts, login and credential rewrapping), `backend/crud/access.py` (authorization), `backend/crud/password.py` and `backend/crud/attachment.py` (records), `backend/crud/backup.py` (backups) and `backend/storage.py` (file identity and schema migration).
 
@@ -74,17 +74,25 @@ vault key VK (32 random bytes, never stored in clear)
 
 **Why a separate commitment and not only GCM?** AES-GCM is not key-committing: one ciphertext can be built to decrypt under many keys. Unlock compares `password_check` first, so whatever is planted in `wrapped_key`, each unlock tests one password. The commitment costs an attacker exactly what testing the wrapped key would: one Argon2id per guess.
 
-## 4. SQLite layout (schema 3)
+## 4. SQLite layout (schema 4)
 
-`PRAGMA application_id` = `0x434D5448` ("CMTH"), `PRAGMA user_version` = 3. The SQLite settings (WAL, `synchronous=FULL`, `secure_delete=ON`, `foreign_keys=ON`, ...) are unchanged from schema 2 and listed in `CLAUDE.md`.
+`PRAGMA application_id` = `0x434D5448` ("CMTH"), `PRAGMA user_version` = 4. The SQLite settings (WAL, `synchronous=FULL`, `secure_delete=ON`, `foreign_keys=ON`, ...) are unchanged from schema 2 and listed in `CLAUDE.md`.
 
-**`vault`** (at most one row, `id = 1`): `owner_user_id` plus the primary compatibility account's format version (2), KDF parameters, salt, commitment, wrapped key and key check, with timestamps.
+**`vault`** (at most one row, `id = 1`): `owner_user_id`, `folder_links_ready`, plus the primary compatibility account's format version (2), KDF parameters, salt, commitment, wrapped key and key check, with timestamps. `folder_links_ready` is set only after encrypted legacy folder strings have been linked to first-class folder rows after an unlock.
 
 **`users`**: plaintext `username`, `role` (`admin`, `member` or `service`), active and required-password-change flags, optional `service_owner_id`, SHA-256 service-token digest, per-account KDF parameters, salt, commitment, wrapped VK and key check, with timestamps. Human passwords and service tokens are never stored.
 
-**`entries`**: `id` (integer, autoincrement, never reused), `uid` (16 random bytes, unique), plaintext `owner_id`, `name_index` (32 bytes), `document` (sealed entry document), `backed_up`, `created`, `updated`, `deleted`. A partial unique index on `name_index WHERE deleted IS NULL` keeps active names unique across the shared vault; trashed entries may share a name.
+**`entries`**: `id` (integer, autoincrement, never reused), `uid` (16 random bytes, unique), plaintext `owner_id`, optional plaintext `folder_id`, `name_index` (32 bytes), `document` (sealed entry document), `backed_up`, `created`, `updated`, `deleted`. A partial unique index on `name_index WHERE deleted IS NULL` keeps active names unique across the shared vault; trashed entries may share a name. `folder_id` is authoritative; the encrypted document's folder name is compatibility/display data.
 
-**`entry_access`**: plaintext composite key (`entry_id`, `user_id`), permission (`read` or `write`), optional `granted_by`, and creation time. Missing row means denied. Owners do not need a grant row.
+**`entry_access`**: plaintext composite key (`entry_id`, `user_id`), permission (`read` or `write`), optional expiry and `granted_by`, and creation time. Missing or expired row means denied. Owners do not need a grant row.
+
+**`folders`**: stable random `uid`, plaintext `owner_id`, owner-scoped HMAC `name_index`, sealed name document, and timestamps. Folder names are not stored in clear. An entry cannot reference a deleted folder (`ON DELETE RESTRICT`).
+
+**`groups`** and **`group_members`**: a group has a stable random `uid`, global scoped-HMAC `name_index`, sealed name document and timestamps. Membership is plaintext metadata managed by administrators.
+
+**`folder_user_access`** and **`folder_group_access`**: direct user and group grants with `read`/`write`, optional expiry, grantor and creation time. Active entry, folder-user and folder-group grants are combined; the strongest permission wins (`write` over `read`). Administrator role alone is not a read grant.
+
+**`access_audit`**: append-only application audit events for folder/group lifecycle, grants, revocations, membership and entry-folder changes. It contains actor/target/resource identifiers, permission and expiry transitions, and timestamps; it contains no secret values.
 
 **`attachments`**: `id` (integer, autoincrement), `uid` (16 random bytes, unique), `entry_id` (foreign key, `ON DELETE CASCADE`), `size_bytes`, `meta` (sealed name and type), `content` (sealed bytes), `created`.
 
@@ -97,6 +105,8 @@ vault key VK (32 random bytes, never stored in clear)
 | Value | Parts |
 |---|---|
 | Entry document | `"entry"`, entry `uid` |
+| Folder document | `"folder"`, folder `uid`, owner id as u64 |
+| Group document | `"group"`, group `uid` |
 | Attachment metadata | `"attachment-metadata"`, attachment `uid`, entry `uid` |
 | Attachment content | `"attachment-content"`, attachment `uid`, entry `uid` |
 
@@ -118,19 +128,19 @@ A note keeps its body in `value`. Readers refuse unknown or missing keys and wro
 
 - That it is a CipherMoth vault, its schema and format version, the KDF parameters and salt.
 - The number of entries and attachments, which entries are in the trash, and which attachments belong to which entry.
-- Usernames, roles, active/required-change flags, service ownership, entry ownership and the grant graph. Service tokens and human passwords are not present.
+- Usernames, roles, active/required-change flags, service ownership, entry/folder ownership, folder membership links, group membership, the grant graph and access-audit metadata. Folder and group names, service tokens and human passwords are not present.
 - Row ids (creation order), `created`, `updated` and `deleted` timestamps, the `backed_up` flag.
 - Which entries share a name (equal `name_index`), in practice an entry and its trashed copies; nothing else about names.
 - Each entry document's length rounded up to 64 bytes, each attachment's exact size.
 - The settings row (timeouts in milliseconds, update check on or off).
-- Account and primary-wrapper update times, and how many users, entries and attachments were ever created, purged ones included (SQLite's id counters).
+- Account and primary-wrapper update times, and how many users, entries, folders, groups and attachments were ever created, purged ones included (SQLite's id counters).
 - Across two copies of the file (two snapshots, or a snapshot and the live vault): which entries changed, were renamed (their name index changed) or were trashed in between.
 
 This is field-level encryption inside an ordinary SQLite file, not whole-file encryption: table names, the schema and the items above are visible to anyone who opens the file.
 
-## 5. Backup format 2 (`.cmbackup`)
+## 5. Backup format 2 (`.cmbackup`), payload version 3
 
-A backup is the portable, password-protected export of entries visible to the current human account: active and trashed entries with every field, history, favorite and timestamps, attachments byte for byte, and the settings. Users, roles, ownership and grants are not included. A raw `ciphermoth-admin snapshot` preserves all installation state.
+A backup is the portable, password-protected export of entries visible to the current human account: active and trashed entries with every field, stable folder identity, history, favorite and timestamps, attachments byte for byte, and the settings. Users, roles, ownership, groups, grants and audit events are deliberately not included: restoring a portable backup never recreates another installation's authorization graph. A raw `ciphermoth-admin snapshot` preserves all installation state.
 
 ```
 header (75 bytes)
@@ -151,10 +161,11 @@ frame × frames (nothing may follow the last one)
 
 `B` = Argon2id(password, salt, parameters), `K_frame` = HKDF(B, `"ciphermoth/backup/v2/frame-encryption"`). The password is the current human account's password (verified before the backup is written); the salt is new for every backup. `last` is 1 for the final frame and 0 otherwise.
 
-Frame 0 is a small UTF-8 JSON envelope (at most 64 MiB):
+Frame 0 is a small UTF-8 JSON envelope (at most 64 MiB). Readers accept payload version 2; writers emit version 3 with encrypted folder names decrypted into this already encrypted backup payload:
 
 ```json
-{"format": "ciphermoth-backup", "version": 2, "exported_at": "ISO-8601", "app_version": "x.y.z", "entries_count": 2,
+{"format": "ciphermoth-backup", "version": 3, "exported_at": "ISO-8601", "app_version": "x.y.z", "entries_count": 2,
+ "folders": [{"uid": "32 lowercase hex characters", "name": "Work"}],
  "settings": {"inactivity_ms": 120000, "warn_before_ms": 60000, "hidden_ms": 60000, "debounce_ms": 1000,
               "clipboard_clear_ms": 30000, "update_check_enabled": true}}
 ```
@@ -163,7 +174,7 @@ The next `entries_count` frames are entry documents (one JSON object each, at mo
 
 ```json
 {"name": "...", "kind": "login", "username": null, "value": "...", "url": null, "totp_secret": null,
- "description": null, "tags": [], "custom_fields": [], "folder": null, "favorite": false,
+ "description": null, "tags": [], "custom_fields": [], "folder": "Work", "folder_uid": "32 lowercase hex characters", "favorite": false,
  "history": [], "created": "...", "updated": "...", "deleted": null,
  "attachments": [{"filename": "...", "content_type": null, "size": 1, "sha256": "hex", "created": "..."}]}
 ```
@@ -175,7 +186,8 @@ This layout keeps many-entry vaults from accumulating into one large JSON alloca
 1. Parse the header; refuse a wrong magic or version, unknown KDF, parameters outside the accepted range, a frame count above the limit.
 2. Run Argon2id, compare the commitment in constant time: a mismatch is "wrong password".
 3. Decrypt frame 0 with its index and `last` flag; parse the envelope strictly. Then parse each entry frame strictly, checking types, timestamps, attachment counts and active-name uniqueness.
-4. For each entry, decrypt its attachment frames in order, check their length and SHA-256 against that entry's metadata, re-encrypt them under the vault key and store them. A frame that fails authentication, a missing frame (truncation), a frame after the last one or trailing bytes aborts the transaction: the vault is left exactly as it was.
+4. Validate every payload-v3 folder UID/name pair and every entry `folder_uid`, creating or reusing an encrypted folder owned by the importing account. A payload-v2 entry without stable folder identity uses its legacy display name.
+5. For each entry, decrypt its attachment frames in order, check their length and SHA-256 against that entry's metadata, re-encrypt them under the vault key and store them. A frame that fails authentication, a missing frame (truncation), a frame after the last one or trailing bytes aborts the transaction: the vault is left exactly as it was.
 
 Wrong password, tampering, truncation, reordering, a frame from another backup and a malformed envelope or entry all fail cleanly with nothing committed. Memory use is bounded by one entry frame and one attachment, plus bounded row identifiers and lookup indexes; the uploaded backup itself is ciphertext and may be spooled to a temporary file by the server.
 
@@ -185,9 +197,9 @@ Wrong password, tampering, truncation, reordering, a frame from another backup a
 
 Three independent numbers, each refused when newer than the code understands:
 
-- SQLite `user_version`: the table layout (schema). 3 adds users, ownership and grants while keeping vault format 2.
+- SQLite `user_version`: the table layout (schema). 3 adds users, ownership and entry grants; 4 adds first-class encrypted folders, groups, expiring folder grants and access audit while keeping vault format 2.
 - `vault.format_version`: the cryptographic layout. 2.
-- The backup header `version`: 2. (Version 1 was the WinZip-AES ZIP of CipherMoth up to 2.0.x; it can still be imported, see below.)
+- The backup header `version`: 2. Its encrypted JSON payload version is 3; payload version 2 remains readable. Backup format 1 was the WinZip-AES ZIP of CipherMoth up to 2.0.x and can still be imported, see below.
 
 A file with another schema or a newer format is refused at startup, before anything is written; the message says what to do. So is a write-ahead log or rollback journal next to a missing or empty vault file (it belongs to a vault that was moved away, and SQLite would discard it). An empty file gets the schema in one transaction; until a master password is set, the vault is reported as not set up, and a vault is never created over entries that have no key record.
 
@@ -203,4 +215,5 @@ A password change replaces that account's wrapper in the live file, and SQLite's
 
 - **Vaults written by CipherMoth 2.0.x (schema 1, format 1)** are refused, unchanged, with instructions: make a backup in 2.0.x, set the old file aside with `ciphermoth-admin set-aside` (it is moved, never deleted), start a new vault and import the backup. There is no in-place conversion.
 - **Single-user vaults written with schema 2 and vault format 2** are migrated offline with `ciphermoth-admin migrate-users`. The command makes a schema-2 rollback snapshot before adding account and grant tables. On first start, bootstrap the primary administrator with the existing vault password; all ownerless entries are assigned to it.
+- **Multi-user vaults written with schema 3 and vault format 2** are migrated offline with `ciphermoth-admin migrate-folders`. The command requires the backend to be stopped and makes a rollback snapshot before adding schema-4 tables and columns. Because legacy folder names are encrypted, rows are linked to first-class folders atomically after the next successful unlock; no plaintext folder name is exposed by the offline schema migration.
 - **Backup ZIPs (format 1)** from CipherMoth 1.x and 2.0.x can still be imported. They are lossy (no history, trash, attachments, settings or timestamps) and protected only by WinZip AES with 1000 PBKDF2-SHA1 iterations; make a new backup afterwards and delete the old ZIPs. This reader is the only format 1 code left and can be removed once 2.0.x is no longer in use.

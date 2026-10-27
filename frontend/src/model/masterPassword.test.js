@@ -63,7 +63,12 @@ describe("authenticate", () => {
     });
   });
 
-  it.each(["/users", "/users/?view=accounts#selected", "/passwords?folder=Work#entry"])(
+  it.each([
+    "/users",
+    "/users/?view=accounts#selected",
+    "/passwords?folder=Work#entry",
+    "/entries/new",
+  ])(
     "returns to the requested local protected route %s without sending it to the server",
     async (returnTo) => {
       const { actions } = build({
@@ -79,6 +84,16 @@ describe("authenticate", () => {
       expect(JSON.parse(seen[0].data)).not.toHaveProperty("returnTo");
     }
   );
+
+  it("returns to a protected route remembered before automatic locking", async () => {
+    browser.storage.setItem("ciphermothReturnTo", "/entries/new");
+    const { actions } = build({
+      "POST /auth/login": [200, { valid: true, session_token: TOKEN, user: USER }],
+    });
+    await authenticate(actions);
+    expect(browser.location.replace).toHaveBeenCalledWith("/entries/new");
+    expect(browser.storage.getItem("ciphermothReturnTo")).toBeNull();
+  });
 
   it.each([
     undefined,

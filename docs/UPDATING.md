@@ -25,7 +25,7 @@ Docker updates are manual. The web app checks GitHub in the browser and shows th
 
 ## Update
 
-**Coming from 2.0? Follow [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1) first. Coming from the single-user 3.1 release? Follow [Moving from schema 2](#moving-from-ciphermoth-31-schema-2) first.** For an already compatible schema-3 vault, in your CipherMoth folder:
+**Coming from 2.0? Follow [Moving from CipherMoth 2.0](#moving-from-ciphermoth-20-vault-format-1) first. Coming from the single-user 3.1 release? Follow [Moving from schema 2](#moving-from-ciphermoth-31-schema-2) first. Coming from a multi-user schema-3 release? Follow [Moving from schema 3](#moving-from-schema-3) first.** For an already compatible schema-4 vault, in your CipherMoth folder:
 
 ```shell
 docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
@@ -66,7 +66,7 @@ docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
 
 - **Consistent while CipherMoth runs.** The copy goes through SQLite's online backup API, so it includes every committed change, also those still in the write-ahead log (`vault.db-wal`), and never a half-written one. Copying `vault.db` with `cp` or `docker cp` while CipherMoth runs is **not** safe: the file alone can miss recent changes.
 - **Checked.** A snapshot is written to a temporary file, checked with SQLite's `integrity_check` and `foreign_key_check` and for the vault's identity, flushed to disk, and only then renamed into `/data/snapshots/vault-<time>.db` (mode `0600`). It is one self-contained file with no `-wal` or `-shm` next to it.
-- **As safe as the vault.** A snapshot holds the same ciphertext as the vault and opens only through one of the account wrappers current when it was taken. It exposes account names, roles, ownership and grants as documented in [VAULT_FORMAT.md](VAULT_FORMAT.md#4-sqlite-layout-schema-3), but not entry content.
+- **As safe as the vault.** A snapshot holds the same ciphertext as the vault and opens only through one of the account wrappers current when it was taken. It exposes account names, roles, ownership and grants as documented in [VAULT_FORMAT.md](VAULT_FORMAT.md#4-sqlite-layout-schema-4), but not entry content.
 - Snapshots stay in the volume until you delete them. To keep one elsewhere, copy it out (it is a finished file, so this is safe):
 
   ```shell
@@ -121,6 +121,24 @@ The backend checks the vault before serving anything, through a read-only connec
 ## When entries cannot be read
 
 If part of the vault file is damaged (a failing disk) or was altered, the affected entries and attachments are left out of the vault and the web UI shows a warning (`cip damaged` lists them). Everything else keeps working, but a portable backup refuses to omit damaged visible rows. Either restore a snapshot from before the damage (keeps everything), or intentionally remove the damaged items: the **Remove** button in the warning, or `cip damaged --remove`. Removing a damaged entry also permanently removes its attachments, including any that are still readable. Each requested row is checked again before removal; a readable entry cannot be removed through this recovery action.
+
+## Moving from schema 3
+
+Schema 3 has multi-user entry grants but stores a folder only as an encrypted string inside each entry. Schema 4 introduces encrypted first-class folders, group membership, expiring folder grants and access audit. Docker migration is explicit and requires the backend to be stopped:
+
+```shell
+# Keep the old release pinned while making its final checked snapshot.
+docker compose -f docker-compose.prod.yml exec backend ciphermoth-admin snapshot
+# Stop the old backend, set CIPHERMOTH_VERSION to the new release, then pull it.
+docker compose -f docker-compose.prod.yml stop backend
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml run --rm backend ciphermoth-admin migrate-folders --yes
+docker compose -f docker-compose.prod.yml up -d
+```
+
+`migrate-folders` verifies schema 3, writes a checked `pre-folders-<time>.db` rollback snapshot, then adds schema-4 tables and columns in one SQLite transaction. It cannot read folder names while offline. After the next successful unlock, CipherMoth decrypts legacy entry documents, creates owner-scoped folder rows and links entries atomically; until that succeeds `folder_links_ready` remains false and the migration retries on the next unlock.
+
+To roll back, stop the schema-4 backend and restore the `pre-folders-<time>.db` snapshot with the previous image's admin tool. Any changes made after migration are lost. A schema-3 application cannot open schema 4 directly.
 
 ## Moving from CipherMoth 3.1 (schema 2)
 

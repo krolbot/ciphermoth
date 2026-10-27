@@ -216,10 +216,11 @@ const Passwords = {
     }
   }),
 
-  setShare: thunk(async (_actions, { entryId, userId, permission }) => {
+  setShare: thunk(async (_actions, { entryId, userId, permission, expiresAt = null }) => {
     try {
       const { data } = await apiClient.put(`/passwords/${entryId}/shares/${userId}`, {
         permission,
+        expires_at: expiresAt,
       });
       return data;
     } catch (err) {

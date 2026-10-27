@@ -15,7 +15,8 @@ from models import BaseModel
 
 MIN_SQLITE_VERSION = (3, 51, 3)
 APPLICATION_ID = 0x434D5448
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+MULTIUSER_SCHEMA_VERSION = 3
 PREVIOUS_SCHEMA_VERSION = 2
 FORMAT_1_SCHEMA = 1
 BUSY_TIMEOUT_MS = 15_000
@@ -166,6 +167,11 @@ def identity_problem(application_id: int, user_version: int) -> str | None:
         return (
             "uses the single-user schema from CipherMoth 3.1; stop CipherMoth "
             "and run 'ciphermoth-admin migrate-users'"
+        )
+    if user_version == MULTIUSER_SCHEMA_VERSION:
+        return (
+            "uses the multi-user schema without stable folders; stop CipherMoth "
+            "and run 'ciphermoth-admin migrate-folders'"
         )
     if user_version > SCHEMA_VERSION:
         return (
@@ -410,6 +416,89 @@ def reset_settings(data_dir: Path) -> Path:
     return saved
 
 
+_FOLDER_SCHEMA_SQL = """
+    ALTER TABLE vault ADD COLUMN folder_links_ready BOOLEAN NOT NULL DEFAULT 0;
+    CREATE TABLE folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid BLOB NOT NULL UNIQUE,
+        owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        name_index BLOB NOT NULL,
+        document BLOB NOT NULL,
+        created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_folders_owner_name UNIQUE (owner_id, name_index),
+        CONSTRAINT ck_folders_uid CHECK (length(uid) = 16),
+        CONSTRAINT ck_folders_name_index CHECK (length(name_index) = 32)
+    );
+    CREATE INDEX ix_folders_owner_id ON folders(owner_id);
+    ALTER TABLE entries ADD COLUMN folder_id INTEGER
+        REFERENCES folders(id) ON DELETE RESTRICT;
+    CREATE INDEX ix_entries_folder_id ON entries(folder_id);
+    ALTER TABLE entry_access ADD COLUMN expires_at TIMESTAMP;
+    CREATE TABLE groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid BLOB NOT NULL UNIQUE,
+        name_index BLOB NOT NULL UNIQUE,
+        document BLOB NOT NULL,
+        created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT ck_groups_uid CHECK (length(uid) = 16),
+        CONSTRAINT ck_groups_name_index CHECK (length(name_index) = 32)
+    );
+    CREATE TABLE group_members (
+        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (group_id, user_id)
+    );
+    CREATE TABLE folder_user_access (
+        folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission VARCHAR(16) NOT NULL,
+        expires_at TIMESTAMP,
+        granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (folder_id, user_id),
+        CONSTRAINT ck_folder_user_access_permission
+            CHECK (permission IN ('read', 'write'))
+    );
+    CREATE TABLE folder_group_access (
+        folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        permission VARCHAR(16) NOT NULL,
+        expires_at TIMESTAMP,
+        granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (folder_id, group_id),
+        CONSTRAINT ck_folder_group_access_permission
+            CHECK (permission IN ('read', 'write'))
+    );
+    CREATE TABLE access_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        action VARCHAR(64) NOT NULL,
+        resource_type VARCHAR(32) NOT NULL,
+        resource_id INTEGER NOT NULL,
+        target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        target_group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+        permission VARCHAR(16),
+        expires_at TIMESTAMP,
+        previous_permission VARCHAR(16),
+        previous_expires_at TIMESTAMP
+    );
+    CREATE INDEX ix_access_audit_created ON access_audit(created);
+    CREATE INDEX ix_access_audit_resource_id ON access_audit(resource_id);
+"""
+
+
+def _apply_folder_schema(connection: sqlite3.Connection) -> None:
+    for statement in _FOLDER_SCHEMA_SQL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
 def migrate_users(data_dir: Path) -> Path:
     """Upgrade an upstream schema-2 vault for account ownership and grants.
 
@@ -522,6 +611,7 @@ def migrate_users(data_dir: Path) -> Path:
                         """.split(";"):
                         if statement.strip():
                             connection.execute(statement)
+                    _apply_folder_schema(connection)
                     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                     connection.commit()
                 except BaseException:
@@ -538,12 +628,87 @@ def migrate_users(data_dir: Path) -> Path:
     return target
 
 
-def migrate_users_if_needed(data_dir: Path) -> Path | None:
-    """Migrate schema 2 when a single-process host owns startup.
+def migrate_folders(data_dir: Path) -> Path:
+    """Add stable encrypted folders, groups, expiring grants and audit storage.
 
-    Docker operators use the explicit admin command. The desktop core calls this
-    before it opens the application, when no other core can own its data folder.
+    The backend must be stopped. A checked schema-3 snapshot is written before
+    one SQLite transaction upgrades the schema. Encrypted legacy folder strings
+    are linked on the next successful account unlock, when the vault key exists.
     """
+    require_supported_sqlite()
+    live = vault_file(data_dir)
+    folder = snapshot_dir(data_dir)
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = folder / timestamped("pre-folders")
+    with VaultLock(data_dir):
+        try:
+            with contextlib.closing(_connect_existing(live)) as source:
+                application_id = source.execute("PRAGMA application_id").fetchone()[0]
+                user_version = source.execute("PRAGMA user_version").fetchone()[0]
+                if (
+                    application_id != APPLICATION_ID
+                    or user_version != MULTIUSER_SCHEMA_VERSION
+                ):
+                    raise StorageError(
+                        f"Expected a CipherMoth schema-{MULTIUSER_SCHEMA_VERSION} "
+                        f"vault; found application {application_id}, schema "
+                        f"{user_version}."
+                    )
+                problems = [
+                    str(row[0])
+                    for row in source.execute("PRAGMA integrity_check")
+                    if str(row[0]) != "ok"
+                ]
+                problems += [
+                    f"{row[0]} row {row[1]} references a missing row of {row[2]}"
+                    for row in source.execute("PRAGMA foreign_key_check")
+                ]
+                format_issue = format_problem(_formats(source))
+                if format_issue:
+                    problems.append(f"the file {format_issue}")
+                if problems:
+                    raise StorageError(
+                        "The vault cannot be migrated: " + "; ".join(problems[:5])
+                    )
+                if target.exists():
+                    raise StorageError(f"{target} already exists.")
+                os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                try:
+                    with contextlib.closing(sqlite3.connect(target)) as destination:
+                        source.backup(destination)
+                        destination.execute("PRAGMA journal_mode=DELETE")
+                except BaseException:
+                    _discard(target)
+                    raise
+            _fsync(target)
+            _fsync_dir(folder)
+
+            with contextlib.closing(
+                _connect_existing(live, writable=True)
+            ) as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute(f"PRAGMA busy_timeout={RESTORE_BUSY_TIMEOUT_MS}")
+                connection.execute("BEGIN EXCLUSIVE")
+                try:
+                    _apply_folder_schema(connection)
+                    connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+        except sqlite3.DatabaseError as error:
+            raise StorageError(f"Could not migrate the vault: {error}") from error
+    problems = check_file(live)
+    if problems:
+        raise StorageError(
+            "The migrated vault failed verification; restore the pre-folders "
+            "snapshot: " + "; ".join(problems[:5])
+        )
+    return target
+
+
+def migrate_users_if_needed(data_dir: Path) -> Path | None:
+    """Migrate schema 2 or 3 when a single-process desktop owns startup."""
     live = vault_file(data_dir)
     if not live.is_file() or live.stat().st_size == 0:
         return None
@@ -553,9 +718,13 @@ def migrate_users_if_needed(data_dir: Path) -> Path | None:
             user_version = connection.execute("PRAGMA user_version").fetchone()[0]
     except sqlite3.DatabaseError:
         return None
-    if application_id != APPLICATION_ID or user_version != PREVIOUS_SCHEMA_VERSION:
+    if application_id != APPLICATION_ID:
         return None
-    return migrate_users(data_dir)
+    if user_version == PREVIOUS_SCHEMA_VERSION:
+        return migrate_users(data_dir)
+    if user_version == MULTIUSER_SCHEMA_VERSION:
+        return migrate_folders(data_dir)
+    return None
 
 
 class VaultLock:

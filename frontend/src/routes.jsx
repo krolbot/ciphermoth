@@ -3,6 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import PasswordsPage from "./pages/PasswordsPage";
 import UsersPage from "./pages/UsersPage";
+import EntryCreatePage from "./pages/EntryCreatePage";
 import { getCurrentUser, isAuth } from "./utils";
 
 const ProtectedRoute = ({ children, role }) => {
@@ -30,6 +31,14 @@ const routes = [
     element: (
       <ProtectedRoute>
         <PasswordsPage />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: "/entries/new",
+    element: (
+      <ProtectedRoute>
+        <EntryCreatePage />
       </ProtectedRoute>
     ),
   },

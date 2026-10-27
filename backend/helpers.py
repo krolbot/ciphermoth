@@ -201,6 +201,16 @@ class VaultKey:
     def name_index(self, name: str) -> bytes:
         return hmac.new(self._index, name.encode(), hashlib.sha256).digest()
 
+    def folder_name_index(self, owner_id: int, name: str) -> bytes:
+        return hmac.new(
+            self._index,
+            f"folder\0{owner_id}\0{name}".encode(),
+            hashlib.sha256,
+        ).digest()
+
+    def group_name_index(self, name: str) -> bytes:
+        return hmac.new(self._index, f"group\0{name}".encode(), hashlib.sha256).digest()
+
     def entry_draft_key(self, user_id: int) -> bytes:
         """A browser-only draft key, separated from vault keys and other users."""
         return _hkdf(self._raw, f"ciphermoth/browser-entry-draft/v1/{user_id}")
@@ -210,6 +220,26 @@ class VaultKey:
 
     def open_entry(self, uid: bytes, sealed: bytes) -> bytes:
         return _open(self._records, sealed, _associated_data(b"entry", uid))
+
+    def seal_folder(self, uid: bytes, owner_id: int, document: bytes) -> bytes:
+        return _seal(
+            self._records,
+            _padded(document),
+            _associated_data(b"folder", uid, owner_id.to_bytes(8, "big")),
+        )
+
+    def open_folder(self, uid: bytes, owner_id: int, sealed: bytes) -> bytes:
+        return _open(
+            self._records,
+            sealed,
+            _associated_data(b"folder", uid, owner_id.to_bytes(8, "big")),
+        )
+
+    def seal_group(self, uid: bytes, document: bytes) -> bytes:
+        return _seal(self._records, _padded(document), _associated_data(b"group", uid))
+
+    def open_group(self, uid: bytes, sealed: bytes) -> bytes:
+        return _open(self._records, sealed, _associated_data(b"group", uid))
 
     def seal_attachment_metadata(
         self, uid: bytes, entry_uid: bytes, document: bytes

@@ -124,6 +124,33 @@ def migrate_users(
 
 
 @app.command(
+    "migrate-folders",
+    help=(
+        "Upgrade a stopped multi-user vault for stable folders, groups, expiring "
+        "grants and access audit. A rollback snapshot is created first."
+    ),
+)
+def migrate_folders(
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask to confirm.")] = False,
+) -> None:
+    if not yes:
+        typer.confirm(
+            "Migrate the stopped schema-3 vault in "
+            f"{_data_dir()} for folder access management?",
+            abort=True,
+        )
+    try:
+        saved = storage.migrate_folders(_data_dir())
+    except storage.StorageError as error:
+        raise _fail(error) from None
+    typer.echo(f"Migrated. Rollback snapshot: {saved}")
+    typer.echo(
+        "Encrypted legacy folder names will be linked atomically on the next "
+        "successful account unlock."
+    )
+
+
+@app.command(
     "set-aside",
     help=(
         "Move the vault file (with its WAL) into a new folder in the snapshot "

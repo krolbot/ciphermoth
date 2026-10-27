@@ -7,12 +7,14 @@ from api.endpoints.deps import (
     SessionDep,
 )
 from crud.access import EntryACL
+from crud.folder import FolderCRUD
 from schemas import (
     AuthUser,
     ShareTarget,
     SimpleDetailSchema,
     UserCreatePayload,
     UserCreateResponse,
+    UserFolderAccess,
     UserPasswordResetPayload,
     UserUpdatePayload,
 )
@@ -30,6 +32,15 @@ async def share_targets(
 @router.get("", response_model=list[AuthUser])
 async def list_users(context: AdminContextDep, crud: AuthCRUDDep) -> list[AuthUser]:
     return await crud.list_users(context)
+
+
+@router.get("/{user_id}/folder-access", response_model=list[UserFolderAccess])
+async def user_folder_access(
+    user_id: int,
+    context: AdminContextDep,
+    session: SessionDep,
+) -> list[UserFolderAccess]:
+    return await FolderCRUD(session, context).user_access(user_id, context.key)
 
 
 @router.post("", response_model=UserCreateResponse)

@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -65,6 +65,11 @@ class EntryPermission(StrEnum):
     owner = "owner"
     read = "read"
     write = "write"
+
+
+class AccessRelinquishResponse(SimpleDetailSchema):
+    direct_access_relinquished: bool
+    effective_access: EntryPermission | None = None
 
 
 class AuthUser(BaseModel):
@@ -161,6 +166,19 @@ class ShareTarget(BaseModel):
 
 class ShareUpdatePayload(BaseModel):
     permission: SharePermission
+    expires_at: datetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def _future_utc(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expires_at must include a timezone")
+        utc = value.astimezone(UTC)
+        if utc <= datetime.now(UTC):
+            raise ValueError("expires_at must be in the future")
+        return utc.replace(tzinfo=None)
 
 
 class ShareGrant(BaseModel):
@@ -168,6 +186,108 @@ class ShareGrant(BaseModel):
     username: str
     role: UserRole
     permission: SharePermission
+    expires_at: datetime | None = None
+
+
+class FolderCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=_MAX_FOLDER_LENGTH)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        require_unicode_text(value)
+        cleaned = reject_nul(value)
+        assert cleaned is not None
+        return cleaned
+
+
+class FolderUpdatePayload(FolderCreatePayload):
+    pass
+
+
+class FolderAccessSource(BaseModel):
+    source: Literal["owner", "direct", "entry", "folder_owner", "folder", "group"]
+    source_id: int
+    name: str | None = None
+    permission: SharePermission
+    expires_at: datetime | None = None
+    expired: bool = False
+
+
+class FolderResponse(BaseModel):
+    id: int
+    name: str
+    owner_id: int
+    owner_username: str
+    access: EntryPermission | None = None
+    can_manage: bool
+
+
+class FolderGrant(BaseModel):
+    target_type: Literal["user", "group"]
+    target_id: int
+    target_name: str
+    permission: SharePermission
+    expires_at: datetime | None = None
+    expired: bool = False
+
+
+class UserFolderAccess(BaseModel):
+    folder: FolderResponse
+    direct_permission: SharePermission | None = None
+    direct_expires_at: datetime | None = None
+    effective_permission: SharePermission | None = None
+    sources: list[FolderAccessSource] = Field(default_factory=list)
+
+
+class GroupCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        require_unicode_text(value)
+        cleaned = reject_nul(value)
+        assert cleaned is not None
+        return cleaned
+
+
+class GroupUpdatePayload(GroupCreatePayload):
+    pass
+
+
+class GroupResponse(BaseModel):
+    id: int
+    name: str
+    member_count: int
+
+
+class GroupMember(BaseModel):
+    user_id: int
+    username: str
+    role: UserRole
+
+
+class AuditEvent(BaseModel):
+    id: int
+    created: datetime
+    actor_user_id: int | None = None
+    actor_username: str | None = None
+    action: str
+    resource_type: str
+    resource_id: int
+    target_user_id: int | None = None
+    target_username: str | None = None
+    target_group_id: int | None = None
+    target_group_name: str | None = None
+    permission: SharePermission | None = None
+    expires_at: datetime | None = None
+    previous_permission: SharePermission | None = None
+    previous_expires_at: datetime | None = None
 
 
 class EntryAccess(BaseModel):
@@ -175,6 +295,7 @@ class EntryAccess(BaseModel):
     owner_id: int
     owner_username: str
     access: EntryPermission
+    sources: list[FolderAccessSource] = Field(default_factory=list)
 
 
 class MasterPassword(BaseModel):
@@ -271,6 +392,7 @@ class Password(BaseModel):
         default_factory=list, max_length=_MAX_CUSTOM_FIELDS
     )
     folder: str | None = Field(default=None, max_length=_MAX_FOLDER_LENGTH)
+    folder_id: int | None = Field(default=None, gt=0)
     favorite: bool = False
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -391,6 +513,7 @@ class PasswordResponse(BaseModel):
     owner_id: int | None = None
     owner_username: str | None = None
     access: EntryPermission | None = None
+    access_sources: list[FolderAccessSource] = Field(default_factory=list)
     password_name: str
     kind: str = "login"
     username: str | None = None
@@ -401,6 +524,7 @@ class PasswordResponse(BaseModel):
     tags: list[str] = Field(default_factory=list)
     custom_fields: list[StoredCustomField] = Field(default_factory=list)
     folder: str | None = None
+    folder_id: int | None = None
     favorite: bool = False
     backed_up: bool
     created: datetime

@@ -34,6 +34,7 @@ import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import { useTranslation } from "react-i18next";
+import { useSnackbar } from "notistack";
 
 import PasswordField from "../PasswordField";
 import AttachmentsSection from "./AttachmentsSection";
@@ -54,6 +55,7 @@ const EMPTY_FORM = {
   tags: [],
   custom_fields: [],
   folder: "",
+  folder_id: null,
   favorite: false,
 };
 
@@ -65,10 +67,10 @@ const normalizeCustomFields = (fields) =>
 const toForm = (target) =>
   target
     ? {
-        password_name: target.password_name,
+        password_name: target.password_name ?? "",
         kind: target.kind ?? "login",
         username: target.username ?? "",
-        password_value: target.password_value,
+        password_value: target.password_value ?? "",
         url: target.url ?? "",
         totp_secret: target.totp_secret ?? "",
         description: target.description ?? "",
@@ -79,6 +81,7 @@ const toForm = (target) =>
           hidden: !!f.hidden,
         })),
         folder: target.folder ?? "",
+        folder_id: target.folder_id ?? null,
         favorite: target.favorite ?? false,
       }
     : EMPTY_FORM;
@@ -224,13 +227,17 @@ const PasswordFormDialog = ({
   onDraftChange,
   draftError,
   folderOptions = [],
+  page = false,
 }) => {
   const { t } = useTranslation();
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
+  const Root = page ? Box : Dialog;
   const [form, setFormState] = useState(() => toForm(editTarget ?? initialDraft));
   const formRef = useRef(form);
-  const [formError, setFormError] = useState("");
+  const nameInputRef = useRef(null);
+  const valueInputRef = useRef(null);
   const [showValue, setShowValue] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
@@ -247,6 +254,22 @@ const PasswordFormDialog = ({
       onDraftChange?.(JSON.stringify(next) !== JSON.stringify(EMPTY_FORM) ? next : null);
     setFormState(next);
   };
+
+  useEffect(() => () => closeSnackbar("entry-form-error"), [closeSnackbar]);
+
+  useEffect(() => {
+    if (draftError) {
+      enqueueSnackbar(t("entry.draft.failed"), {
+        key: "entry-draft-error",
+        variant: "error",
+        persist: true,
+        preventDuplicate: true,
+      });
+    } else {
+      closeSnackbar("entry-draft-error");
+    }
+    return () => closeSnackbar("entry-draft-error");
+  }, [draftError, enqueueSnackbar, closeSnackbar, t]);
 
   useEffect(() => {
     if (editTarget || !dirty) return;
@@ -265,7 +288,17 @@ const PasswordFormDialog = ({
 
   const setField = (field) => (e) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
-    setFormError("");
+    closeSnackbar("entry-form-error");
+  };
+
+  const showError = (message, inputRef) => {
+    enqueueSnackbar(message, {
+      key: "entry-form-error",
+      variant: "error",
+      persist: true,
+      preventDuplicate: true,
+    });
+    inputRef?.current?.focus();
   };
 
   const addCustomField = () => {
@@ -316,13 +349,14 @@ const PasswordFormDialog = ({
 
   const handleSubmit = async () => {
     if (!form.password_name.trim()) {
-      setFormError(t("entry.validation.nameRequired"));
+      showError(t("entry.validation.nameRequired"), nameInputRef);
       return;
     }
 
     if (!form.password_value.trim()) {
-      setFormError(
-        t(isNote ? "entry.validation.noteRequired" : "entry.validation.passwordRequired")
+      showError(
+        t(isNote ? "entry.validation.noteRequired" : "entry.validation.passwordRequired"),
+        valueInputRef
       );
       return;
     }
@@ -346,10 +380,11 @@ const PasswordFormDialog = ({
         tags: form.tags,
         custom_fields: normalizeCustomFields(form.custom_fields),
         folder: form.folder.trim() || null,
+        folder_id: form.folder_id,
         favorite: form.favorite,
       });
     } catch (err) {
-      setFormError(err.message);
+      showError(err.message || t("errors.generic"));
     } finally {
       setSubmitting(false);
     }
@@ -367,6 +402,7 @@ const PasswordFormDialog = ({
     form.description === (editTarget.description ?? "") &&
     form.favorite === (editTarget.favorite ?? false) &&
     (form.folder.trim() || "") === (editTarget.folder ?? "") &&
+    form.folder_id === (editTarget.folder_id ?? null) &&
     form.tags.join(" ") === (editTarget.tags ?? []).join(" ") &&
     JSON.stringify(normalizeCustomFields(form.custom_fields)) ===
       JSON.stringify(normalizeCustomFields(editTarget.custom_fields));
@@ -380,12 +416,20 @@ const PasswordFormDialog = ({
       : "entry.title.addPassword";
 
   return (
-    <Dialog
-      open={open}
-      onClose={submitting ? undefined : onClose}
-      maxWidth="sm"
-      fullWidth
-      fullScreen={fullScreen}
+    <Root
+      {...(page
+        ? {
+            component: "section",
+            "aria-label": t(titleKey),
+            sx: { width: "100%", maxWidth: 960, mx: "auto", py: { xs: 1, sm: 3 } },
+          }
+        : {
+            open,
+            onClose: submitting ? undefined : onClose,
+            maxWidth: "sm",
+            fullWidth: true,
+            fullScreen,
+          })}
     >
       <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         {t(titleKey)}
@@ -398,14 +442,9 @@ const PasswordFormDialog = ({
         </Tooltip>
       </DialogTitle>
       <DialogContent dividers>
-        {!editTarget && (
-          <Typography
-            role="status"
-            variant="body2"
-            color={draftError ? "error" : "text.secondary"}
-            sx={{ mb: 2 }}
-          >
-            {t(draftError ? "entry.draft.failed" : "entry.draft.savedLocally")}
+        {!editTarget && !draftError && (
+          <Typography role="status" variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {t("entry.draft.savedLocally")}
           </Typography>
         )}
         {!editTarget && (
@@ -438,6 +477,7 @@ const PasswordFormDialog = ({
             required
             fullWidth
             autoFocus
+            inputRef={nameInputRef}
             slotProps={{ htmlInput: { maxLength: 255 } }}
             helperText={
               editTarget
@@ -454,6 +494,7 @@ const PasswordFormDialog = ({
               size="small"
               value={form.password_value}
               onChange={setField("password_value")}
+              inputRef={valueInputRef}
               required
               fullWidth
               multiline
@@ -495,6 +536,7 @@ const PasswordFormDialog = ({
                   setField("password_value")(e);
                   if (showGenerator) setShowGenerator(false);
                 }}
+                inputRef={valueInputRef}
                 required
                 autoComplete="new-password"
                 show={showValue}
@@ -533,11 +575,27 @@ const PasswordFormDialog = ({
         <Autocomplete
           freeSolo
           size="small"
+          disabled={Boolean(editTarget && editTarget.access !== "owner")}
           options={folderOptions}
-          inputValue={form.folder}
-          onInputChange={(_, value) => {
-            setForm((prev) => ({ ...prev, folder: value }));
-            setFormError("");
+          value={
+            folderOptions.find((folder) => folder.id === form.folder_id) ?? form.folder ?? null
+          }
+          getOptionLabel={(option) => (typeof option === "string" ? option : option.name)}
+          isOptionEqualToValue={(option, value) =>
+            typeof value === "object" && option.id === value.id
+          }
+          onChange={(_, value) => {
+            setForm((prev) => ({
+              ...prev,
+              folder: typeof value === "string" ? value : (value?.name ?? ""),
+              folder_id: typeof value === "object" && value ? value.id : null,
+            }));
+            closeSnackbar("entry-form-error");
+          }}
+          onInputChange={(_, value, reason) => {
+            if (reason !== "input" && reason !== "clear") return;
+            setForm((prev) => ({ ...prev, folder: value, folder_id: null }));
+            closeSnackbar("entry-form-error");
           }}
           renderInput={(params) => (
             <TextField
@@ -685,12 +743,6 @@ const PasswordFormDialog = ({
             </FormSection>
           )}
         </Box>
-
-        {formError && (
-          <Typography variant="body2" color="error" sx={{ mt: 1.5 }}>
-            {formError}
-          </Typography>
-        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={submitting}>
@@ -711,7 +763,7 @@ const PasswordFormDialog = ({
           )}
         </Button>
       </DialogActions>
-    </Dialog>
+    </Root>
   );
 };
 

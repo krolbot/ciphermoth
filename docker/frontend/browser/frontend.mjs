@@ -14,6 +14,8 @@ export const startFrontend = async (apiUrl) => {
     `VITE_API_URL=${apiUrl}`,
     "-p",
     "127.0.0.1::3000",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=16m,mode=1777",
     IMAGE,
   ]);
   const port = execFileSync("docker", ["port", name, "3000/tcp"])

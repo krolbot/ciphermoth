@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    UniqueConstraint,
     false,
     func,
     text,
@@ -76,6 +77,9 @@ class VaultModel(BaseModel):
     )
 
     format_version: Mapped[int] = mapped_column(Integer)
+    folder_links_ready: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     owner_user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
@@ -171,6 +175,12 @@ class EntryModel(BaseModel):
         nullable=True,
         index=True,
     )
+    folder_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("folders.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
 
     name_index: Mapped[bytes] = mapped_column(LargeBinary)
     document: Mapped[bytes] = mapped_column(LargeBinary)
@@ -198,11 +208,177 @@ class EntryAccessModel(BaseModel):
         primary_key=True,
     )
     permission: Mapped[str] = mapped_column(String(16))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
     granted_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created: Mapped[datetime] = mapped_column(
         TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+
+
+class FolderModel(BaseModel):
+    __tablename__ = "folders"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name_index", name="uq_folders_owner_name"),
+        CheckConstraint("length(uid) = 16", name="ck_folders_uid"),
+        CheckConstraint("length(name_index) = 32", name="ck_folders_name_index"),
+        {"sqlite_autoincrement": True},
+    )
+
+    def __init__(self, **fields: object) -> None:
+        fields.setdefault("uid", new_uid())
+        super().__init__(**fields)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uid: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    owner_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    name_index: Mapped[bytes] = mapped_column(LargeBinary)
+    document: Mapped[bytes] = mapped_column(LargeBinary)
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+    updated: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
+    )
+
+
+class GroupModel(BaseModel):
+    __tablename__ = "groups"
+    __table_args__ = (
+        CheckConstraint("length(uid) = 16", name="ck_groups_uid"),
+        CheckConstraint("length(name_index) = 32", name="ck_groups_name_index"),
+        {"sqlite_autoincrement": True},
+    )
+
+    def __init__(self, **fields: object) -> None:
+        fields.setdefault("uid", new_uid())
+        super().__init__(**fields)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uid: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    name_index: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    document: Mapped[bytes] = mapped_column(LargeBinary)
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+    updated: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
+    )
+
+
+class GroupMemberModel(BaseModel):
+    __tablename__ = "group_members"
+
+    group_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    added_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+
+
+class FolderUserAccessModel(BaseModel):
+    __tablename__ = "folder_user_access"
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('read', 'write')",
+            name="ck_folder_user_access_permission",
+        ),
+    )
+
+    folder_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("folders.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    permission: Mapped[str] = mapped_column(String(16))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    granted_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+
+
+class FolderGroupAccessModel(BaseModel):
+    __tablename__ = "folder_group_access"
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('read', 'write')",
+            name="ck_folder_group_access_permission",
+        ),
+    )
+
+    folder_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("folders.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    group_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    permission: Mapped[str] = mapped_column(String(16))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    granted_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp()
+    )
+
+
+class AccessAuditModel(BaseModel):
+    __tablename__ = "access_audit"
+    __table_args__ = ({"sqlite_autoincrement": True},)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created: Mapped[datetime] = mapped_column(
+        TIMESTAMP, default=utc_now, server_default=func.current_timestamp(), index=True
+    )
+    actor_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(64))
+    resource_type: Mapped[str] = mapped_column(String(32))
+    resource_id: Mapped[int] = mapped_column(Integer, index=True)
+    target_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    target_group_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True
+    )
+    permission: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    previous_permission: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    previous_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP, nullable=True
     )
 
 

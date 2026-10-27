@@ -16,11 +16,20 @@ export const saveFile = async (blob, filename) =>
     headers: { "x-filename": encodeURIComponent(filename) },
   });
 
+const RETURN_TO = "ciphermothReturnTo";
+const protectedPath = (value) =>
+  typeof value === "string" && /^\/(?:passwords|users|entries\/new)\/?(?:[?#]|$)/.test(value);
+
+export const rememberReturnTo = () => {
+  const path = window.location.pathname + window.location.search + window.location.hash;
+  if (protectedPath(path)) sessionStorage.setItem(RETURN_TO, path);
+};
+
 export const enterVault = (returnTo) => {
-  const path =
-    typeof returnTo === "string" && /^\/(?:passwords|users)\/?(?:[?#]|$)/.test(returnTo)
-      ? returnTo
-      : "/passwords";
+  const remembered = sessionStorage.getItem(RETURN_TO);
+  sessionStorage.removeItem(RETURN_TO);
+  const candidate = returnTo ?? remembered;
+  const path = protectedPath(candidate) ? candidate : "/passwords";
   if (!IS_DESKTOP) return window.location.replace(path);
   window.history.replaceState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));

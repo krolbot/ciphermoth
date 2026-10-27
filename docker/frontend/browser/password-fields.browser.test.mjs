@@ -54,6 +54,8 @@ async function openPage(
     "/api/auth/entry-draft-key": { user_id: user.id, key: Buffer.alloc(32, 7).toString("base64") },
     "/api/meta": { version: "3.1.0", features: [] },
     "/api/users": [user, { id: 2, username: "synthetic-member", role: "member", active: true }],
+    "/api/folders": [],
+    "/api/groups": [],
     "/api/passwords": [
       {
         id: 1,
@@ -426,8 +428,8 @@ test("existing vault generator stays singular; backup, restore and TOTP never ge
       await dialog.waitFor({ state: "hidden" });
     }
     await page.getByRole("button", { name: t.common.actions.add, exact: true }).click();
-    const dialog = page.getByRole("dialog");
-    const generate = dialog.getByRole("button", {
+    const editor = page.getByRole("region", { name: t.entry.title.addPassword });
+    const generate = editor.getByRole("button", {
       name: t.entry.actions.generatePassword,
       exact: true,
     });
@@ -435,14 +437,14 @@ test("existing vault generator stays singular; backup, restore and TOTP never ge
     assert.equal(await generate.count(), 1);
     await generate.click();
     strong(
-      await dialog
+      await editor
         .getByLabel(t.common.fields.password, { exact: false })
         .and(page.locator("input"))
         .first()
         .inputValue()
     );
-    await dialog.getByRole("button", { name: t.entry.labels.twoFactor, exact: false }).click();
-    const totp = dialog.getByLabel(t.entry.labels.twoFactorSecret, { exact: false });
+    await editor.getByRole("button", { name: t.entry.labels.twoFactor, exact: false }).click();
+    const totp = editor.getByLabel(t.entry.labels.twoFactorSecret, { exact: false });
     await totp.waitFor();
     assert.equal(await totp.inputValue(), "");
     assert.equal(

@@ -380,7 +380,7 @@ MALFORMED: dict[str, tuple[list[dict], list[bytes], dict]] = {
         [],
         {"settings": {"inactivity_ms": 1}},
     ),
-    "unknown version": ([backup_entry("a")], [], {"version": 3}),
+    "unknown version": ([backup_entry("a")], [], {"version": 4}),
     "unknown top-level key": ([backup_entry("a")], [], {"extra": True}),
 }
 

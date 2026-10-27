@@ -112,10 +112,16 @@ async def test_a_new_vault_is_format_2_with_a_wrapped_key_and_no_verifier(
         "entries",
         "attachments",
         "settings",
+        "folders",
+        "groups",
+        "group_members",
+        "folder_user_access",
+        "folder_group_access",
+        "access_audit",
     }
     assert not tables & {"master_password", "passwords", "password_attachments"}
     [(user_version,)] = await db_execute("PRAGMA user_version")
-    assert user_version == SCHEMA_VERSION == 3
+    assert user_version == SCHEMA_VERSION == 4
 
 
 async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
@@ -134,6 +140,7 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
             "wrapped_key",
             "key_check",
             "owner_user_id",
+            "folder_links_ready",
         },
         "entries": {
             "id",
@@ -145,6 +152,7 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
             "document",
             "backed_up",
             "owner_id",
+            "folder_id",
         },
         "attachments": {
             "id",
@@ -154,6 +162,23 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
             "size_bytes",
             "meta",
             "content",
+        },
+        "folders": {
+            "id",
+            "uid",
+            "created",
+            "updated",
+            "owner_id",
+            "name_index",
+            "document",
+        },
+        "groups": {
+            "id",
+            "uid",
+            "created",
+            "updated",
+            "name_index",
+            "document",
         },
     }
     for table, columns in allowed.items():
@@ -174,6 +199,10 @@ async def test_the_schema_has_no_plaintext_entry_columns_or_indexes() -> None:
         "service_token_hash",
         "service_owner_id",
         "user_id",
+        "folder_id",
+        "group_id",
+        "created",
+        "resource_id",
     }
 
 

@@ -143,6 +143,9 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
     ("DELETE", "/api/passwords/{entry_id}/shares/{user_id}"): lambda c, h, x: c.delete(
         f"/passwords/{x['entry_id']}/shares/{x['member_id']}", headers=h
     ),
+    ("GET", "/api/passwords/{entry_id}/audit"): lambda c, h, x: c.get(
+        f"/passwords/{x['entry_id']}/audit", headers=h
+    ),
     ("DELETE", "/api/passwords/{entry_id}/access"): lambda c, h, x: c.delete(
         f"/passwords/{x['entry_id']}/access", headers=h
     ),
@@ -198,6 +201,75 @@ PROTECTED_ROUTES: dict[tuple[str, str], Spec] = {
         json={"temporary_password": NEW_MASTER_PASSWORD},
         headers=h,
     ),
+    ("GET", "/api/users/{user_id}/folder-access"): lambda c, h, x: c.get(
+        f"/users/{x['member_id']}/folder-access", headers=h
+    ),
+    ("GET", "/api/folders"): lambda c, h, x: c.get("/folders", headers=h),
+    ("POST", "/api/folders"): lambda c, h, x: c.post(
+        "/folders", json={"name": "Auth folder"}, headers=h
+    ),
+    ("PATCH", "/api/folders/{folder_id}"): lambda c, h, x: c.patch(
+        f"/folders/{x['folder_id']}", json={"name": "Renamed folder"}, headers=h
+    ),
+    ("DELETE", "/api/folders/{folder_id}"): lambda c, h, x: c.delete(
+        f"/folders/{x['folder_id']}", headers=h
+    ),
+    ("GET", "/api/folders/{folder_id}/grants"): lambda c, h, x: c.get(
+        f"/folders/{x['folder_id']}/grants", headers=h
+    ),
+    (
+        "PUT",
+        "/api/folders/{folder_id}/grants/users/{user_id}",
+    ): lambda c, h, x: c.put(
+        f"/folders/{x['folder_id']}/grants/users/{x['member_id']}",
+        json={"permission": "read"},
+        headers=h,
+    ),
+    (
+        "DELETE",
+        "/api/folders/{folder_id}/grants/users/{user_id}",
+    ): lambda c, h, x: c.delete(
+        f"/folders/{x['folder_id']}/grants/users/{x['member_id']}", headers=h
+    ),
+    (
+        "PUT",
+        "/api/folders/{folder_id}/grants/groups/{group_id}",
+    ): lambda c, h, x: c.put(
+        f"/folders/{x['folder_id']}/grants/groups/{x['group_id']}",
+        json={"permission": "read"},
+        headers=h,
+    ),
+    (
+        "DELETE",
+        "/api/folders/{folder_id}/grants/groups/{group_id}",
+    ): lambda c, h, x: c.delete(
+        f"/folders/{x['folder_id']}/grants/groups/{x['group_id']}", headers=h
+    ),
+    ("GET", "/api/folders/{folder_id}/audit"): lambda c, h, x: c.get(
+        f"/folders/{x['folder_id']}/audit", headers=h
+    ),
+    ("GET", "/api/groups"): lambda c, h, x: c.get("/groups", headers=h),
+    ("POST", "/api/groups"): lambda c, h, x: c.post(
+        "/groups", json={"name": "Auth group"}, headers=h
+    ),
+    ("PATCH", "/api/groups/{group_id}"): lambda c, h, x: c.patch(
+        f"/groups/{x['group_id']}", json={"name": "Renamed group"}, headers=h
+    ),
+    ("DELETE", "/api/groups/{group_id}"): lambda c, h, x: c.delete(
+        f"/groups/{x['group_id']}", headers=h
+    ),
+    ("GET", "/api/groups/{group_id}/members"): lambda c, h, x: c.get(
+        f"/groups/{x['group_id']}/members", headers=h
+    ),
+    ("GET", "/api/groups/{group_id}/audit"): lambda c, h, x: c.get(
+        f"/groups/{x['group_id']}/audit", headers=h
+    ),
+    ("PUT", "/api/groups/{group_id}/members/{user_id}"): lambda c, h, x: c.put(
+        f"/groups/{x['group_id']}/members/{x['member_id']}", headers=h
+    ),
+    ("DELETE", "/api/groups/{group_id}/members/{user_id}"): lambda c, h, x: c.delete(
+        f"/groups/{x['group_id']}/members/{x['member_id']}", headers=h
+    ),
 }
 
 ROUTE_IDS = [f"{method} {path}" for method, path in PROTECTED_ROUTES]
@@ -205,6 +277,9 @@ REACHED = {
     ("PUT", "/api/auth/password"): 403,
     ("DELETE", "/api/passwords/{entry_id}/access"): 403,
     ("DELETE", "/api/vault/damaged/{kind}/{row_id}"): 400,
+    ("POST", "/api/folders"): 201,
+    ("POST", "/api/groups"): 201,
+    ("DELETE", "/api/groups/{group_id}"): 400,
 }
 
 
@@ -253,6 +328,29 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
     resp = await client.delete("/passwords/beta", headers=headers)
     assert resp.status_code == 200, resp.text
     await client.get("/settings", headers=headers)
+    folder = await client.post(
+        "/folders", json={"name": "Seed folder"}, headers=headers
+    )
+    assert folder.status_code == 201, folder.text
+    group = await client.post("/groups", json={"name": "Seed group"}, headers=headers)
+    assert group.status_code == 201, group.text
+    folder_id = folder.json()["id"]
+    group_id = group.json()["id"]
+    member_id = member.json()["id"]
+    for response in (
+        await client.put(
+            f"/folders/{folder_id}/grants/users/{member_id}",
+            json={"permission": "read"},
+            headers=headers,
+        ),
+        await client.put(
+            f"/folders/{folder_id}/grants/groups/{group_id}",
+            json={"permission": "read"},
+            headers=headers,
+        ),
+        await client.put(f"/groups/{group_id}/members/{member_id}", headers=headers),
+    ):
+        assert response.status_code == 200, response.text
     backup_zip = legacy_backup_zip(
         [{"name": "from-backup", "value": "restored-Value-1"}], MASTER_PASSWORD
     )
@@ -260,7 +358,9 @@ async def seed(client: httpx.AsyncClient, headers: Headers) -> dict:
         "attachment_id": attachment_id,
         "backup_zip": backup_zip,
         "entry_id": entry_id,
-        "member_id": member.json()["id"],
+        "folder_id": folder_id,
+        "group_id": group_id,
+        "member_id": member_id,
         "service_id": service.json()["id"],
     }
 
@@ -391,6 +491,8 @@ async def test_uninitialized_vault_rejects_everything(
         "attachment_id": 1,
         "backup_zip": b"PK",
         "entry_id": 1,
+        "folder_id": 1,
+        "group_id": 1,
         "member_id": 1,
         "service_id": 1,
     }

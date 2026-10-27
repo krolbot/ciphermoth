@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backup_format import MAX_ENTRY_STORED_BYTES
 from errors import InvalidRequest, NotFound, VaultDamaged
 from helpers import DecryptionFailed, VaultKey
-from models import AttachmentModel, EntryModel
+from models import AttachmentModel, EntryModel, FolderModel, GroupModel
 
 _DAMAGED = (
     "{what} in the vault file failed its integrity check, so it was not read. The "
@@ -84,6 +84,13 @@ class EntryDocument(_Strict):
         return self.model_dump_json().encode()
 
 
+class NamedDocument(_Strict):
+    name: str
+
+    def encode(self) -> bytes:
+        return self.model_dump_json().encode()
+
+
 class AttachmentMetadata(_Strict):
     filename: str
     content_type: str | None
@@ -124,6 +131,45 @@ def seal_entry(key: VaultKey, entry: EntryModel, document: EntryDocument) -> Non
         raise InvalidRequest("This entry exceeds the 64 MiB per-entry backup capacity.")
     entry.name_index = key.name_index(document.name)
     entry.document = key.seal_entry(entry.uid, encoded)
+
+
+def open_folder(key: VaultKey, folder: FolderModel) -> NamedDocument:
+    try:
+        document = _decode(
+            NamedDocument,
+            key.open_folder(folder.uid, folder.owner_id, folder.document),
+        )
+    except (DecryptionFailed, ValidationError, ValueError) as error:
+        raise damaged(f"Folder #{folder.id}") from error
+    if not isinstance(folder.name_index, bytes) or not hmac.compare_digest(
+        key.folder_name_index(folder.owner_id, document.name), folder.name_index
+    ):
+        raise damaged(f"Folder #{folder.id}")
+    return document
+
+
+def seal_folder(key: VaultKey, folder: FolderModel, name: str) -> None:
+    document = NamedDocument(name=name)
+    folder.name_index = key.folder_name_index(folder.owner_id, name)
+    folder.document = key.seal_folder(folder.uid, folder.owner_id, document.encode())
+
+
+def open_group(key: VaultKey, group: GroupModel) -> NamedDocument:
+    try:
+        document = _decode(NamedDocument, key.open_group(group.uid, group.document))
+    except (DecryptionFailed, ValidationError, ValueError) as error:
+        raise damaged(f"Group #{group.id}") from error
+    if not isinstance(group.name_index, bytes) or not hmac.compare_digest(
+        key.group_name_index(document.name), group.name_index
+    ):
+        raise damaged(f"Group #{group.id}")
+    return document
+
+
+def seal_group(key: VaultKey, group: GroupModel, name: str) -> None:
+    document = NamedDocument(name=name)
+    group.name_index = key.group_name_index(name)
+    group.document = key.seal_group(group.uid, document.encode())
 
 
 def open_attachment_metadata(

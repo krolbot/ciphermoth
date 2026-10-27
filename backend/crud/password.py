@@ -17,11 +17,13 @@ from crud.records import (
     active_entry_exists,
     find_entry,
     open_entry,
+    open_folder,
     seal_entry,
+    seal_folder,
 )
 from errors import InvalidRequest, VaultDamaged
 from helpers import VaultKey
-from models import AttachmentModel, EntryModel, utc_now
+from models import AttachmentModel, EntryModel, FolderModel, utc_now
 from schemas import (
     ImportRowReport,
     OnConflict,
@@ -138,6 +140,49 @@ class PasswordCRUD(BaseCRUD):
         except IntegrityError as e:
             raise InvalidRequest(conflict) from e
 
+    async def _folder_named(
+        self, name: str | None, key: VaultKey
+    ) -> FolderModel | None:
+        if not name:
+            return None
+        if self.owner_id is None:
+            raise InvalidRequest("A folder owner is required.")
+        name_index = key.folder_name_index(self.owner_id, name)
+        folder = await self.session.scalar(
+            select(FolderModel).where(
+                FolderModel.owner_id == self.owner_id,
+                FolderModel.name_index == name_index,
+            )
+        )
+        if folder is None:
+            folder = FolderModel(
+                owner_id=self.owner_id,
+                name_index=name_index,
+                document=b"",
+            )
+            seal_folder(key, folder, name)
+            self.session.add(folder)
+            await self.session.flush()
+        else:
+            open_folder(key, folder)
+        return folder
+
+    async def _folder_for(
+        self, password: Imported, key: VaultKey
+    ) -> tuple[FolderModel | None, Imported]:
+        folder_id = getattr(password, "folder_id", None)
+        if folder_id is not None:
+            folder = await self.session.get(FolderModel, folder_id)
+            if folder is None:
+                raise InvalidRequest("The selected folder no longer exists.")
+            name = open_folder(key, folder).name
+            if password.folder and password.folder != name:
+                raise InvalidRequest(
+                    "The folder name does not match the selected folder."
+                )
+            return folder, password.model_copy(update={"folder": name})
+        return await self._folder_named(password.folder, key), password
+
     @staticmethod
     def to_response(
         model: EntryModel, document: EntryDocument, attachment_count: int = 0
@@ -154,6 +199,7 @@ class PasswordCRUD(BaseCRUD):
             tags=document.tags,
             custom_fields=[field.model_dump() for field in document.custom_fields],
             folder=document.folder or None,
+            folder_id=model.folder_id,
             favorite=document.favorite,
             backed_up=model.backed_up,
             created=model.created.replace(tzinfo=UTC),
@@ -217,8 +263,12 @@ class PasswordCRUD(BaseCRUD):
     async def create_password(
         self, password: Password, key: VaultKey
     ) -> PasswordCreate:
-        model = EntryModel(owner_id=self.owner_id)
-        seal_entry(key, model, document_from(password))
+        folder, resolved = await self._folder_for(password, key)
+        model = EntryModel(
+            owner_id=self.owner_id,
+            folder_id=folder.id if folder is not None else None,
+        )
+        seal_entry(key, model, document_from(resolved))
         self.session.add(model)
         await self.flush_or_conflict(_NAME_TAKEN)
         return PasswordCreate(created=True, detail="Password created successfully.")
@@ -246,7 +296,9 @@ class PasswordCRUD(BaseCRUD):
             )
             del history[HISTORY_LIMIT:]
 
-        seal_entry(key, model, document_from(new_password, history))
+        folder, resolved = await self._folder_for(new_password, key)
+        model.folder_id = folder.id if folder is not None else None
+        seal_entry(key, model, document_from(resolved, history))
         model.backed_up = False
         await self.flush_or_conflict(_NAME_TAKEN)
         return PasswordUpdate(updated=True, detail="Password updated successfully.")
@@ -316,8 +368,12 @@ class PasswordCRUD(BaseCRUD):
             current.deleted = utc_now()
             await self.session.flush()
             outcome = "overwritten"
-        model = EntryModel(owner_id=self.owner_id)
-        seal_entry(key, model, document_from(password))
+        folder, resolved = await self._folder_for(password, key)
+        model = EntryModel(
+            owner_id=self.owner_id,
+            folder_id=folder.id if folder is not None else None,
+        )
+        seal_entry(key, model, document_from(resolved))
         self.session.add(model)
         existing[index] = model
         return outcome

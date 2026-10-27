@@ -1,4 +1,4 @@
-import { IS_DESKTOP, lockNative, clearClipboard } from "../platform";
+import { IS_DESKTOP, lockNative, clearClipboard, rememberReturnTo } from "../platform";
 import { LOGOUT_NOTICE, clearSession, getSessionToken } from "../utils";
 import apiClient, { SESSION_HEADER } from "./client";
 
@@ -18,6 +18,7 @@ export const readSession = () =>
 
 export const endSession = async (notice) => {
   const token = getSessionToken();
+  rememberReturnTo();
   clearSession();
   await clearClipboard();
   if (notice) sessionStorage.setItem(LOGOUT_NOTICE, notice);

@@ -1,16 +1,32 @@
-from sqlalchemy import delete, or_, select
+from datetime import datetime
+
+from sqlalchemy import exists, or_, select
 
 from crud.attachment import AttachmentCRUD
 from crud.auth import AuthContext
+from crud.folder import FolderCRUD, grant_active
 from crud.password import PasswordCRUD
-from crud.records import find_entry
+from crud.records import find_entry, open_entry, open_folder, open_group
 from errors import Forbidden, InvalidRequest, NotFound
 from helpers import VaultKey
-from models import EntryAccessModel, EntryModel, UserModel
+from models import (
+    AccessAuditModel,
+    EntryAccessModel,
+    EntryModel,
+    FolderGroupAccessModel,
+    FolderModel,
+    FolderUserAccessModel,
+    GroupMemberModel,
+    GroupModel,
+    UserModel,
+    utc_now,
+)
 from schemas import (
     AttachmentResponse,
+    AuditEvent,
     EntryAccess,
     EntryPermission,
+    FolderAccessSource,
     OnConflict,
     Password,
     PasswordCreate,
@@ -32,23 +48,155 @@ class EntryACL:
     async def permission(self, entry_id: int) -> EntryPermission:
         row = (
             await self.session.execute(
-                select(EntryModel.owner_id, EntryAccessModel.permission)
-                .outerjoin(
-                    EntryAccessModel,
-                    (EntryAccessModel.entry_id == EntryModel.id)
-                    & (EntryAccessModel.user_id == self.context.user.id),
+                select(EntryModel.owner_id, EntryModel.folder_id).where(
+                    EntryModel.id == entry_id
                 )
-                .where(EntryModel.id == entry_id)
             )
         ).one_or_none()
         if row is None:
             raise NotFound("Password not found.")
-        owner_id, grant = row
-        if owner_id == self.context.user.id:
+        owner_id, folder_id = row
+        user_id = self.context.user.id
+        if owner_id == user_id:
             return EntryPermission.owner
-        if grant in (SharePermission.read, SharePermission.write):
-            return EntryPermission(grant)
+
+        now = utc_now()
+        permissions: list[str] = []
+        direct = await self.session.scalar(
+            select(EntryAccessModel.permission).where(
+                EntryAccessModel.entry_id == entry_id,
+                EntryAccessModel.user_id == user_id,
+                or_(
+                    EntryAccessModel.expires_at.is_(None),
+                    EntryAccessModel.expires_at > now,
+                ),
+            )
+        )
+        if direct is not None:
+            permissions.append(direct)
+
+        if folder_id is not None:
+            folder_owner = await self.session.scalar(
+                select(FolderModel.owner_id).where(FolderModel.id == folder_id)
+            )
+            if folder_owner == user_id:
+                return EntryPermission.owner
+            folder_direct = await self.session.scalar(
+                select(FolderUserAccessModel.permission).where(
+                    FolderUserAccessModel.folder_id == folder_id,
+                    FolderUserAccessModel.user_id == user_id,
+                    or_(
+                        FolderUserAccessModel.expires_at.is_(None),
+                        FolderUserAccessModel.expires_at > now,
+                    ),
+                )
+            )
+            if folder_direct is not None:
+                permissions.append(folder_direct)
+            permissions.extend(
+                await self.session.scalars(
+                    select(FolderGroupAccessModel.permission)
+                    .join(
+                        GroupMemberModel,
+                        GroupMemberModel.group_id == FolderGroupAccessModel.group_id,
+                    )
+                    .where(
+                        FolderGroupAccessModel.folder_id == folder_id,
+                        GroupMemberModel.user_id == user_id,
+                        or_(
+                            FolderGroupAccessModel.expires_at.is_(None),
+                            FolderGroupAccessModel.expires_at > now,
+                        ),
+                    )
+                )
+            )
+
+        if SharePermission.write in permissions:
+            return EntryPermission.write
+        if SharePermission.read in permissions:
+            return EntryPermission.read
         raise NotFound("Password not found.")
+
+    async def sources(self, entry_id: int) -> list[FolderAccessSource]:
+        entry = await self.session.get(EntryModel, entry_id)
+        if entry is None:
+            raise NotFound("Password not found.")
+        user_id = self.context.user.id
+        if entry.owner_id == user_id:
+            return [
+                FolderAccessSource(
+                    source="owner",
+                    source_id=user_id,
+                    permission=SharePermission.write,
+                )
+            ]
+        sources: list[FolderAccessSource] = []
+        direct = await self.session.get(EntryAccessModel, (entry_id, user_id))
+        if direct is not None:
+            sources.append(
+                FolderAccessSource(
+                    source="entry",
+                    source_id=entry_id,
+                    permission=direct.permission,
+                    expires_at=direct.expires_at,
+                    expired=not grant_active(direct.expires_at),
+                )
+            )
+        if entry.folder_id is None:
+            return sources
+        folder = await self.session.get(FolderModel, entry.folder_id)
+        if folder is None:
+            return sources
+        folder_name = open_folder(self.context.key, folder).name
+        if folder.owner_id == user_id:
+            sources.append(
+                FolderAccessSource(
+                    source="folder_owner",
+                    source_id=folder.id,
+                    name=folder_name,
+                    permission=SharePermission.write,
+                )
+            )
+        folder_direct = await self.session.get(
+            FolderUserAccessModel, (folder.id, user_id)
+        )
+        if folder_direct is not None:
+            sources.append(
+                FolderAccessSource(
+                    source="folder",
+                    source_id=folder.id,
+                    name=folder_name,
+                    permission=folder_direct.permission,
+                    expires_at=folder_direct.expires_at,
+                    expired=not grant_active(folder_direct.expires_at),
+                )
+            )
+        group_rows = (
+            await self.session.execute(
+                select(FolderGroupAccessModel, GroupModel)
+                .join(
+                    GroupMemberModel,
+                    GroupMemberModel.group_id == FolderGroupAccessModel.group_id,
+                )
+                .join(GroupModel, GroupModel.id == FolderGroupAccessModel.group_id)
+                .where(
+                    FolderGroupAccessModel.folder_id == folder.id,
+                    GroupMemberModel.user_id == user_id,
+                )
+            )
+        ).all()
+        sources.extend(
+            FolderAccessSource(
+                source="group",
+                source_id=group.id,
+                name=open_group(self.context.key, group).name,
+                permission=grant.permission,
+                expires_at=grant.expires_at,
+                expired=not grant_active(grant.expires_at),
+            )
+            for grant, group in group_rows
+        )
+        return sources
 
     async def require(self, entry_id: int, needed: EntryPermission) -> EntryPermission:
         permission = await self.permission(entry_id)
@@ -74,23 +222,64 @@ class EntryACL:
         return model
 
     async def visible_ids(self, *, deleted: bool) -> list[int]:
+        user_id = self.context.user.id
+        now = utc_now()
+        direct = exists(
+            select(EntryAccessModel.entry_id).where(
+                EntryAccessModel.entry_id == EntryModel.id,
+                EntryAccessModel.user_id == user_id,
+                or_(
+                    EntryAccessModel.expires_at.is_(None),
+                    EntryAccessModel.expires_at > now,
+                ),
+            )
+        )
+        folder_owned = exists(
+            select(FolderModel.id).where(
+                FolderModel.id == EntryModel.folder_id,
+                FolderModel.owner_id == user_id,
+            )
+        )
+        folder_direct = exists(
+            select(FolderUserAccessModel.folder_id).where(
+                FolderUserAccessModel.folder_id == EntryModel.folder_id,
+                FolderUserAccessModel.user_id == user_id,
+                or_(
+                    FolderUserAccessModel.expires_at.is_(None),
+                    FolderUserAccessModel.expires_at > now,
+                ),
+            )
+        )
+        folder_group = exists(
+            select(FolderGroupAccessModel.folder_id)
+            .join(
+                GroupMemberModel,
+                GroupMemberModel.group_id == FolderGroupAccessModel.group_id,
+            )
+            .where(
+                FolderGroupAccessModel.folder_id == EntryModel.folder_id,
+                GroupMemberModel.user_id == user_id,
+                or_(
+                    FolderGroupAccessModel.expires_at.is_(None),
+                    FolderGroupAccessModel.expires_at > now,
+                ),
+            )
+        )
         statement = (
             select(EntryModel.id)
-            .outerjoin(
-                EntryAccessModel,
-                (EntryAccessModel.entry_id == EntryModel.id)
-                & (EntryAccessModel.user_id == self.context.user.id),
-            )
             .where(
                 EntryModel.deleted.is_not(None)
                 if deleted
                 else EntryModel.deleted.is_(None),
                 or_(
-                    EntryModel.owner_id == self.context.user.id,
-                    EntryAccessModel.user_id == self.context.user.id,
+                    EntryModel.owner_id == user_id,
+                    direct,
+                    folder_owned,
+                    folder_direct,
+                    folder_group,
                 ),
             )
-            .distinct()
+            .order_by(EntryModel.id)
         )
         return list(await self.session.scalars(statement))
 
@@ -100,18 +289,8 @@ class EntryACL:
             return []
         rows = (
             await self.session.execute(
-                select(
-                    EntryModel.id,
-                    EntryModel.owner_id,
-                    UserModel.username,
-                    EntryAccessModel.permission,
-                )
+                select(EntryModel.id, EntryModel.owner_id, UserModel.username)
                 .join(UserModel, UserModel.id == EntryModel.owner_id)
-                .outerjoin(
-                    EntryAccessModel,
-                    (EntryAccessModel.entry_id == EntryModel.id)
-                    & (EntryAccessModel.user_id == self.context.user.id),
-                )
                 .where(EntryModel.id.in_(ids))
                 .order_by(EntryModel.id)
             )
@@ -121,13 +300,10 @@ class EntryACL:
                 entry_id=entry_id,
                 owner_id=owner_id,
                 owner_username=owner_username,
-                access=(
-                    EntryPermission.owner
-                    if owner_id == self.context.user.id
-                    else EntryPermission(grant)
-                ),
+                access=await self.permission(entry_id),
+                sources=await self.sources(entry_id),
             )
-            for entry_id, owner_id, owner_username, grant in rows
+            for entry_id, owner_id, owner_username in rows
         ]
 
     async def list_shares(self, entry_id: int) -> list[ShareGrant]:
@@ -139,6 +315,7 @@ class EntryACL:
                     UserModel.username,
                     UserModel.role,
                     EntryAccessModel.permission,
+                    EntryAccessModel.expires_at,
                 )
                 .join(EntryAccessModel, EntryAccessModel.user_id == UserModel.id)
                 .where(EntryAccessModel.entry_id == entry_id)
@@ -151,12 +328,17 @@ class EntryACL:
                 username=username,
                 role=role,
                 permission=permission,
+                expires_at=expires_at,
             )
-            for user_id, username, role, permission in rows
+            for user_id, username, role, permission, expires_at in rows
         ]
 
     async def set_share(
-        self, entry_id: int, user_id: int, permission: SharePermission
+        self,
+        entry_id: int,
+        user_id: int,
+        permission: SharePermission,
+        expires_at: datetime | None = None,
     ) -> ShareGrant:
         await self.require(entry_id, EntryPermission.owner)
         entry = await self.session.get_one(EntryModel, entry_id)
@@ -166,46 +348,135 @@ class EntryACL:
         if target.id == entry.owner_id:
             raise InvalidRequest("The owner already has full access.")
         grant = await self.session.get(EntryAccessModel, (entry_id, user_id))
+        previous_permission = grant.permission if grant is not None else None
+        previous_expires_at = grant.expires_at if grant is not None else None
+        action = "entry_grant_updated" if grant is not None else "entry_grant_created"
         if grant is None:
             grant = EntryAccessModel(
                 entry_id=entry_id,
                 user_id=user_id,
                 granted_by=self.context.user.id,
                 permission=permission,
+                expires_at=expires_at,
             )
             self.session.add(grant)
         else:
             grant.permission = permission
+            grant.expires_at = expires_at
             grant.granted_by = self.context.user.id
+        self.session.add(
+            AccessAuditModel(
+                actor_user_id=self.context.user.id,
+                action=action,
+                resource_type="entry",
+                resource_id=entry_id,
+                target_user_id=user_id,
+                permission=permission,
+                expires_at=expires_at,
+                previous_permission=previous_permission,
+                previous_expires_at=previous_expires_at,
+            )
+        )
         await self.session.flush()
         return ShareGrant(
             user_id=target.id,
             username=target.username,
             role=target.role,
             permission=permission,
+            expires_at=expires_at,
         )
 
     async def revoke_share(self, entry_id: int, user_id: int) -> None:
         await self.require(entry_id, EntryPermission.owner)
-        deleted = await self.session.execute(
-            delete(EntryAccessModel).where(
-                EntryAccessModel.entry_id == entry_id,
-                EntryAccessModel.user_id == user_id,
+        grant = await self.session.get(EntryAccessModel, (entry_id, user_id))
+        if grant is None:
+            raise NotFound("Share not found.")
+        self.session.add(
+            AccessAuditModel(
+                actor_user_id=self.context.user.id,
+                action="entry_grant_revoked",
+                resource_type="entry",
+                resource_id=entry_id,
+                target_user_id=user_id,
+                previous_permission=grant.permission,
+                previous_expires_at=grant.expires_at,
             )
         )
-        if deleted.rowcount == 0:
-            raise NotFound("Share not found.")
+        await self.session.delete(grant)
 
-    async def relinquish(self, entry_id: int) -> None:
+    async def audit(self, entry_id: int) -> list[AuditEvent]:
+        await self.require(entry_id, EntryPermission.owner)
+        rows = (
+            await self.session.scalars(
+                select(AccessAuditModel)
+                .where(
+                    AccessAuditModel.resource_type == "entry",
+                    AccessAuditModel.resource_id == entry_id,
+                )
+                .order_by(AccessAuditModel.id.desc())
+                .limit(200)
+            )
+        ).all()
+        events: list[AuditEvent] = []
+        for row in rows:
+            actor = (
+                await self.session.get(UserModel, row.actor_user_id)
+                if row.actor_user_id
+                else None
+            )
+            target = (
+                await self.session.get(UserModel, row.target_user_id)
+                if row.target_user_id
+                else None
+            )
+            events.append(
+                AuditEvent(
+                    id=row.id,
+                    created=row.created,
+                    actor_user_id=row.actor_user_id,
+                    actor_username=actor.username if actor else None,
+                    action=row.action,
+                    resource_type=row.resource_type,
+                    resource_id=row.resource_id,
+                    target_user_id=row.target_user_id,
+                    target_username=target.username if target else None,
+                    permission=row.permission,
+                    expires_at=row.expires_at,
+                    previous_permission=row.previous_permission,
+                    previous_expires_at=row.previous_expires_at,
+                )
+            )
+        return events
+
+    async def relinquish(self, entry_id: int) -> EntryPermission | None:
         permission = await self.permission(entry_id)
         if permission == EntryPermission.owner:
             raise Forbidden("The owner cannot relinquish their own entry.")
-        await self.session.execute(
-            delete(EntryAccessModel).where(
-                EntryAccessModel.entry_id == entry_id,
-                EntryAccessModel.user_id == self.context.user.id,
+        grant = await self.session.get(
+            EntryAccessModel, (entry_id, self.context.user.id)
+        )
+        if grant is None:
+            raise InvalidRequest(
+                "This access is inherited from a folder or group and cannot be "
+                "relinquished from the entry."
+            )
+        self.session.add(
+            AccessAuditModel(
+                actor_user_id=self.context.user.id,
+                action="entry_grant_relinquished",
+                resource_type="entry",
+                resource_id=entry_id,
+                target_user_id=self.context.user.id,
+                previous_permission=grant.permission,
+                previous_expires_at=grant.expires_at,
             )
         )
+        await self.session.delete(grant)
+        await self.session.flush()
+        try:
+            return await self.permission(entry_id)
+        except NotFound:
+            return None
 
     async def share_targets(self) -> list[ShareTarget]:
         users = (
@@ -263,6 +534,7 @@ class AuthorizedPasswordCRUD(PasswordCRUD):
                     "owner_id": access[response.id].owner_id,
                     "owner_username": access[response.id].owner_username,
                     "access": access[response.id].access,
+                    "access_sources": access[response.id].sources,
                 }
             )
             for response in listed
@@ -277,16 +549,41 @@ class AuthorizedPasswordCRUD(PasswordCRUD):
                 "owner_id": model.owner_id,
                 "owner_username": owner.username,
                 "access": await self.acl.permission(model.id),
+                "access_sources": await self.acl.sources(model.id),
             }
         )
 
     async def create_password(
         self, password: Password, key: VaultKey
     ) -> PasswordCreate:
+        folder = None
+        if password.folder_id is not None:
+            folder = await FolderCRUD(self.session, self.context)._folder(
+                password.folder_id
+            )
+            permission = await FolderCRUD(self.session, self.context).permission_for(
+                folder
+            )
+            if permission not in (EntryPermission.owner, EntryPermission.write):
+                raise Forbidden("Write access to the folder is required.")
         result = await super().create_password(password, key)
         model, _ = await find_entry(self.session, key, password.password_name)
-        model.owner_id = self.context.owner_id
-        if self.context.user.role == "service":
+        # Entries in a shared folder belong to that folder's owner. This keeps
+        # folder ownership and entry-owner-only operations aligned when a writer
+        # adds a new item for the team.
+        model.owner_id = (
+            folder.owner_id if folder is not None else self.context.owner_id
+        )
+        if model.folder_id is not None:
+            self.session.add(
+                AccessAuditModel(
+                    actor_user_id=self.context.user.id,
+                    action="entry_added",
+                    resource_type="folder",
+                    resource_id=model.folder_id,
+                )
+            )
+        if self.context.user.role == "service" and model.folder_id is None:
             self.session.add(
                 EntryAccessModel(
                     entry_id=model.id,
@@ -301,7 +598,50 @@ class AuthorizedPasswordCRUD(PasswordCRUD):
     async def update_password(
         self, password_name: str, new_password: Password, key: VaultKey
     ) -> PasswordUpdate:
-        await self.acl.entry_by_name(password_name, key, EntryPermission.write)
+        model = await self.acl.entry_by_name(password_name, key, EntryPermission.write)
+        current = open_entry(key, model)
+        if (
+            new_password.folder_id is None
+            and model.folder_id is not None
+            and new_password.folder == current.folder
+        ):
+            new_password = new_password.model_copy(
+                update={"folder_id": model.folder_id}
+            )
+        previous_folder_id = model.folder_id
+        if new_password.folder_id != previous_folder_id:
+            await self.acl.require(model.id, EntryPermission.owner)
+            if new_password.folder_id is not None:
+                folder_crud = FolderCRUD(self.session, self.context)
+                folder = await folder_crud._folder(new_password.folder_id)
+                permission = await folder_crud.permission_for(folder)
+                if permission not in (
+                    EntryPermission.owner,
+                    EntryPermission.write,
+                ):
+                    raise Forbidden("Write access to the folder is required.")
+                if folder.owner_id != model.owner_id:
+                    raise InvalidRequest(
+                        "An entry can only be moved into a folder owned by its owner."
+                    )
+            if previous_folder_id is not None:
+                self.session.add(
+                    AccessAuditModel(
+                        actor_user_id=self.context.user.id,
+                        action="entry_removed",
+                        resource_type="folder",
+                        resource_id=previous_folder_id,
+                    )
+                )
+            if new_password.folder_id is not None:
+                self.session.add(
+                    AccessAuditModel(
+                        actor_user_id=self.context.user.id,
+                        action="entry_added",
+                        resource_type="folder",
+                        resource_id=new_password.folder_id,
+                    )
+                )
         return await super().update_password(password_name, new_password, key)
 
     async def set_favorite(

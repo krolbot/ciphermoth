@@ -16,7 +16,7 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backup_format import (
@@ -49,6 +49,7 @@ from crud.records import (
     open_attachment_content,
     open_attachment_metadata,
     open_entry,
+    open_folder,
     seal_attachment,
     seal_entry,
 )
@@ -65,7 +66,13 @@ from helpers import (
     new_backup_key,
     read_legacy_backup,
 )
-from models import AttachmentModel, EntryAccessModel, EntryModel, UserModel
+from models import (
+    AttachmentModel,
+    EntryAccessModel,
+    EntryModel,
+    FolderModel,
+    UserModel,
+)
 from schemas import (
     ImportRowReport,
     OnConflict,
@@ -165,6 +172,17 @@ class BackupField(_Strict):
     hidden: bool
 
 
+class BackupFolder(_Strict):
+    uid: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _unicode_name(cls, value: str) -> str:
+        require_unicode_text(value)
+        return value
+
+
 class BackupEntry(_Strict):
     name: str
     kind: Literal["login", "note"]
@@ -176,6 +194,9 @@ class BackupEntry(_Strict):
     tags: list[str]
     custom_fields: list[BackupField]
     folder: str | None
+    folder_uid: Annotated[str | None, StringConstraints(pattern=r"^[0-9a-f]{32}$")] = (
+        None
+    )
     favorite: bool
     history: list[BackupHistoryItem]
     created: datetime
@@ -261,7 +282,7 @@ class BackupSettings(_Strict):
 
 class BackupManifest(_Strict):
     format: Literal["ciphermoth-backup"]
-    version: Literal[2]
+    version: Literal[2, 3]
     exported_at: datetime
 
     @field_validator("exported_at")
@@ -272,6 +293,7 @@ class BackupManifest(_Strict):
     app_version: str
     settings: BackupSettings
     entries_count: int = Field(ge=0, le=MAX_FRAMES - 1)
+    folders: list[BackupFolder] = Field(default_factory=list)
 
 
 class BackupCRUD(PasswordCRUD):
@@ -393,6 +415,29 @@ class BackupCRUD(PasswordCRUD):
             if self.entry_ids is None
             else sorted(self.entry_ids)
         )
+        folder_statement = select(FolderModel).order_by(FolderModel.id)
+        if self.entry_ids is not None:
+            linked_folder_ids = select(EntryModel.folder_id).where(
+                EntryModel.id.in_(entry_ids),
+                EntryModel.folder_id.is_not(None),
+            )
+            if self.owner_id is None:
+                folder_statement = folder_statement.where(
+                    FolderModel.id.in_(linked_folder_ids)
+                )
+            else:
+                folder_statement = folder_statement.where(
+                    or_(
+                        FolderModel.owner_id == self.owner_id,
+                        FolderModel.id.in_(linked_folder_ids),
+                    )
+                )
+        folders = (await self.session.scalars(folder_statement)).all()
+        backup_folders = [
+            BackupFolder(uid=folder.uid.hex(), name=open_folder(key, folder).name)
+            for folder in folders
+        ]
+        folder_uid_by_id = {folder.id: folder.uid.hex() for folder in folders}
         attachment_count_stmt = select(func.count()).select_from(AttachmentModel)
         if self.entry_ids is not None:
             attachment_count_stmt = attachment_count_stmt.where(
@@ -404,11 +449,12 @@ class BackupCRUD(PasswordCRUD):
             raise InvalidRequest("The vault has too many records for one backup.")
         manifest = {
             "format": "ciphermoth-backup",
-            "version": 2,
+            "version": 3,
             "exported_at": _stamp(datetime.now(UTC).replace(tzinfo=None)),
             "app_version": get_api_settings().version,
             "settings": (await self._settings()).model_dump(),
             "entries_count": len(entry_ids),
+            "folders": [folder.model_dump() for folder in backup_folders],
         }
 
         def encode() -> bytes:
@@ -438,6 +484,7 @@ class BackupCRUD(PasswordCRUD):
                 attachments = await self._attachments_of(key, entry)
                 entry_manifest = {
                     **document.model_dump(),
+                    "folder_uid": folder_uid_by_id.get(entry.folder_id),
                     "created": _stamp(entry.created),
                     "updated": _stamp(entry.updated),
                     "deleted": _stamp(entry.deleted) if entry.deleted else None,
@@ -597,6 +644,13 @@ class BackupCRUD(PasswordCRUD):
         key: VaultKey,
         on_conflict: OnConflict,
     ) -> PasswordImportResult:
+        folder_targets: dict[str, tuple[int, str]] = {}
+        for described in manifest.folders:
+            if described.uid in folder_targets:
+                raise InvalidRequest("The backup contains a duplicate folder identity.")
+            folder = await self._folder_named(described.name, key)
+            assert folder is not None
+            folder_targets[described.uid] = (folder.id, described.name)
         vault_was_empty = not await self.session.scalar(
             select(func.count()).select_from(EntryModel)
         )
@@ -632,6 +686,18 @@ class BackupCRUD(PasswordCRUD):
                 raise
             except ValidationError as error:
                 raise InvalidRequest(self._manifest_problem(error)) from None
+            folder_id: int | None = None
+            if entry.folder_uid is not None:
+                target_folder = folder_targets.get(entry.folder_uid)
+                if target_folder is None or target_folder[1] != entry.folder:
+                    raise InvalidRequest(
+                        "Nothing was imported. An entry has an invalid folder link."
+                    )
+                folder_id = target_folder[0]
+            elif manifest.version == 3 and entry.folder is not None:
+                raise InvalidRequest(
+                    "Nothing was imported. An entry is missing its folder identity."
+                )
             password, history = await _work(self._check_entry, entry, index)
             if entry.deleted is None:
                 if entry.name in seen_active:
@@ -642,7 +708,15 @@ class BackupCRUD(PasswordCRUD):
                 seen_active[entry.name] = index
             document = document_from(password, history)
             target = await self._restore_target(
-                document, entry, active, trashed, key, on_conflict, moved_at, counts
+                document,
+                entry,
+                active,
+                trashed,
+                key,
+                on_conflict,
+                moved_at,
+                counts,
+                folder_id=folder_id,
             )
             for described in entry.attachments:
                 content = await _work(
@@ -704,6 +778,8 @@ class BackupCRUD(PasswordCRUD):
         on_conflict: OnConflict,
         moved_at: datetime,
         counts: dict[str, int],
+        *,
+        folder_id: int | None = None,
     ) -> EntryModel | None:
         index = key.name_index(document.name)
         deleted = entry.deleted
@@ -735,8 +811,12 @@ class BackupCRUD(PasswordCRUD):
                 counts["overwritten"] += 1
             else:
                 counts["imported"] += 1
+        if folder_id is None:
+            folder = await self._folder_named(document.folder, key)
+            folder_id = folder.id if folder is not None else None
         model = EntryModel(
             owner_id=self.owner_id,
+            folder_id=folder_id,
             created=entry.created,
             updated=entry.updated,
             deleted=deleted,

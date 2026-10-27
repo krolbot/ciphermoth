@@ -37,7 +37,20 @@ MASTER_PASSWORD = "Moth-Test-Vault-2026!"
 NEW_MASTER_PASSWORD = "Moth-Rotated-Vault-2027?"
 WRONG_MASTER_PASSWORD = "Not-The-Vault-Password-1"
 
-TABLES = ("vault", "entries", "attachments", "settings")
+TABLES = (
+    "vault",
+    "users",
+    "entries",
+    "folders",
+    "groups",
+    "group_members",
+    "entry_access",
+    "folder_user_access",
+    "folder_group_access",
+    "access_audit",
+    "attachments",
+    "settings",
+)
 
 engine = app.state.database.engine
 
@@ -52,7 +65,13 @@ async def reset_vault() -> None:
         for table in (
             "attachments",
             "entry_access",
+            "folder_user_access",
+            "folder_group_access",
+            "group_members",
+            "access_audit",
             "entries",
+            "folders",
+            "groups",
             "vault",
         ):
             await conn.execute(text(f"DELETE FROM {table}"))
@@ -228,7 +247,7 @@ async def db_snapshot() -> dict[str, list[tuple]]:
     snapshot: dict[str, list[tuple]] = {}
     async with engine.connect() as conn:
         for table in TABLES:
-            rows = await conn.execute(text(f"SELECT * FROM {table} ORDER BY id"))
+            rows = await conn.execute(text(f"SELECT * FROM {table} ORDER BY rowid"))
             snapshot[table] = [tuple(row) for row in rows.all()]
     return snapshot
 

@@ -17,7 +17,7 @@ import { GLOW, INFO, PAPER_DARK, TEXT_ON_DARK, WARN, WEAK } from "./lib/brand";
 const SANS = "'Space Grotesk Variable', system-ui, sans-serif";
 
 const AppContent = () => {
-  useLocation();
+  const { pathname } = useLocation();
   useAutoLogout();
 
   const authed = isAuth();
@@ -79,7 +79,7 @@ const AppContent = () => {
         onClose={() => {}}
         onChanged={setUser}
       />
-      <ThemeToggle />
+      {pathname !== "/entries/new" && <ThemeToggle />}
     </Box>
   );
 };
@@ -100,6 +100,16 @@ const snackbarStyles = (
       ".notistack-MuiContent-error": { borderLeft: `3px solid ${WEAK} !important` },
       ".notistack-MuiContent-warning": { borderLeft: `3px solid ${WARN} !important` },
       ".notistack-MuiContent-info": { borderLeft: `3px solid ${INFO} !important` },
+      "@media (max-width: 599.95px)": {
+        ".notistack-SnackbarContainer": {
+          right: "8px !important",
+          left: "8px !important",
+          width: "auto !important",
+          maxWidth: "calc(100% - 16px) !important",
+          top: "calc(8px + env(safe-area-inset-top, 0px)) !important",
+          bottom: "auto !important",
+        },
+      },
     }}
   />
 );

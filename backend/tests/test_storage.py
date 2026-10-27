@@ -107,9 +107,16 @@ async def test_schema_two_user_migration_snapshot_bootstrap_and_rollback(
         connection.execute("PRAGMA legacy_alter_table=ON")
         connection.executescript(
             """
+            DROP TABLE access_audit;
+            DROP TABLE folder_group_access;
+            DROP TABLE folder_user_access;
+            DROP TABLE group_members;
+            DROP TABLE groups;
+            DROP TABLE folders;
             DROP TABLE entry_access;
             DROP INDEX uq_entries_name_active;
             DROP INDEX ix_entries_owner_id;
+            DROP INDEX ix_entries_folder_id;
             ALTER TABLE entries RENAME TO entries_v3;
             CREATE TABLE entries (
                 id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -203,6 +210,119 @@ async def test_schema_two_user_migration_snapshot_bootstrap_and_rollback(
     with closing(sqlite3.connect(rollback_folder / VAULT_FILE)) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert connection.execute("SELECT count(*) FROM entries").fetchone() == (1,)
+
+
+@pytest.mark.asyncio
+async def test_schema_three_folder_migration_links_encrypted_legacy_names(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "schema-three"
+    async with client_for_data_dir(folder) as client:
+        bootstrapped = await client.post(
+            "/auth/bootstrap",
+            json={"username": "owner", "password": MASTER_PASSWORD},
+        )
+        assert bootstrapped.status_code == 200, bootstrapped.text
+        headers = auth(bootstrapped.json()["session_token"])
+        created = await client.post(
+            "/passwords/create",
+            json=entry("legacy folder entry", folder="Legacy folder"),
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+
+    vault = folder / VAULT_FILE
+    with closing(sqlite3.connect(vault)) as connection:
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        connection.executescript(
+            """
+            DROP TABLE access_audit;
+            DROP TABLE folder_group_access;
+            DROP TABLE folder_user_access;
+            DROP TABLE group_members;
+            DROP TABLE groups;
+            DROP TABLE folders;
+            DROP TABLE entry_access;
+            DROP INDEX ix_entries_folder_id;
+            DROP INDEX ix_entries_owner_id;
+            DROP INDEX uq_entries_name_active;
+            ALTER TABLE entries RENAME TO entries_v4;
+            CREATE TABLE entries (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                uid BLOB NOT NULL UNIQUE,
+                created TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                deleted TIMESTAMP,
+                name_index BLOB NOT NULL,
+                document BLOB NOT NULL,
+                backed_up BOOLEAN DEFAULT 0 NOT NULL,
+                owner_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+                CONSTRAINT ck_entries_uid CHECK (length(uid) = 16),
+                CONSTRAINT ck_entries_name_index CHECK (length(name_index) = 32)
+            );
+            INSERT INTO entries
+                (id, uid, created, updated, deleted, name_index, document,
+                 backed_up, owner_id)
+            SELECT id, uid, created, updated, deleted, name_index, document,
+                   backed_up, owner_id
+            FROM entries_v4;
+            DROP TABLE entries_v4;
+            CREATE UNIQUE INDEX uq_entries_name_active
+                ON entries (name_index) WHERE deleted IS NULL;
+            CREATE INDEX ix_entries_owner_id ON entries(owner_id);
+            CREATE TABLE entry_access (
+                entry_id INTEGER NOT NULL
+                    REFERENCES entries(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL
+                    REFERENCES users(id) ON DELETE CASCADE,
+                permission VARCHAR(16) NOT NULL,
+                granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (entry_id, user_id),
+                CONSTRAINT ck_entry_access_permission
+                    CHECK (permission IN ('read', 'write'))
+            );
+            ALTER TABLE vault DROP COLUMN folder_links_ready;
+            """
+        )
+        connection.execute(f"PRAGMA user_version={storage.MULTIUSER_SCHEMA_VERSION}")
+        connection.commit()
+
+    snapshot = storage.migrate_folders(folder)
+    assert snapshot.is_file()
+    assert _pragma(snapshot, "user_version") == storage.MULTIUSER_SCHEMA_VERSION
+    assert _pragma(vault, "user_version") == SCHEMA_VERSION
+    assert check_file(vault) == []
+    with closing(sqlite3.connect(snapshot)) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table'"
+            )
+        }
+        assert "folders" not in tables
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+    async with client_for_data_dir(folder) as migrated:
+        logged_in = await migrated.post(
+            "/auth/login",
+            json={"username": "owner", "password": MASTER_PASSWORD},
+        )
+        assert logged_in.status_code == 200, logged_in.text
+        assert logged_in.json()["valid"] is True
+        headers = auth(logged_in.json()["session_token"])
+        [entry_response] = (await migrated.get("/passwords", headers=headers)).json()
+        [folder_response] = (await migrated.get("/folders", headers=headers)).json()
+        assert entry_response["folder"] == "Legacy folder"
+        assert entry_response["folder_id"] == folder_response["id"]
+        assert folder_response["name"] == "Legacy folder"
+
+    with closing(sqlite3.connect(vault)) as connection:
+        assert connection.execute(
+            "SELECT folder_links_ready FROM vault"
+        ).fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM folders").fetchone() == (1,)
 
 
 async def _names(client: httpx.AsyncClient, password: str) -> list[str]:

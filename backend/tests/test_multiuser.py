@@ -430,7 +430,7 @@ async def test_primary_vault_owner_cannot_be_deleted(
 
 
 async def _mcp_service_acl_flow(client: httpx.AsyncClient) -> None:
-    _owner, owner_headers = await bootstrap(client)
+    owner, owner_headers = await bootstrap(client)
     await client.post(
         "/passwords/create", json=entry("shared", "secret"), headers=owner_headers
     )
@@ -502,13 +502,80 @@ async def _mcp_service_acl_flow(client: httpx.AsyncClient) -> None:
     )
     assert denied.json()["result"]["isError"] is True
 
+    folder_response = await client.post(
+        "/folders", json={"name": "Automation"}, headers=owner_headers
+    )
+    assert folder_response.status_code == 201, folder_response.text
+    folder = folder_response.json()
+    granted = await client.put(
+        f"/folders/{folder['id']}/grants/users/{service['id']}",
+        json={"permission": "write"},
+        headers=owner_headers,
+    )
+    assert granted.status_code == 200, granted.text
+    created = await mcp_post(
+        client,
+        token,
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "create_entry",
+                "arguments": {
+                    "entry": entry(
+                        "agent-created",
+                        "secret",
+                        folder=folder["name"],
+                        folder_id=folder["id"],
+                    )
+                },
+            },
+        },
+        protocol,
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["result"].get("isError") is not True
+    created_entry = created.json()["result"]["structuredContent"]
+    assert created_entry["folder_id"] == folder["id"]
+    assert {source["source"] for source in created_entry["access_sources"]} == {
+        "folder"
+    }
+
+    revoked_folder = await client.delete(
+        f"/folders/{folder['id']}/grants/users/{service['id']}",
+        headers=owner_headers,
+    )
+    assert revoked_folder.status_code == 200, revoked_folder.text
+    listed_after_revoke = await mcp_post(
+        client,
+        token,
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "list_entries", "arguments": {}},
+        },
+        protocol,
+    )
+    assert listed_after_revoke.status_code == 200, listed_after_revoke.text
+    assert {
+        item["id"]
+        for item in listed_after_revoke.json()["result"]["structuredContent"]["result"]
+    } == {owned["id"]}
+    owner_entries = (await client.get("/passwords", headers=owner_headers)).json()
+    agent_created = next(
+        item for item in owner_entries if item["password_name"] == "agent-created"
+    )
+    assert agent_created["owner_id"] == owner["id"]
+
     await client.patch(
         f"/users/{service['id']}", json={"active": False}, headers=owner_headers
     )
     revoked = await mcp_post(
         client,
         token,
-        {"jsonrpc": "2.0", "id": 4, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/list"},
         protocol,
     )
     assert revoked.status_code == 401

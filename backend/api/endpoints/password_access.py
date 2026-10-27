@@ -3,6 +3,8 @@ from fastapi import APIRouter, Query
 from api.endpoints.deps import AuthContextDep, SessionDep
 from crud.access import EntryACL
 from schemas import (
+    AccessRelinquishResponse,
+    AuditEvent,
     EntryAccess,
     ShareGrant,
     ShareUpdatePayload,
@@ -37,7 +39,7 @@ async def set_share(
     session: SessionDep,
 ) -> ShareGrant:
     return await EntryACL(session, context).set_share(
-        entry_id, user_id, body.permission
+        entry_id, user_id, body.permission, body.expires_at
     )
 
 
@@ -52,9 +54,20 @@ async def revoke_share(
     return SimpleDetailSchema(detail="Access revoked.")
 
 
-@router.delete("/{entry_id}/access", response_model=SimpleDetailSchema)
+@router.get("/{entry_id}/audit", response_model=list[AuditEvent])
+async def entry_audit(
+    entry_id: int, context: AuthContextDep, session: SessionDep
+) -> list[AuditEvent]:
+    return await EntryACL(session, context).audit(entry_id)
+
+
+@router.delete("/{entry_id}/access", response_model=AccessRelinquishResponse)
 async def relinquish(
     entry_id: int, context: AuthContextDep, session: SessionDep
-) -> SimpleDetailSchema:
-    await EntryACL(session, context).relinquish(entry_id)
-    return SimpleDetailSchema(detail="Access relinquished.")
+) -> AccessRelinquishResponse:
+    effective = await EntryACL(session, context).relinquish(entry_id)
+    return AccessRelinquishResponse(
+        detail="Direct access relinquished.",
+        direct_access_relinquished=True,
+        effective_access=effective,
+    )

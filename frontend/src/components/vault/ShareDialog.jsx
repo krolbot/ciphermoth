@@ -10,12 +10,21 @@ import {
   Paper,
   Select,
   Stack,
+  TextField,
   Typography,
   useMediaQuery,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
+
+const toUtc = (value) => (value ? new Date(value).toISOString() : null);
+const toLocalInput = (value) => {
+  if (!value) return "";
+  const parsed = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+};
 
 const ShareDialog = ({ entry, open, onClose }) => {
   const { t } = useTranslation();
@@ -29,6 +38,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
   const [targets, setTargets] = useState([]);
   const [targetId, setTargetId] = useState("");
   const [permission, setPermission] = useState("read");
+  const [expiresAt, setExpiresAt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -43,6 +53,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
     if (!open) return;
     setTargetId("");
     setPermission("read");
+    setExpiresAt("");
     setError("");
     load().catch((err) => setError(err.message));
   }, [open, load]);
@@ -64,8 +75,18 @@ const ShareDialog = ({ entry, open, onClose }) => {
 
   const add = async () => {
     if (!targetId) return;
-    if (await run(() => setShare({ entryId: entry.id, userId: targetId, permission }))) {
+    if (
+      await run(() =>
+        setShare({
+          entryId: entry.id,
+          userId: targetId,
+          permission,
+          expiresAt: toUtc(expiresAt),
+        })
+      )
+    ) {
       setTargetId("");
+      setExpiresAt("");
     }
   };
 
@@ -80,6 +101,14 @@ const ShareDialog = ({ entry, open, onClose }) => {
       maxWidth="sm"
       fullWidth
       fullScreen={fullScreen}
+      slotProps={{
+        paper: {
+          sx: {
+            "& .MuiButton-root": { minHeight: { xs: 44, sm: 36 } },
+            "& .MuiInputBase-root": { minHeight: { xs: 44, sm: "initial" } },
+          },
+        },
+      }}
     >
       <DialogTitle component="div">
         <Typography component="h2" variant="h6">
@@ -128,6 +157,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
                           entryId: entry.id,
                           userId: share.user_id,
                           permission: event.target.value,
+                          expiresAt: toUtc(toLocalInput(share.expires_at)),
                         })
                       )
                     }
@@ -157,7 +187,10 @@ const ShareDialog = ({ entry, open, onClose }) => {
               sx={{
                 p: 1.5,
                 display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) 150px auto" },
+                gridTemplateColumns: {
+                  xs: "1fr",
+                  sm: "minmax(0, 1fr) 150px 190px auto",
+                },
                 gap: 1.25,
               }}
             >
@@ -188,6 +221,19 @@ const ShareDialog = ({ entry, open, onClose }) => {
                 <MenuItem value="read">{t("sharing.read")}</MenuItem>
                 <MenuItem value="write">{t("sharing.readWrite")}</MenuItem>
               </Select>
+              <TextField
+                size="small"
+                type="datetime-local"
+                label={t("folderAccess.expiresAt")}
+                helperText={t("folderAccess.expiresHint")}
+                value={expiresAt}
+                disabled={busy}
+                onChange={(event) => setExpiresAt(event.target.value)}
+                slotProps={{
+                  inputLabel: { shrink: true },
+                  htmlInput: { min: toLocalInput(new Date().toISOString()) },
+                }}
+              />
               <Button variant="contained" disabled={busy || !targetId} onClick={add}>
                 {t("sharing.grant")}
               </Button>

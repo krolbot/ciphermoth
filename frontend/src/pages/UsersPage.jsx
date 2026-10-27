@@ -16,11 +16,16 @@ import {
   Typography,
 } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import FolderSharedOutlinedIcon from "@mui/icons-material/FolderSharedOutlined";
+import GroupsOutlinedIcon from "@mui/icons-material/GroupsOutlined";
 import { useStoreActions, useStoreState } from "easy-peasy";
+import { useSnackbar } from "notistack";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import PasswordField from "../components/PasswordField";
+import GroupManagementDialog from "../components/access/GroupManagementDialog";
+import UserFolderAccessDialog from "../components/access/UserFolderAccessDialog";
 import useClipboard from "../hooks/useClipboard";
 import { getCurrentUser } from "../utils";
 
@@ -28,6 +33,7 @@ const EMPTY_FORM = { username: "", temporary_password: "", role: "member" };
 
 const UsersPage = () => {
   const { t } = useTranslation();
+  const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
   const users = useStoreState((state) => state.ciphermothModels.users.users);
   const { get, create, update, revokeSessions, resetPassword, rotateServiceToken, remove } =
@@ -35,26 +41,24 @@ const UsersPage = () => {
   const currentUserId = getCurrentUser()?.id;
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [serviceToken, setServiceToken] = useState("");
   const [resetTarget, setResetTarget] = useState(null);
+  const [folderAccessTarget, setFolderAccessTarget] = useState(null);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [temporaryPassword, setTemporaryPassword] = useState("");
 
   useEffect(() => {
-    get().catch((err) => setError(err.message));
-  }, [get]);
+    get().catch((err) => enqueueSnackbar(err.message, { variant: "error" }));
+  }, [get, enqueueSnackbar]);
 
   const run = async (operation, message = "") => {
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       const result = await operation();
-      if (message) setNotice(message);
+      if (message) enqueueSnackbar(message, { variant: "success" });
       return result ?? true;
     } catch (err) {
-      setError(err.message);
+      enqueueSnackbar(err.message, { variant: "error" });
       return false;
     } finally {
       setBusy(false);
@@ -100,21 +104,19 @@ const UsersPage = () => {
             {t("users.subtitle")}
           </Typography>
         </Box>
-        <Button component={Link} to="/passwords" variant="outlined" startIcon={<ArrowBackIcon />}>
-          {t("users.backToVault")}
-        </Button>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <Button
+            variant="outlined"
+            startIcon={<GroupsOutlinedIcon />}
+            onClick={() => setGroupsOpen(true)}
+          >
+            {t("groups.title")}
+          </Button>
+          <Button component={Link} to="/passwords" variant="outlined" startIcon={<ArrowBackIcon />}>
+            {t("users.backToVault")}
+          </Button>
+        </Stack>
       </Stack>
-
-      {notice && (
-        <Alert severity="success" onClose={() => setNotice("")}>
-          {notice}
-        </Alert>
-      )}
-      {error && (
-        <Alert severity="error" onClose={() => setError("")}>
-          {error}
-        </Alert>
-      )}
       {serviceToken && (
         <Alert severity="warning">
           <Stack spacing={1}>
@@ -197,6 +199,15 @@ const UsersPage = () => {
                 label={t(user.active ? "users.active" : "users.inactive")}
               />
               <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<FolderSharedOutlinedIcon />}
+                  disabled={busy}
+                  onClick={() => setFolderAccessTarget(user)}
+                >
+                  {t("folderAccess.manage")}
+                </Button>
                 {user.role === "service" ? (
                   <Button
                     size="small"
@@ -340,6 +351,12 @@ const UsersPage = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      <UserFolderAccessDialog
+        open={Boolean(folderAccessTarget)}
+        user={folderAccessTarget}
+        onClose={() => setFolderAccessTarget(null)}
+      />
+      <GroupManagementDialog open={groupsOpen} onClose={() => setGroupsOpen(false)} />
     </Stack>
   );
 };

@@ -74,9 +74,13 @@ def _index(
         "description": entry.description,
         "tags": entry.tags,
         "folder": entry.folder,
+        "folder_id": entry.folder_id,
         "favorite": entry.favorite,
         "owner": owner,
         "access": access.value,
+        "access_sources": [
+            source.model_dump(mode="json") for source in entry.access_sources
+        ],
     }
 
 
@@ -104,7 +108,10 @@ async def _by_id(
     )
     if owner is None:
         raise SessionRequired("Entry owner is missing.")
-    return crud.to_response(model, document, count), owner, access
+    response = crud.to_response(model, document, count).model_copy(
+        update={"access_sources": await crud.acl.sources(entry_id)}
+    )
+    return response, owner, access
 
 
 def build_mcp_server(
@@ -199,7 +206,11 @@ def build_mcp_server(
             context = await AuthCRUD(session, vault_sessions).resolve_service_token(
                 _current_token()
             )
-            await EntryACL(session, context).relinquish(entry_id)
-            return {"entry_id": entry_id, "relinquished": True}
+            remaining = await EntryACL(session, context).relinquish(entry_id)
+            return {
+                "entry_id": entry_id,
+                "direct_access_relinquished": True,
+                "effective_access": remaining.value if remaining else None,
+            }
 
     return server

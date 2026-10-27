@@ -21,12 +21,14 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import DownloadIcon from "@mui/icons-material/Download";
 import HealthAndSafetyIcon from "@mui/icons-material/HealthAndSafety";
+import FolderSharedOutlinedIcon from "@mui/icons-material/FolderSharedOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useSnackbar } from "notistack";
 import { Trans, useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import BackupDialog from "../components/vault/BackupDialog";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -34,6 +36,7 @@ import EmptyVault from "../components/vault/EmptyVault";
 import HealthDialog from "../components/vault/HealthDialog";
 import ImportDialog from "../components/vault/ImportDialog";
 import PasswordFormDialog from "../components/vault/PasswordFormDialog";
+import FolderAccessDialog from "../components/access/FolderAccessDialog";
 import ShareDialog from "../components/vault/ShareDialog";
 import TrashDialog from "../components/vault/TrashDialog";
 import EntryBrowser from "../components/vault/EntryBrowser";
@@ -51,8 +54,10 @@ const buildSubtitle = (loading, passwords, t) => {
 
 const PasswordsPage = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const theme = useTheme();
   const desktop = useMediaQuery(theme.breakpoints.up("md"));
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -71,9 +76,11 @@ const PasswordsPage = () => {
     getDamaged,
     removeDamaged,
   } = useStoreActions((actions) => actions.ciphermothModels.passwords);
+  const getFolders = useStoreActions((actions) => actions.ciphermothModels.access.getFolders);
   const { error, loading, passwords, trash, damaged, damageCheckError } = useStoreState(
     (state) => state.ciphermothModels.passwords
   );
+  const folders = useStoreState((state) => state.ciphermothModels.access.folders);
 
   const [toolsAnchor, setToolsAnchor] = useState(null);
   const [sortOrder, setSortOrder] = useState("created-desc");
@@ -85,6 +92,7 @@ const PasswordsPage = () => {
   const [importOpen, setImportOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [foldersOpen, setFoldersOpen] = useState(false);
   const [removeDamagedOpen, setRemoveDamagedOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
@@ -153,7 +161,8 @@ const PasswordsPage = () => {
     get();
     getTrash();
     getDamaged();
-  }, [get, getTrash, getDamaged]);
+    getFolders().catch((err) => enqueueSnackbar(err.message, { variant: "error" }));
+  }, [get, getTrash, getDamaged, getFolders, enqueueSnackbar]);
 
   const damagedCount = damaged.entries.length + damaged.attachments.length;
 
@@ -162,12 +171,21 @@ const PasswordsPage = () => {
   }, [error, enqueueSnackbar]);
 
   const openAdd = () => {
+    const folder = writableFolderOptions.find((item) => item.id === Number(folderFilter));
+    if (mobile) {
+      navigate("/entries/new", {
+        state: {
+          folderId: folder?.id ?? null,
+        },
+      });
+      return;
+    }
     if (!draftReady) {
       enqueueSnackbar(t("entry.draft.unavailable"), { variant: "error" });
       return;
     }
     setEditTarget(null);
-    setInitialDraft(null);
+    setInitialDraft(folder ? { folder: folder.name, folder_id: folder.id } : null);
     setDialogOpen(true);
   };
 
@@ -215,6 +233,7 @@ const PasswordsPage = () => {
       );
     }
     closeEntryForm();
+    await getFolders().catch((err) => enqueueSnackbar(err.message, { variant: "error" }));
   };
 
   const handleDelete = async () => {
@@ -264,17 +283,29 @@ const PasswordsPage = () => {
   };
 
   const folderOptions = useMemo(
-    () =>
-      [...new Set(passwords.map((p) => p.folder).filter(Boolean))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
-    [passwords]
+    () => folders.filter((folder) => ["owner", "write", "read"].includes(folder.access)),
+    [folders]
   );
-  const activeFolder = folderOptions.includes(folderFilter) ? folderFilter : "";
+  const writableFolderOptions = useMemo(
+    () => folders.filter((folder) => ["owner", "write"].includes(folder.access)),
+    [folders]
+  );
+  const formFolderOptions = useMemo(
+    () =>
+      editTarget
+        ? writableFolderOptions.filter((folder) => folder.owner_id === editTarget.owner_id)
+        : writableFolderOptions,
+    [editTarget, writableFolderOptions]
+  );
+  const activeFolder = folderOptions.some((folder) => folder.id === Number(folderFilter))
+    ? folderFilter
+    : "";
 
   const filteredPasswords = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const byFolder = activeFolder ? passwords.filter((p) => p.folder === activeFolder) : passwords;
+    const byFolder = activeFolder
+      ? passwords.filter((p) => p.folder_id === Number(activeFolder))
+      : passwords;
     const matches = !query
       ? byFolder
       : byFolder.filter(
@@ -304,6 +335,7 @@ const PasswordsPage = () => {
   const isEmpty = !loading && passwords.length === 0;
   const tools = [
     [HealthAndSafetyIcon, t("vault.health"), () => setHealthOpen(true), passwords.length === 0],
+    [FolderSharedOutlinedIcon, t("folderAccess.manageShort"), () => setFoldersOpen(true), false],
     [DownloadIcon, t("vault.backup"), () => setBackupOpen(true), passwords.length === 0],
     [UploadFileIcon, t("vault.import"), () => setImportOpen(true), false],
     [
@@ -475,9 +507,9 @@ const PasswordsPage = () => {
               sx={{ minWidth: 0 }}
             >
               <MenuItem value="">{t("vault.allFolders")}</MenuItem>
-              {folderOptions.map((f) => (
-                <MenuItem key={f} value={f}>
-                  {f}
+              {folderOptions.map((folder) => (
+                <MenuItem key={folder.id} value={folder.id}>
+                  {folder.name}
                 </MenuItem>
               ))}
             </TextField>
@@ -554,7 +586,7 @@ const PasswordsPage = () => {
           initialDraft={initialDraft}
           onDraftChange={saveDraft}
           draftError={draftError}
-          folderOptions={folderOptions}
+          folderOptions={formFolderOptions}
           onClose={closeEntryForm}
           onSubmit={handleSubmit}
           onCopy={copy}
@@ -565,6 +597,7 @@ const PasswordsPage = () => {
         entry={shareTarget}
         onClose={() => setShareTarget(null)}
       />
+      <FolderAccessDialog open={foldersOpen} onClose={() => setFoldersOpen(false)} />
       <BackupDialog
         open={backupOpen}
         onClose={() => setBackupOpen(false)}

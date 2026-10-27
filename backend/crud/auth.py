@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crud.base import BaseCRUD
 from crud.engine import after_commit, after_rollback
+from crud.folder import migrate_folder_links
 from crud.master_password import _store, fetch_vault, key_material
 from crud.settings import SettingsCRUD
 from errors import Forbidden, InvalidRequest, NotFound, SessionRequired
@@ -22,7 +23,14 @@ from helpers import (
     unlock_key_material,
     wrap_key_material,
 )
-from models import AttachmentModel, EntryAccessModel, EntryModel, UserModel, VaultModel
+from models import (
+    AttachmentModel,
+    EntryAccessModel,
+    EntryModel,
+    FolderModel,
+    UserModel,
+    VaultModel,
+)
 from schemas import (
     AuthResponse,
     AuthStatus,
@@ -238,6 +246,7 @@ class AuthCRUD(BaseCRUD):
             .where(EntryModel.owner_id.is_(None))
             .values(owner_id=user.id)
         )
+        await migrate_folder_links(self.session, key)
         await self._refresh_timeout()
         return self._open_session(user, key)
 
@@ -278,6 +287,7 @@ class AuthCRUD(BaseCRUD):
             return AuthResponse(valid=False)
         if not key.matches(canonical.key_check):
             raise InvalidRequest(_DAMAGED)
+        await migrate_folder_links(self.session, key)
         await self._refresh_timeout()
         return self._open_session(current, key)
 
@@ -543,6 +553,13 @@ class AuthCRUD(BaseCRUD):
             is not None
         ):
             raise Forbidden("User owns vault entries and cannot be deleted.")
+        if (
+            await self.session.scalar(
+                select(FolderModel.id).where(FolderModel.owner_id == user.id).limit(1)
+            )
+            is not None
+        ):
+            raise Forbidden("User owns vault folders and cannot be deleted.")
         if (
             await self.session.scalar(
                 select(UserModel.id)
