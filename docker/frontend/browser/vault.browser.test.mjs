@@ -398,14 +398,21 @@ async function fits(page) {
     );
 }
 
-async function axe(page) {
+async function settleAnimations(page) {
     await page.evaluate(async () => {
+        await new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        );
         await Promise.all(
             document
                 .getAnimations()
                 .map((animation) => animation.finished.catch(() => undefined)),
         );
     });
+}
+
+async function axe(page) {
+    await settleAnimations(page);
     await page.addScriptTag({ path: axePath });
     const violations = await page.evaluate(async () =>
         (
@@ -1523,15 +1530,7 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
             const prefix = `matrix-${width}-${language}-${theme}`;
             const capture = async (name) => {
                 await page.evaluate(() => document.fonts.ready);
-                await page.evaluate(async () => {
-                    await Promise.all(
-                        document
-                            .getAnimations()
-                            .map((animation) =>
-                                animation.finished.catch(() => undefined),
-                            ),
-                    );
-                });
+                await settleAnimations(page);
                 await fits(page);
                 // Dialogs and drawers are viewport overlays. A full-page capture
                 // stitches fixed layers over scrolled content and invents visual
