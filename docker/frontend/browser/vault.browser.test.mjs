@@ -397,19 +397,36 @@ async function fits(page) {
 }
 
 async function axe(page) {
+    await page.evaluate(async () => {
+        await Promise.all(
+            document
+                .getAnimations()
+                .map((animation) => animation.finished.catch(() => undefined)),
+        );
+    });
     await page.addScriptTag({ path: axePath });
     const violations = await page.evaluate(async () =>
         (
             await window.axe.run(document, {
                 runOnly: {
                     type: "tag",
-                    values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
+                    values: [
+                        "wcag2a",
+                        "wcag2aa",
+                        "wcag21a",
+                        "wcag21aa",
+                        "wcag22aa",
+                    ],
                 },
             })
         ).violations.map(({ id, impact, nodes }) => ({
             id,
             impact,
-            nodes: nodes.map(({ target, failureSummary, any }) => ({ target, failureSummary, any })),
+            nodes: nodes.map(({ target, failureSummary, any }) => ({
+                target,
+                failureSummary,
+                any,
+            })),
         })),
     );
     assert.deepEqual(violations, []);
@@ -656,7 +673,9 @@ test("a damaged draft is kept until explicit discard, and does not permanently b
             "damaged",
         );
         await fits(page);
-        await page.getByRole("button", { name: "Try again", exact: true }).click();
+        await page
+            .getByRole("button", { name: "Try again", exact: true })
+            .click();
         await page
             .getByRole("button", { name: "Discard draft", exact: true })
             .waitFor();
@@ -707,8 +726,11 @@ for (const width of [375, 1440]) {
                 "Work",
             );
             assert.deepEqual(
-                await editor.getByLabel("Folder (optional)", { exact: true })
-                    .evaluate((input) => [...input.list.options].map((option) => option.value)),
+                await editor
+                    .getByLabel("Folder (optional)", { exact: true })
+                    .evaluate((input) =>
+                        [...input.list.options].map((option) => option.value),
+                    ),
                 ["Work", "Personal"],
             );
             await screenshot(page, `entry-create-${width}.png`);
@@ -752,7 +774,9 @@ for (const width of [375, 1440]) {
             await folder.waitFor();
             assert.equal(await folder.inputValue(), "");
             assert.deepEqual(
-                await folder.evaluate((input) => [...input.list.options].map((option) => option.value)),
+                await folder.evaluate((input) =>
+                    [...input.list.options].map((option) => option.value),
+                ),
                 ["Work", "Personal"],
             );
             await editor
@@ -1068,7 +1092,9 @@ for (const width of [320, 375, 430, 768, 1024, 1440]) {
             { ...entries[0], totp_secret: null },
         ]);
         try {
-            const item = page.locator('[data-qa="entry-list"]').getByRole("row");
+            const item = page
+                .locator('[data-qa="entry-list"]')
+                .getByRole("row");
             const open = item;
             await visibleTouchAction(page, open);
             const actions = item.getByRole("button");
@@ -1139,9 +1165,7 @@ test("mobile vault opens an accessible read view without exposing secrets", asyn
             await page.evaluate(() => navigator.clipboard.readText()),
             entries[0].password_value,
         );
-        await detail
-            .getByRole("button", { name: /^Copy 2FA code/ })
-            .click();
+        await detail.getByRole("button", { name: /^Copy 2FA code/ }).click();
         assert.match(
             await page.evaluate(() => navigator.clipboard.readText()),
             /^\d{6}$/,
@@ -1261,7 +1285,10 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
         await confirmation.waitFor({ state: "hidden" });
         await page.keyboard.press("Escape");
         assert.equal(await detail.count(), 0);
-        await page.waitForFunction((row) => document.activeElement === row, await trigger.elementHandle());
+        await page.waitForFunction(
+            (row) => document.activeElement === row,
+            await trigger.elementHandle(),
+        );
         assert.equal(
             await trigger.evaluate(
                 (button) => document.activeElement === button,
@@ -1307,10 +1334,7 @@ for (const [width, language, theme] of [
         try {
             const ru = language === "ru";
             const list = page.locator('[data-qa="entry-list"]');
-            assert.equal(
-                await list.getByRole("row").count(),
-                entries.length,
-            );
+            assert.equal(await list.getByRole("row").count(), entries.length);
             await fits(page);
             await axe(page);
 
@@ -1321,7 +1345,15 @@ for (const [width, language, theme] of [
                 entries[0],
             ].map((entry) => entry.password_name);
             assert.deepEqual(
-                await list.getByRole("row").evaluateAll((rows) => rows.map((row) => row.querySelector('[role="gridcell"]').textContent)),
+                await list
+                    .getByRole("row")
+                    .evaluateAll((rows) =>
+                        rows.map(
+                            (row) =>
+                                row.querySelector('[role="gridcell"]')
+                                    .textContent,
+                        ),
+                    ),
                 expectedOrder,
             );
 
@@ -1352,10 +1384,7 @@ for (const [width, language, theme] of [
                 .click();
 
             const longName = entries[3].password_name;
-            await list
-                .getByRole("row")
-                .filter({ hasText: longName })
-                .click();
+            await list.getByRole("row").filter({ hasText: longName }).click();
             const detail =
                 width >= 1280
                     ? page.getByRole("region", {
