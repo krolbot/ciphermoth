@@ -5,9 +5,11 @@ import {
   Text,
   Alert,
   Button,
+  Col,
   Dialog,
   Icon,
   RadioGroup,
+  Row,
   SegmentedRadioGroup,
 } from "@gravity-ui/uikit";
 import { Trans, useTranslation } from "react-i18next";
@@ -201,7 +203,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
       contentOverflow="auto"
       fullWidth
       hasCloseButton={!loading}
-      maxWidth="s"
+      maxWidth="m"
       open={open}
       onOpenChange={(nextOpen) => {
         if (!nextOpen && !loading) onClose();
@@ -212,8 +214,14 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
         {result ? (
           <ImportResult result={result} />
         ) : (
-          <Flex direction="column" gap="spacing-3" minWidth="0">
-            <SegmentedRadioGroup name="import-mode" width="max" value={mode} onUpdate={changeMode}>
+          <Flex direction="column" gap="spacing-5" minWidth="0">
+            <SegmentedRadioGroup
+              size="l"
+              name="import-mode"
+              width="max"
+              value={mode}
+              onUpdate={changeMode}
+            >
               <SegmentedRadioGroup.Option value="ciphermoth">
                 {t("importDialog.backupMode")}
               </SegmentedRadioGroup.Option>
@@ -226,66 +234,74 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               {isCsv ? t("importDialog.csvDescription") : t("importDialog.backupDescription")}
             </Text>
 
-            <Button
-              type="button"
-              component={IS_DESKTOP && !isCsv ? "button" : "label"}
-              view="outlined"
-              size="l"
-              width="max"
-              onClick={IS_DESKTOP && !isCsv ? chooseFile : undefined}
-            >
-              <Icon data={FileArrowUp} />
-              <Text wordBreak="break-word">
-                {file
-                  ? file.name
-                  : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
-              </Text>
-              {(!IS_DESKTOP || isCsv) && (
-                <input
-                  type="file"
-                  hidden
-                  accept={isCsv ? ".csv" : ".cmbackup,.zip"}
-                  onChange={(event) => {
-                    setFile(event.target.files[0] ?? null);
-                    setError("");
-                  }}
-                />
-              )}
-            </Button>
+            <Row gap="spacing-6">
+              <Col size={{ xs: 12, m: 7 }} minWidth="0">
+                <Flex direction="column" gap="spacing-4">
+                  <Button
+                    type="button"
+                    component={IS_DESKTOP && !isCsv ? "button" : "label"}
+                    view="outlined"
+                    size="xl"
+                    width="max"
+                    onClick={IS_DESKTOP && !isCsv ? chooseFile : undefined}
+                  >
+                    <Icon data={FileArrowUp} />
+                    <Text ellipsis>
+                      {file
+                        ? file.name
+                        : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
+                    </Text>
+                    {(!IS_DESKTOP || isCsv) && (
+                      <input
+                        type="file"
+                        hidden
+                        accept={isCsv ? ".csv" : ".cmbackup,.zip"}
+                        onChange={(event) => {
+                          setFile(event.target.files[0] ?? null);
+                          setError("");
+                        }}
+                      />
+                    )}
+                  </Button>
 
-            {!isCsv && (
-              <PasswordField
-                label={t("importDialog.backupPassword")}
-                value={password}
-                onChange={(event) => {
-                  setPassword(event.target.value);
-                  setError("");
-                }}
-                error={Boolean(error)}
-                helperText={error || t("importDialog.backupPasswordHelp")}
-                required
-                autoFocus
-                autoComplete="current-password"
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") handleImport();
-                }}
-              />
-            )}
+                  {!isCsv && (
+                    <PasswordField
+                      label={t("importDialog.backupPassword")}
+                      value={password}
+                      onChange={(event) => {
+                        setPassword(event.target.value);
+                        setError("");
+                      }}
+                      error={Boolean(error)}
+                      helperText={error || t("importDialog.backupPasswordHelp")}
+                      required
+                      autoFocus
+                      autoComplete="current-password"
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") handleImport();
+                      }}
+                    />
+                  )}
 
-            {isCsv && error && <Alert theme="danger" view="outlined" message={error} />}
-
-            <Flex direction="column" gap="spacing-3" minWidth="0" as="fieldset">
-              <Text as="legend">{t("importDialog.existingLabel")}</Text>
-              <RadioGroup
-                direction="vertical"
-                value={onConflict}
-                onUpdate={setOnConflict}
-                options={[
-                  { value: "skip", content: t("importDialog.keepExisting") },
-                  { value: "overwrite", content: t("importDialog.overwrite") },
-                ]}
-              />
-            </Flex>
+                  {isCsv && error && <Alert theme="danger" view="outlined" message={error} />}
+                </Flex>
+              </Col>
+              <Col size={{ xs: 12, m: 5 }} minWidth="0">
+                <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                  <Text variant="subheader-1">{t("importDialog.existingLabel")}</Text>
+                  <RadioGroup
+                    aria-label={t("importDialog.existingLabel")}
+                    direction="vertical"
+                    value={onConflict}
+                    onUpdate={setOnConflict}
+                    options={[
+                      { value: "skip", content: t("importDialog.keepExisting") },
+                      { value: "overwrite", content: t("importDialog.overwrite") },
+                    ]}
+                  />
+                </Flex>
+              </Col>
+            </Row>
           </Flex>
         )}
       </Dialog.Body>

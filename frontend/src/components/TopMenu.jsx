@@ -42,17 +42,26 @@ const Brand = ({ version, onClick }) => {
   const { i18n } = useTranslation();
   const name = i18n.resolvedLanguage?.startsWith("ru") ? "Недра" : "Nedra";
   return (
-    <Button component={Link} to="/passwords" view="flat" size="xl" onClick={onClick}>
-      <Flex alignItems="center" gap="spacing-2">
-        <BrandMark />
-        <Text variant="subheader-2">{name}</Text>
-        {version && (
-          <Text color="secondary" variant="caption-2">
-            v{String(version).replace(/^v/, "")}
-          </Text>
-        )}
-      </Flex>
-    </Button>
+    <Flex
+      as={Link}
+      to="/passwords"
+      onClick={onClick}
+      alignItems="center"
+      gap="spacing-2"
+      minHeight="44px"
+      minWidth="0"
+      style={{ color: "var(--g-color-text-primary)", textDecoration: "none" }}
+    >
+      <BrandMark data-qa="brand-mark" />
+      <Text variant="subheader-2" qa="brand-title">
+        {name}
+      </Text>
+      {version && (
+        <Text color="secondary" variant="caption-2">
+          v{String(version).replace(/^v/, "")}
+        </Text>
+      )}
+    </Flex>
   );
 };
 
@@ -129,6 +138,7 @@ const TopMenu = () => {
     <Box as="nav" aria-label={t("navigation.workspace")}>
       <List
         aria-label={t("navigation.workspace")}
+        size="xl"
         items={navItems}
         selectionMode="single"
         selectedIds={[`${location.pathname}${location.search}`]}
@@ -155,62 +165,148 @@ const TopMenu = () => {
       />
     </Box>
   );
+  const utilityItems = [
+    ...(admin
+      ? [{ id: "settings", label: t("topMenu.settings"), icon: Gear, action: openSettings }]
+      : []),
+    { id: "password", label: t("auth.changePassword"), icon: Key, action: openPassword },
+    ...(updateAvailable
+      ? [
+          {
+            id: "update",
+            label: t("common.actions.update"),
+            icon: ArrowRotateRight,
+            action: openUpdate,
+          },
+        ]
+      : []),
+  ];
   const utilities = (
-    <Flex direction="column" gap="spacing-2">
-      <Divider />
-      {admin && (
-        <Button view="flat" onClick={openSettings}>
-          <Icon data={Gear} />
-          {t("topMenu.settings")}
-        </Button>
-      )}
-      <Button view="flat" onClick={openPassword}>
-        <Icon data={Key} />
-        {t("auth.changePassword")}
-      </Button>
-      {updateAvailable && (
-        <Button view="flat-action" onClick={openUpdate}>
-          <Icon data={ArrowRotateRight} />
-          {t("common.actions.update")}
-        </Button>
-      )}
-      <Divider />
-      <Text ellipsis>{currentUser?.username}</Text>
-      <Text color="secondary" variant="caption-2">
-        {t(`users.roles.${currentUser?.role}`)}
-      </Text>
-      <Flex alignItems="center" gap="spacing-2" wrap="wrap">
+    <Flex direction="column" gap="spacing-1">
+      {utilityItems.map((item) => (
+        <List.ItemView
+          key={item.id}
+          component="button"
+          type="button"
+          size="xl"
+          onClick={item.action}
+          startContent={<Icon data={item.icon} />}
+        >
+          {item.label}
+        </List.ItemView>
+      ))}
+    </Flex>
+  );
+  const profile = (
+    <Flex
+      as="footer"
+      direction="column"
+      gap="spacing-3"
+      padding="spacing-4"
+      flexShrink={0}
+      qa="navigation-footer"
+      style={{
+        borderTop: "1px solid var(--g-color-line-generic)",
+        paddingBottom: "max(var(--g-spacing-4), env(safe-area-inset-bottom))",
+      }}
+    >
+      <Flex alignItems="center" justifyContent="space-between" gap="spacing-2" minWidth="0">
+        <Flex direction="column" gap="spacing-1" minWidth="0">
+          <Text variant="subheader-1" ellipsis>
+            {currentUser?.username}
+          </Text>
+          <Text color="secondary" variant="caption-2" ellipsis>
+            {t(`users.roles.${currentUser?.role}`)}
+          </Text>
+        </Flex>
         <EnvBadge />
-        <LanguageSwitcher />
-        <ThemeToggle />
       </Flex>
-      <Button view="flat-danger" onClick={logOut}>
+      <Flex gap="spacing-2" alignItems="center" qa="navigation-preferences">
+        <LanguageSwitcher />
+        <ThemeToggle showLabel />
+      </Flex>
+      <Button view="flat-secondary" size="xl" onClick={logOut}>
         <Icon data={ArrowRightFromSquare} />
         {t("auth.logOut")}
       </Button>
+    </Flex>
+  );
+  const shell = (mobile) => (
+    <Flex
+      direction="column"
+      height="100dvh"
+      minHeight="0"
+      width={mobile ? "100vw" : undefined}
+      maxWidth={mobile ? "360px" : undefined}
+      qa="navigation-shell"
+    >
+      <Flex
+        alignItems="center"
+        justifyContent="space-between"
+        gap="spacing-2"
+        padding="spacing-4"
+        flexShrink={0}
+        qa="navigation-header"
+      >
+        <Brand version={version} onClick={closeMobileNav} />
+        {mobile && (
+          <Button
+            type="button"
+            view="flat-secondary"
+            size="xl"
+            aria-label={t("common.actions.close")}
+            onClick={closeMobileNav}
+          >
+            <Icon data={Xmark} />
+          </Button>
+        )}
+      </Flex>
+      <Flex
+        direction="column"
+        gap="spacing-4"
+        paddingInline="spacing-3"
+        paddingBlockEnd="spacing-4"
+        flexGrow={1}
+        minHeight="0"
+        overflow="auto"
+        qa="navigation-body"
+      >
+        {navigation}
+        <Divider />
+        {utilities}
+      </Flex>
+      {profile}
     </Flex>
   );
 
   return (
     <>
       {desktop ? (
-        <Flex
+        <Box
           as="aside"
-          direction="column"
-          width="240px"
+          width="288px"
           flexShrink={0}
-          padding="spacing-3"
-          gap="spacing-5"
+          position="sticky"
+          top="0"
+          height="100dvh"
           backgroundColor="generic"
+          style={{ borderRight: "1px solid var(--g-color-line-generic)" }}
         >
-          <Brand version={version} />
-          {navigation}
-          {utilities}
-        </Flex>
+          {shell(false)}
+        </Box>
       ) : (
-        <Flex as="header" alignItems="center" gap="spacing-3" padding="spacing-3">
+        <Flex
+          as="header"
+          alignItems="center"
+          gap="spacing-3"
+          paddingInline="spacing-3"
+          paddingBlock="spacing-2"
+          qa="mobile-header"
+          style={{ borderBottom: "1px solid var(--g-color-line-generic)" }}
+        >
           <Button
             ref={mobileMenuButton}
+            qa="burger"
             type="button"
             view="flat-secondary"
             size="xl"
@@ -227,30 +323,14 @@ const TopMenu = () => {
         open={mobileNavOpen}
         onOpenChange={setMobileNavOpen}
         placement="left"
-        size={304}
-        maxSize={360}
+        size="auto"
         returnFocus={mobileMenuButton}
         disableLayer={false}
         aria-label={t("navigation.workspace")}
 
-        contentOverflow="auto"
+        contentOverflow="visible"
       >
-        <Flex direction="column" gap="spacing-5" padding="spacing-3">
-          <Flex alignItems="center" justifyContent="space-between">
-            <Brand version={version} onClick={closeMobileNav} />
-            <Button
-              type="button"
-              view="flat-secondary"
-              size="xl"
-              aria-label={t("common.actions.close")}
-              onClick={closeMobileNav}
-            >
-              <Icon data={Xmark} />
-            </Button>
-          </Flex>
-          {navigation}
-          {utilities}
-        </Flex>
+        {shell(true)}
       </Drawer>
 
       {admin && <SettingsModal open={settingsOpen} onClose={() => closeUtility(setSettingsOpen)} />}

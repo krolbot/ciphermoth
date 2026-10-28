@@ -824,8 +824,7 @@ for (const [width, authenticated] of [
                 insets: { top: 0, left: 0, bottom: 34, right: 20 },
             });
             const toggle = page.getByRole("button", {
-                name: t.theme.switchToLight,
-                exact: true,
+                name: new RegExp(`${t.theme.switchToLight}$`),
             });
             await toggle.waitFor();
             const toggleHandle = await toggle.elementHandle();
@@ -868,8 +867,7 @@ for (const [width, authenticated] of [
             await toggle.click();
             await page
                 .getByRole("button", {
-                    name: t.theme.switchToDark,
-                    exact: true,
+                    name: new RegExp(`${t.theme.switchToDark}$`),
                 })
                 .waitFor();
             assert.equal(

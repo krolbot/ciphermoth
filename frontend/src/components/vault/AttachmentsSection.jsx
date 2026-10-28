@@ -111,18 +111,22 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
         <Flex direction="column" gap="spacing-2" minWidth="0">
           {attachments.map((attachment) => (
             <Flex
-              direction={{ xs: "column", m: "row" }}
+              direction="row"
               gap="spacing-2"
               minWidth="0"
               paddingBlock="spacing-2"
+              alignItems="center"
+              wrap="wrap"
               justifyContent="space-between"
               key={attachment.id}
             >
               <Icon data={Paperclip} size={16} />
-              <Text wordBreak="break-word">{attachment.filename}</Text>
-              <Text wordBreak="break-word">
-                {formatBytes(attachment.size_bytes, i18n.resolvedLanguage)}
-              </Text>
+              <Flex direction="column" gap="spacing-1" flexGrow={1} flexBasis="0" minWidth="0">
+                <Text wordBreak="break-word">{attachment.filename}</Text>
+                <Text variant="caption-2" color="secondary" wordBreak="break-word">
+                  {formatBytes(attachment.size_bytes, i18n.resolvedLanguage)}
+                </Text>
+              </Flex>
               <Tooltip content={t("common.actions.download")}>
                 <Button
                   type="button"

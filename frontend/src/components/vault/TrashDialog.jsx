@@ -66,27 +66,35 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
           <Flex direction="column" gap="spacing-2" minWidth="0" aria-label={t("vault.trash")}>
             {trash.map((entry) => (
               <Flex
-                direction={{ xs: "column", m: "row" }}
-                gap="spacing-2"
+                direction={{ xs: "column", s: "row" }}
+                gap="spacing-3"
                 minWidth="0"
-                paddingBlock="spacing-2"
+                paddingBlock="spacing-3"
+                alignItems={{ s: "center" }}
                 justifyContent="space-between"
                 key={entry.id}
               >
-                <Flex direction="column" gap="spacing-3" minWidth="0">
-                  <Text wordBreak="break-word">{entry.password_name}</Text>
-                  {entry.username && <Text wordBreak="break-word">{entry.username}</Text>}
-                  <Text wordBreak="break-word">
+                <Flex direction="column" gap="spacing-1" minWidth="0" flexGrow={1}>
+                  <Text variant="subheader-2" wordBreak="break-word">
+                    {entry.password_name}
+                  </Text>
+                  {entry.username && (
+                    <Text color="secondary" wordBreak="break-word">
+                      {entry.username}
+                    </Text>
+                  )}
+                  <Text variant="caption-2" color="secondary" wordBreak="break-word">
                     {t("trashDialog.deleted")}:{" "}
                     {formatDeleted(entry.deleted, i18n.resolvedLanguage)}
                   </Text>
                 </Flex>
                 <Flex
-                  direction={{ xs: "column", m: "row" }}
-                  gap="spacing-3"
+                  direction="row"
+                  gap="spacing-2"
                   minWidth="0"
+                  flexShrink={0}
                   wrap="wrap"
-                  alignItems={{ m: "center" }}
+                  alignItems="center"
                 >
                   <Tooltip content={t("trashDialog.restore")} role="label">
                     <Button
@@ -95,11 +103,12 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
                       disabled={pendingId !== null}
                       loading={pendingId === entry.id && !purgeTarget}
                       onClick={() => handleRestore(entry)}
-                      size="l"
+                      size="xl"
                       type="button"
                       view="flat"
                     >
                       <Icon data={ArrowUturnCcwLeft} />
+                      {t("trashDialog.restore")}
                     </Button>
                   </Tooltip>
                   <Tooltip content={t("trashDialog.deleteForever")} role="label">
@@ -111,7 +120,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
                         setPurgeError("");
                         setPurgeTarget(entry);
                       }}
-                      size="l"
+                      size="xl"
                       type="button"
                       view="flat-danger"
                     >

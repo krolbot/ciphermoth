@@ -181,9 +181,11 @@ const EntryBrowser = ({
           flexBasis="50%"
           minWidth="0"
         >
-          <Button ref={closeRef} view="flat-secondary" onClick={closeDetails}>
-            {t("vault.browser.back")}
-          </Button>
+          <Flex>
+            <Button size="xl" ref={closeRef} view="flat-secondary" onClick={closeDetails}>
+              {t("vault.browser.back")}
+            </Button>
+          </Flex>
           <Text as="h2" variant="header-1" wordBreak="break-word">
             {selected.password_name}
           </Text>

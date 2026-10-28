@@ -1,16 +1,6 @@
 import { useEffect, useId, useState } from "react";
-import { CircleQuestion } from "@gravity-ui/icons";
-import {
-  Flex,
-  Text,
-  Alert,
-  Button,
-  Dialog,
-  Icon,
-  Switch,
-  TextInput,
-  Tooltip,
-} from "@gravity-ui/uikit";
+
+import { Flex, Text, Alert, Col, Divider, Dialog, Row, Switch, TextInput } from "@gravity-ui/uikit";
 import { toaster } from "@gravity-ui/uikit/toaster-singleton";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
@@ -134,7 +124,7 @@ const SettingsModal = ({ open, onClose }) => {
       disableOutsideClick={saving}
       fullWidth
       hasCloseButton={false}
-      maxWidth="s"
+      maxWidth="m"
       onOpenChange={(nextOpen) => {
         if (!nextOpen && !saving) onClose();
       }}
@@ -146,52 +136,40 @@ const SettingsModal = ({ open, onClose }) => {
           {FIELDS.map(({ key, labelKey, tooltipKey, min, max }) => {
             const inputId = `${titleId}-${key}`;
             return (
-              <Flex direction="column" gap="spacing-3" minWidth="0" key={key}>
-                <label htmlFor={inputId}>{t(labelKey)}</label>
-                <TextInput
-                  controlProps={{ min, max, step: 1 }}
-                  endContent={
-                    <Text wordBreak="break-word">
-                      <Text wordBreak="break-word">{t("common.labels.secondsShort")}</Text>
-                      <Tooltip content={t(tooltipKey)} placement="top" role="label">
-                        <Button
-                          aria-label={t(tooltipKey)}
-
-                          size="s"
-                          type="button"
-                          view="flat-secondary"
-                        >
-                          <Icon data={CircleQuestion} />
-                        </Button>
-                      </Tooltip>
+              <Row gap="spacing-3" alignItems="center" key={key}>
+                <Col size={{ xs: 12, s: 8 }} minWidth="0">
+                  <Flex direction="column" gap="spacing-1">
+                    <Text as="label" htmlFor={inputId} variant="subheader-1">
+                      {t(labelKey)}
                     </Text>
-                  }
-                  id={inputId}
-                  onChange={handleChange(key)}
-                  size="m"
-                  type="number"
-                  value={form[key]}
-                />
-              </Flex>
+                    <Text color="secondary" variant="caption-2">
+                      {t(tooltipKey)}
+                    </Text>
+                  </Flex>
+                </Col>
+                <Col size={{ xs: 12, s: 4 }} minWidth="0">
+                  <TextInput
+                    controlProps={{ min, max, step: 1 }}
+                    endContent={<Text color="secondary">{t("common.labels.secondsShort")}</Text>}
+                    id={inputId}
+                    onChange={handleChange(key)}
+                    size="xl"
+                    type="number"
+                    value={form[key]}
+                  />
+                </Col>
+              </Row>
             );
           })}
-          <hr />
-          <Flex direction="column" gap="spacing-3" minWidth="0">
-            <Flex direction="column" gap="spacing-3" minWidth="0">
-              <Text wordBreak="break-word" id={updatesLabelId}>
+          <Divider />
+          <Flex gap="spacing-4" minWidth="0" alignItems="center" justifyContent="space-between">
+            <Flex direction="column" gap="spacing-1" minWidth="0">
+              <Text variant="subheader-1" wordBreak="break-word" id={updatesLabelId}>
                 {t("settings.fields.updates")}
               </Text>
-              <Tooltip content={t("settings.fields.updatesHelp")} placement="top" role="label">
-                <Button
-                  aria-label={t("settings.fields.updatesHelp")}
-
-                  size="s"
-                  type="button"
-                  view="flat-secondary"
-                >
-                  <Icon data={CircleQuestion} />
-                </Button>
-              </Tooltip>
+              <Text color="secondary" variant="caption-2">
+                {t("settings.fields.updatesHelp")}
+              </Text>
             </Flex>
             <Switch
               checked={form.update_check_enabled}

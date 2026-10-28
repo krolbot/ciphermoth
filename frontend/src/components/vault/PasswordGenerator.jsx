@@ -22,10 +22,19 @@ const PasswordGenerator = ({
   const { t } = useTranslation();
 
   return (
-    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+    <Flex
+      direction="column"
+      gap="spacing-4"
+      minWidth="0"
+      as="section"
+      padding="spacing-3"
+      backgroundColor="generic"
+    >
       <Flex gap="spacing-2" alignItems="baseline" justifyContent="space-between">
         <span>{t("generator.length")}</span>
-        <output>{options.length}</output>
+        <Text as="output" variant="subheader-2">
+          {options.length}
+        </Text>
       </Flex>
       <Slider
         value={options.length}
@@ -51,6 +60,8 @@ const PasswordGenerator = ({
             </Text>
           </Button>
         ))}
+      </Flex>
+      <Flex gap="spacing-2" justifyContent="space-between" wrap="wrap">
         {canUndo && (
           <Button type="button" size="xl" view="flat-secondary" onClick={onUndo}>
             {t("generator.undoReplacement")}

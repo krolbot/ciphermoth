@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Flex, Text, Dialog } from "@gravity-ui/uikit";
+import { Alert, Flex, Text, Dialog } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
@@ -56,10 +56,6 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
           <Text as="p" color="secondary" wordBreak="break-word">
             {t("backup.descriptionFull")}
           </Text>
-          <Text as="p" color="secondary" wordBreak="break-word">
-            {t("backup.restoreAdvice")}{" "}
-            {t(IS_DESKTOP ? "backup.desktopAdvice" : "backup.webAdvice")}
-          </Text>
           <PasswordField
             autoComplete="current-password"
             autoFocus
@@ -75,6 +71,11 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
             required
             validationState={error ? "invalid" : undefined}
             value={password}
+          />
+          <Alert
+            theme="info"
+            view="outlined"
+            message={`${t("backup.restoreAdvice")} ${t(IS_DESKTOP ? "backup.desktopAdvice" : "backup.webAdvice")}`}
           />
         </Flex>
       </Dialog.Body>

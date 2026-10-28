@@ -12,9 +12,15 @@ const ThemeToggle = ({ showLabel = false }) => {
 
   return (
     <Tooltip content={label} role={showLabel ? "tooltip" : "label"}>
-      <Button type="button" view="flat-secondary" size="xl" aria-label={label} onClick={toggle}>
+      <Button
+        type="button"
+        view="flat-secondary"
+        size="xl"
+        aria-label={showLabel ? `${t(dark ? "theme.light" : "theme.dark")}: ${label}` : label}
+        onClick={toggle}
+      >
         <Icon data={dark ? Sun : Moon} />
-        {showLabel && t(dark ? "theme.toLight" : "theme.toDark")}
+        {showLabel && t(dark ? "theme.light" : "theme.dark")}
       </Button>
     </Tooltip>
   );

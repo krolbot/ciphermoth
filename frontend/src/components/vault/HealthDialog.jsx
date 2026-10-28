@@ -1,6 +1,6 @@
 import { useId, useMemo } from "react";
 import { Check, ChevronRight, Clock, Copy, ShieldExclamation } from "@gravity-ui/icons";
-import { Flex, Text, Button, Dialog, Icon, Progress } from "@gravity-ui/uikit";
+import { Flex, Text, Dialog, Divider, Grid, Icon, List, Progress } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { analyzeVault } from "../../lib/vaultHealth";
@@ -25,23 +25,25 @@ const ScoreGauge = ({ score }) => {
 
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-      <Flex direction="column" gap="spacing-3" minWidth="0">
-        <output>{score}</output>
-        <span>/ 100</span>
+      <Flex gap="spacing-2" minWidth="0" alignItems="baseline">
+        <Text as="output" variant="header-1">
+          {score}
+        </Text>
+        <Text color="secondary">/ 100</Text>
+        <Text as="strong">{t(scoreLabelKey(score))}</Text>
       </Flex>
       <Progress size="s" theme={SCORE_THEME[color]} value={score} />
-      <Text as="strong">{t(scoreLabelKey(score))}</Text>
     </Flex>
   );
 };
 
 const StatTile = ({ icon, label, count, color }) => (
-  <Flex direction="column" gap="spacing-3" minWidth="0">
+  <Flex gap="spacing-2" alignItems="center" minWidth="0" flexGrow={1}>
     <Icon data={icon} />
     <Text as="strong" color={color === "error" ? "danger" : color}>
       {count}
     </Text>
-    <span>{label}</span>
+    <Text wordBreak="break-word">{label}</Text>
   </Flex>
 );
 
@@ -50,7 +52,7 @@ const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
 
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-      <Flex direction="column" gap="spacing-3" minWidth="0">
+      <Flex gap="spacing-2" alignItems="center" minWidth="0">
         <Icon data={icon} />
         <Text as="strong" color={color === "error" ? "danger" : color}>
           {title}
@@ -62,25 +64,17 @@ const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
       </Text>
       <Flex direction="column" gap="spacing-3" minWidth="0">
         {entries.map((entry) => (
-          <Button
+          <List.ItemView
             key={entry.password_name}
             onClick={() => onSelect(entry)}
+            component="button"
             type="button"
-            view="flat-secondary"
-            width="max"
+            size="xl"
+            description={entry.username}
+            endContent={<Icon data={ChevronRight} />}
           >
-            <Text wordBreak="break-word">
-              <span>
-                <Text as="strong">{entry.password_name}</Text>
-                {entry.username && (
-                  <Text as="small" variant="caption-2" color="secondary">
-                    {entry.username}
-                  </Text>
-                )}
-              </span>
-              <Icon data={ChevronRight} />
-            </Text>
-          </Button>
+            {entry.password_name}
+          </List.ItemView>
         ))}
       </Flex>
     </Flex>
@@ -101,7 +95,7 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
       contentOverflow="auto"
       fullWidth
       hasCloseButton={false}
-      maxWidth="m"
+      maxWidth="l"
       onOpenChange={(nextOpen) => {
         if (!nextOpen) onClose();
       }}
@@ -109,10 +103,10 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
     >
       <Dialog.Header caption={t("health.title")} id={titleId} />
       <Dialog.Body hasBorders>
-        <Flex direction="column" gap="spacing-3" minWidth="0">
+        <Flex direction="column" gap="spacing-5" minWidth="0">
           <ScoreGauge score={report.score} />
           <Flex
-            direction={{ xs: "column", m: "row" }}
+            direction={{ xs: "column", s: "row" }}
             gap="spacing-3"
             minWidth="0"
             wrap="wrap"
@@ -141,37 +135,40 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
             {t("health.localOnly")}
           </Text>
           {allClear ? (
-            <Flex direction="column" gap="spacing-3" minWidth="0">
+            <Flex gap="spacing-3" alignItems="center" minWidth="0">
               <Icon data={Check} />
               <span>{t("health.allClear")}</span>
             </Flex>
           ) : (
-            <Flex direction="column" gap="spacing-3" minWidth="0">
-              <IssueGroup
-                color="error"
-                entries={report.weak}
-                hint={t("health.weakHint")}
-                icon={ShieldExclamation}
-                onSelect={onSelect}
-                title={t("health.weak")}
-              />
-              <IssueGroup
-                color="warning"
-                entries={report.reused}
-                hint={t("health.reusedHint")}
-                icon={Copy}
-                onSelect={onSelect}
-                title={t("health.reused")}
-              />
-              <IssueGroup
-                color="info"
-                entries={report.stale}
-                hint={t("health.oldHint")}
-                icon={Clock}
-                onSelect={onSelect}
-                title={t("health.old")}
-              />
-            </Flex>
+            <>
+              <Divider />
+              <Grid columns="repeat(auto-fit, minmax(min(100%, 240px), 1fr))" gap="spacing-5">
+                <IssueGroup
+                  color="error"
+                  entries={report.weak}
+                  hint={t("health.weakHint")}
+                  icon={ShieldExclamation}
+                  onSelect={onSelect}
+                  title={t("health.weak")}
+                />
+                <IssueGroup
+                  color="warning"
+                  entries={report.reused}
+                  hint={t("health.reusedHint")}
+                  icon={Copy}
+                  onSelect={onSelect}
+                  title={t("health.reused")}
+                />
+                <IssueGroup
+                  color="info"
+                  entries={report.stale}
+                  hint={t("health.oldHint")}
+                  icon={Clock}
+                  onSelect={onSelect}
+                  title={t("health.old")}
+                />
+              </Grid>
+            </>
           )}
         </Flex>
       </Dialog.Body>

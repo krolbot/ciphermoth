@@ -49,6 +49,8 @@ const en = {
     russian: "Russian",
   },
   theme: {
+    light: "Light",
+    dark: "Dark",
     toLight: "Use light theme",
     toDark: "Use dark theme",
     switchToLight: "Use light theme",

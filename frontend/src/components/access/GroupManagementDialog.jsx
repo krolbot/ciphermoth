@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Flex, Text, Button, Dialog, Select, TextInput } from "@gravity-ui/uikit";
+import {
+  Flex,
+  Text,
+  Button,
+  Col,
+  Dialog,
+  Divider,
+  Row,
+  Select,
+  TextInput,
+} from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -119,7 +129,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
         contentOverflow="auto"
         fullWidth
         hasCloseButton={!busy}
-        maxWidth="m"
+        maxWidth="l"
         open={open}
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !busy) onClose();
@@ -139,11 +149,10 @@ const GroupManagementDialog = ({ open, onClose }) => {
                 {t("groups.create")}
               </Text>
               <Flex
-                direction={{ xs: "column", m: "row" }}
+                direction={{ xs: "column", s: "row" }}
                 gap="spacing-3"
                 minWidth="0"
-                wrap="wrap"
-                alignItems={{ m: "center" }}
+                alignItems={{ s: "center" }}
               >
                 <TextInput
                   size="xl"
@@ -154,6 +163,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
                 />
                 <Button
                   type="button"
+                  size="xl"
                   view="action"
                   disabled={busy || !newName.trim()}
                   onClick={addGroup}
@@ -168,189 +178,202 @@ const GroupManagementDialog = ({ open, onClose }) => {
                 {t("groups.empty")}
               </Text>
             ) : (
-              <>
-                <Select
-                  size="xl"
-                  aria-label={t("groups.group")}
-                  value={groupId ? [groupId] : []}
-                  options={groups.map((group) => ({
-                    value: String(group.id),
-                    content: `${group.name} · ${t("groups.memberCount", { count: group.member_count })}`,
-                  }))}
-                  onUpdate={([value = ""]) => setGroupId(value)}
-                />
-
-                <Flex
-                  direction="column"
-                  gap="spacing-3"
-                  minWidth="0"
-                  as="section"
-                  paddingBlock="spacing-3"
-                >
-                  <Flex
-                    direction={{ xs: "column", m: "row" }}
-                    gap="spacing-3"
-                    minWidth="0"
-                    wrap="wrap"
-                    alignItems={{ m: "center" }}
-                  >
-                    <TextInput
+              <Row gap="spacing-6">
+                <Col size={{ xs: 12, m: 5 }} minWidth="0">
+                  <Flex direction="column" gap="spacing-4">
+                    <Select
                       size="xl"
-                      placeholder={t("groups.rename")}
-                      controlProps={{ "aria-label": t("groups.rename") }}
-                      value={renameName}
-                      onUpdate={setRenameName}
+                      width="max"
+                      label={t("groups.group")}
+                      aria-label={t("groups.group")}
+                      value={groupId ? [groupId] : []}
+                      options={groups.map((group) => ({
+                        value: String(group.id),
+                        content: `${group.name} · ${t("groups.memberCount", { count: group.member_count })}`,
+                      }))}
+                      onUpdate={([value = ""]) => setGroupId(value)}
                     />
-                    <Button
-                      type="button"
-                      view="outlined"
-                      disabled={busy || !renameName.trim() || renameName.trim() === selected?.name}
-                      onClick={() =>
-                        run(
-                          () => renameGroup({ groupId: selected.id, name: renameName.trim() }),
-                          t("groups.renamed"),
-                          true
-                        )
-                      }
-                    >
-                      {t("common.actions.save")}
-                    </Button>
-                    <Button
-                      type="button"
-                      view="outlined-danger"
-                      disabled={busy}
-                      onClick={() => setDeleteTarget(selected)}
-                    >
-                      {t("common.actions.delete")}
-                    </Button>
-                  </Flex>
-                </Flex>
 
-                <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                  <Text as="h3" variant="subheader-2">
-                    {t("groups.members")}
-                  </Text>
-                  {members.length === 0 ? (
-                    <Text as="p" color="secondary" wordBreak="break-word">
-                      {t("groups.noMembers")}
-                    </Text>
-                  ) : (
-                    <Flex direction="column" gap="spacing-2" minWidth="0">
-                      {members.map((member) => (
-                        <Flex
-                          direction="row"
-                          gap="spacing-2"
-                          alignItems="center"
-                          minWidth="0"
-                          paddingBlock="spacing-2"
-                          justifyContent="space-between"
-                          key={member.user_id}
-                        >
-                          <Flex
-                            direction="column"
-                            gap="spacing-1"
-                            minWidth="0"
-                            flexGrow={1}
-                            flexBasis={0}
-                          >
-                            <Text as="strong" wordBreak="break-word">
-                              {member.username}
-                            </Text>
-                            <Text as="small" variant="caption-2" color="secondary">
-                              {t(`users.roles.${member.role}`)}
-                            </Text>
-                          </Flex>
+                    <Flex
+                      direction="column"
+                      gap="spacing-3"
+                      minWidth="0"
+                      as="section"
+                      paddingBlock="spacing-3"
+                    >
+                      <Flex direction="column" gap="spacing-2" minWidth="0">
+                        <TextInput
+                          size="xl"
+                          label={t("groups.rename")}
+                          placeholder={t("groups.rename")}
+                          controlProps={{ "aria-label": t("groups.rename") }}
+                          value={renameName}
+                          onUpdate={setRenameName}
+                        />
+                        <Flex gap="spacing-2" wrap="wrap">
                           <Button
                             type="button"
-                            view="flat-danger"
-                            disabled={busy}
+                            size="xl"
+                            view="outlined"
+                            disabled={
+                              busy || !renameName.trim() || renameName.trim() === selected?.name
+                            }
                             onClick={() =>
                               run(
                                 () =>
-                                  removeGroupMember({
-                                    groupId: selected.id,
-                                    userId: member.user_id,
-                                  }),
-                                t("groups.memberRemoved")
+                                  renameGroup({ groupId: selected.id, name: renameName.trim() }),
+                                t("groups.renamed"),
+                                true
                               )
                             }
                           >
-                            {t("common.actions.remove")}
+                            {t("common.actions.save")}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="xl"
+                            view="outlined-danger"
+                            disabled={busy}
+                            onClick={() => setDeleteTarget(selected)}
+                          >
+                            {t("common.actions.delete")}
                           </Button>
                         </Flex>
-                      ))}
+                      </Flex>
                     </Flex>
-                  )}
-                  <Flex
-                    direction={{ xs: "column", m: "row" }}
-                    gap="spacing-3"
-                    minWidth="0"
-                    wrap="wrap"
-                    alignItems={{ m: "center" }}
-                  >
-                    <Select
-                      size="xl"
-                      aria-label={t("groups.addMember")}
-                      placeholder={t("groups.addMember")}
-                      value={userId ? [userId] : []}
-                      disabled={busy || availableUsers.length === 0}
-                      options={availableUsers.map((user) => ({
-                        value: String(user.id),
-                        content: `${user.username} · ${t(`users.roles.${user.role}`)}`,
-                      }))}
-                      onUpdate={([value = ""]) => setUserId(value)}
-                    />
-                    <Button
-                      type="button"
-                      view="action"
-                      disabled={busy || !userId}
-                      onClick={addMember}
-                    >
-                      {t("common.actions.add")}
-                    </Button>
                   </Flex>
-                </Flex>
-
-                <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                  <Text as="h3" variant="subheader-2">
-                    {t("folderAccess.audit")}
-                  </Text>
-                  {audit.length === 0 ? (
-                    <Text as="p" color="secondary" wordBreak="break-word">
-                      {t("folderAccess.noAudit")}
-                    </Text>
-                  ) : (
-                    <Flex direction="column" gap="spacing-2" minWidth="0">
-                      {audit.slice(0, 20).map((event) => (
-                        <Flex
-                          direction={{ xs: "column", m: "row" }}
-                          gap="spacing-2"
-                          minWidth="0"
-                          paddingBlock="spacing-2"
-                          justifyContent="space-between"
-                          key={event.id}
-                        >
-                          <span>
-                            {t(`folderAccess.actions.${event.action}`, {
-                              defaultValue: event.action,
-                              actor: event.actor_username || t("folderAccess.systemActor"),
-                              target: event.target_username || "",
-                            })}
-                          </span>
-                          <Text
-                            as="time"
-                            variant="caption-2"
-                            color="secondary"
-                            dateTime={event.created}
-                          >
-                            {eventDate(event.created)}
-                          </Text>
+                </Col>
+                <Col size={{ xs: 12, m: 7 }} minWidth="0">
+                  <Flex direction="column" gap="spacing-5">
+                    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                      <Text as="h3" variant="subheader-2">
+                        {t("groups.members")}
+                      </Text>
+                      {members.length === 0 ? (
+                        <Text as="p" color="secondary" wordBreak="break-word">
+                          {t("groups.noMembers")}
+                        </Text>
+                      ) : (
+                        <Flex direction="column" gap="spacing-2" minWidth="0">
+                          {members.map((member) => (
+                            <Flex
+                              direction="row"
+                              gap="spacing-2"
+                              alignItems="center"
+                              minWidth="0"
+                              paddingBlock="spacing-2"
+                              justifyContent="space-between"
+                              key={member.user_id}
+                            >
+                              <Flex
+                                direction="column"
+                                gap="spacing-1"
+                                minWidth="0"
+                                flexGrow={1}
+                                flexBasis={0}
+                              >
+                                <Text as="strong" wordBreak="break-word">
+                                  {member.username}
+                                </Text>
+                                <Text as="small" variant="caption-2" color="secondary">
+                                  {t(`users.roles.${member.role}`)}
+                                </Text>
+                              </Flex>
+                              <Button
+                                type="button"
+                                size="xl"
+                                view="flat-danger"
+                                disabled={busy}
+                                onClick={() =>
+                                  run(
+                                    () =>
+                                      removeGroupMember({
+                                        groupId: selected.id,
+                                        userId: member.user_id,
+                                      }),
+                                    t("groups.memberRemoved")
+                                  )
+                                }
+                              >
+                                {t("common.actions.remove")}
+                              </Button>
+                            </Flex>
+                          ))}
                         </Flex>
-                      ))}
+                      )}
+                      <Flex
+                        direction={{ xs: "column", s: "row" }}
+                        gap="spacing-3"
+                        minWidth="0"
+                        alignItems={{ s: "center" }}
+                      >
+                        <Select
+                          size="xl"
+                          aria-label={t("groups.addMember")}
+                          placeholder={t("groups.addMember")}
+                          value={userId ? [userId] : []}
+                          disabled={busy || availableUsers.length === 0}
+                          options={availableUsers.map((user) => ({
+                            value: String(user.id),
+                            content: `${user.username} · ${t(`users.roles.${user.role}`)}`,
+                          }))}
+                          onUpdate={([value = ""]) => setUserId(value)}
+                        />
+                        <Button
+                          type="button"
+                          size="xl"
+                          view="action"
+                          disabled={busy || !userId}
+                          onClick={addMember}
+                        >
+                          {t("common.actions.add")}
+                        </Button>
+                      </Flex>
                     </Flex>
-                  )}
-                </Flex>
-              </>
+
+                    <Divider />
+                    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                      <Text as="h3" variant="subheader-2">
+                        {t("folderAccess.audit")}
+                      </Text>
+                      {audit.length === 0 ? (
+                        <Text as="p" color="secondary" wordBreak="break-word">
+                          {t("folderAccess.noAudit")}
+                        </Text>
+                      ) : (
+                        <Flex direction="column" gap="spacing-2" minWidth="0">
+                          {audit.slice(0, 20).map((event) => (
+                            <Flex
+                              direction={{ xs: "column", m: "row" }}
+                              gap="spacing-2"
+                              minWidth="0"
+                              paddingBlock="spacing-2"
+                              justifyContent="space-between"
+                              key={event.id}
+                            >
+                              <span>
+                                {t(`folderAccess.actions.${event.action}`, {
+                                  defaultValue: event.action,
+                                  actor: event.actor_username || t("folderAccess.systemActor"),
+                                  target: event.target_username || "",
+                                })}
+                              </span>
+                              <Text
+                                as="time"
+                                variant="caption-2"
+                                color="secondary"
+                                dateTime={event.created}
+                              >
+                                {eventDate(event.created)}
+                              </Text>
+                            </Flex>
+                          ))}
+                        </Flex>
+                      )}
+                    </Flex>
+                  </Flex>
+                </Col>
+              </Row>
             )}
           </Flex>
         </Dialog.Body>

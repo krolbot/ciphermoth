@@ -376,11 +376,11 @@ const PasswordsPage = () => {
   return (
     <Flex direction="column" gap="spacing-5" minWidth="0" as="section">
       <Flex
-        direction={{ xs: "column", m: "row" }}
+        direction={{ xs: "column", xl: "row" }}
         gap="spacing-3"
         minWidth="0"
         as="header"
-        alignItems={{ m: "center" }}
+        alignItems={{ xl: "center" }}
         justifyContent="space-between"
       >
         <Flex alignItems="baseline" gap="spacing-3" wrap="wrap" minWidth="0">
@@ -391,7 +391,12 @@ const PasswordsPage = () => {
             {subtitle}
           </Text>
         </Flex>
-        <Flex direction="row" gap="spacing-3" minWidth="0" wrap="wrap" alignItems="center">
+        <Flex
+          direction={{ xs: "column", s: "row" }}
+          gap="spacing-3"
+          minWidth="0"
+          alignItems={{ s: "center" }}
+        >
           <Button type="button" view="action" size="xl" disabled={!draftReady} onClick={openAdd}>
             <Icon data={Plus} />
             {t("common.actions.add")}

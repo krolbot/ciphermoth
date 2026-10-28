@@ -13,6 +13,8 @@ import {
   Select,
   Switch,
   TextInput,
+  Row,
+  Col,
 } from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { Link } from "react-router-dom";
@@ -161,184 +163,197 @@ const UsersPage = () => {
         />
       )}
 
-      <Flex direction="column" gap="spacing-3" minWidth="0">
-        {users.map((user) => {
-          const isCurrent = user.id === currentUserId;
-          return (
-            <Flex
-              direction={{ xs: "column", m: "row" }}
-              gap="spacing-3"
-              minWidth="0"
-              wrap="wrap"
-              alignItems={{ m: "center" }}
-              as="article"
-              paddingBlock="spacing-3"
-              key={user.id}
-            >
-              <Flex direction="column" gap="spacing-3" minWidth="0">
-                <Text as="strong">{user.username}</Text>
-                <Text as="small" variant="caption-2" color="secondary">
-                  {user.must_change_password && user.role !== "service"
-                    ? t("users.passwordChangeRequested")
-                    : user.role === "service"
-                      ? t("users.serviceAccount")
-                      : t("users.interactiveAccount")}
-                </Text>
-              </Flex>
-              <Flex gap="spacing-3" alignItems="center" wrap="wrap" minWidth="0">
-                <Select
-                  size="xl"
-                  aria-label={t("users.role")}
-                  value={[user.role]}
-                  disabled={busy || isCurrent || user.role === "service"}
-                  options={(user.role === "service" ? ["service"] : ["admin", "member"]).map(
-                    (role) => ({ value: role, content: t(`users.roles.${role}`) })
-                  )}
-                  onUpdate={([role = user.role]) =>
-                    run(() => update({ userId: user.id, role }), t("users.messages.roleUpdated"))
-                  }
-                />
-                <Switch
-                  size="m"
-                  checked={user.active}
-                  disabled={busy || isCurrent}
-                  onUpdate={(active) =>
-                    run(
-                      () => update({ userId: user.id, active }),
-                      t("users.messages.statusUpdated")
-                    )
-                  }
-                >
-                  {t(user.active ? "users.active" : "users.inactive")}
-                </Switch>
+      <Row gap="spacing-6">
+        <Col size={{ xs: 12, xl: 7 }}>
+          <Flex direction="column" gap="spacing-3" minWidth="0">
+            {users.map((user) => {
+              const isCurrent = user.id === currentUserId;
+              return (
                 <Flex
                   direction={{ xs: "column", m: "row" }}
                   gap="spacing-3"
                   minWidth="0"
                   wrap="wrap"
                   alignItems={{ m: "center" }}
+                  as="article"
+                  paddingBlock="spacing-3"
+                  key={user.id}
                 >
-                  <Menu
-                    placement="bottom-end"
-                    trigger={
-                      <Button
-                        type="button"
-                        size="xl"
-                        view="flat-secondary"
-                        aria-label={`${t("navigation.more")}: ${user.username}`}
-                        data-user-menu={user.id}
-                      >
-                        <Icon data={EllipsisVertical} />
-                        {t("navigation.more")}
-                      </Button>
-                    }
-                  >
-                    <MenuItem disabled={busy} onClick={() => setFolderAccessTarget(user)}>
-                      {t("folderAccess.manage")}
-                    </MenuItem>
-                    {user.role === "service" ? (
-                      <MenuItem disabled={busy} onClick={() => rotateToken(user)}>
-                        {t("users.rotateToken")}
-                      </MenuItem>
-                    ) : (
-                      <MenuItem disabled={busy || isCurrent} onClick={() => setResetTarget(user)}>
-                        {t("users.resetPassword")}
-                      </MenuItem>
-                    )}
-                    <MenuItem
-                      disabled={busy}
-                      onClick={() =>
-                        run(() => revokeSessions(user.id), t("users.messages.sessionsRevoked"))
+                  <Flex direction="column" gap="spacing-1" minWidth="0" flexGrow={1}>
+                    <Text as="strong" wordBreak="break-word">
+                      {user.username}
+                    </Text>
+                    <Text as="small" variant="caption-2" color="secondary">
+                      {user.must_change_password && user.role !== "service"
+                        ? t("users.passwordChangeRequested")
+                        : user.role === "service"
+                          ? t("users.serviceAccount")
+                          : t("users.interactiveAccount")}
+                    </Text>
+                  </Flex>
+                  <Flex gap="spacing-3" alignItems="center" wrap="wrap" minWidth="0">
+                    <Select
+                      size="xl"
+                      aria-label={t("users.role")}
+                      value={[user.role]}
+                      disabled={busy || isCurrent || user.role === "service"}
+                      options={(user.role === "service" ? ["service"] : ["admin", "member"]).map(
+                        (role) => ({ value: role, content: t(`users.roles.${role}`) })
+                      )}
+                      onUpdate={([role = user.role]) =>
+                        run(
+                          () => update({ userId: user.id, role }),
+                          t("users.messages.roleUpdated")
+                        )
+                      }
+                    />
+                    <Switch
+                      size="m"
+                      checked={user.active}
+                      disabled={busy || isCurrent}
+                      onUpdate={(active) =>
+                        run(
+                          () => update({ userId: user.id, active }),
+                          t("users.messages.statusUpdated")
+                        )
                       }
                     >
-                      {t("users.revokeSessions")}
-                    </MenuItem>
-                    <MenuDivider />
-                    <MenuItem
-                      theme="danger"
-                      disabled={busy || isCurrent}
-                      onClick={() => setDeleteTarget(user)}
+                      {t(user.active ? "users.active" : "users.inactive")}
+                    </Switch>
+                    <Flex
+                      direction={{ xs: "column", m: "row" }}
+                      gap="spacing-3"
+                      minWidth="0"
+                      wrap="wrap"
+                      alignItems={{ m: "center" }}
                     >
-                      {t("common.actions.delete")}
-                    </MenuItem>
-                  </Menu>
+                      <Menu
+                        placement="bottom-end"
+                        trigger={
+                          <Button
+                            type="button"
+                            size="xl"
+                            view="flat-secondary"
+                            aria-label={`${t("navigation.more")}: ${user.username}`}
+                            data-user-menu={user.id}
+                          >
+                            <Icon data={EllipsisVertical} />
+                            {t("navigation.more")}
+                          </Button>
+                        }
+                      >
+                        <MenuItem disabled={busy} onClick={() => setFolderAccessTarget(user)}>
+                          {t("folderAccess.manage")}
+                        </MenuItem>
+                        {user.role === "service" ? (
+                          <MenuItem disabled={busy} onClick={() => rotateToken(user)}>
+                            {t("users.rotateToken")}
+                          </MenuItem>
+                        ) : (
+                          <MenuItem
+                            disabled={busy || isCurrent}
+                            onClick={() => setResetTarget(user)}
+                          >
+                            {t("users.resetPassword")}
+                          </MenuItem>
+                        )}
+                        <MenuItem
+                          disabled={busy}
+                          onClick={() =>
+                            run(() => revokeSessions(user.id), t("users.messages.sessionsRevoked"))
+                          }
+                        >
+                          {t("users.revokeSessions")}
+                        </MenuItem>
+                        <MenuDivider />
+                        <MenuItem
+                          theme="danger"
+                          disabled={busy || isCurrent}
+                          onClick={() => setDeleteTarget(user)}
+                        >
+                          {t("common.actions.delete")}
+                        </MenuItem>
+                      </Menu>
+                    </Flex>
+                  </Flex>
                 </Flex>
-              </Flex>
-            </Flex>
-          );
-        })}
-      </Flex>
-
-      <Flex direction="column" gap="spacing-3" minWidth="0" maxWidth="640px" as="section">
-        <Text as="h2" variant="subheader-3">
-          {t("users.createAccount")}
-        </Text>
-        <Flex direction="column" gap="spacing-3" minWidth="0" as="form" onSubmit={add}>
-          <Flex as="label" direction="column" gap="spacing-2">
-            <Text>{t("auth.username")}</Text>
-            <TextInput
-              size="xl"
-              placeholder={t("auth.username")}
-              required
-              value={form.username}
-              onUpdate={(username) => setForm((current) => ({ ...current, username }))}
-              autoComplete="off"
-              note={t("auth.usernameRules")}
-              controlProps={{
-                "aria-label": t("auth.username"),
-                autoCapitalize: "none",
-                spellCheck: false,
-              }}
-            />
+              );
+            })}
           </Flex>
-          {form.role === "service" ? (
-            <Flex direction="column" gap="spacing-3" minWidth="0" />
-          ) : (
-            <PasswordField
-              label={t("users.temporaryPassword")}
-              size="xl"
-              required
-              value={form.temporary_password}
-              onGenerate={(temporary_password) =>
-                setForm((current) => ({ ...current, temporary_password }))
-              }
-              disabled={busy}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  temporary_password: event.target.value,
-                }))
-              }
-              autoComplete="new-password"
-            />
-          )}
-          <Select
-            size="xl"
-            aria-label={t("users.role")}
-            value={[form.role]}
-            options={["admin", "member", "service"].map((role) => ({
-              value: role,
-              content: t(`users.roles.${role}`),
-            }))}
-            onUpdate={([role = "member"]) =>
-              setForm((current) => ({
-                ...current,
-                role,
-                temporary_password: role === "service" ? "" : current.temporary_password,
-              }))
-            }
-          />
-          <Button
-            type="submit"
-            view="action"
-            size="xl"
-            disabled={busy || !form.username.trim()}
-            loading={busy}
-          >
-            {t("common.actions.create")}
-          </Button>
-        </Flex>
-      </Flex>
+        </Col>
+        <Col size={{ xs: 12, xl: 5 }}>
+          <Flex direction="column" gap="spacing-4" minWidth="0" as="section">
+            <Text as="h2" variant="subheader-3">
+              {t("users.createAccount")}
+            </Text>
+            <Flex direction="column" gap="spacing-3" minWidth="0" as="form" onSubmit={add}>
+              <Flex as="label" direction="column" gap="spacing-2">
+                <Text>{t("auth.username")}</Text>
+                <TextInput
+                  size="xl"
+                  placeholder={t("auth.username")}
+                  required
+                  value={form.username}
+                  onUpdate={(username) => setForm((current) => ({ ...current, username }))}
+                  autoComplete="off"
+                  note={t("auth.usernameRules")}
+                  controlProps={{
+                    "aria-label": t("auth.username"),
+                    autoCapitalize: "none",
+                    spellCheck: false,
+                  }}
+                />
+              </Flex>
+              {form.role === "service" ? (
+                <Flex direction="column" gap="spacing-3" minWidth="0" />
+              ) : (
+                <PasswordField
+                  label={t("users.temporaryPassword")}
+                  size="xl"
+                  required
+                  value={form.temporary_password}
+                  onGenerate={(temporary_password) =>
+                    setForm((current) => ({ ...current, temporary_password }))
+                  }
+                  disabled={busy}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      temporary_password: event.target.value,
+                    }))
+                  }
+                  autoComplete="new-password"
+                />
+              )}
+              <Select
+                size="xl"
+                aria-label={t("users.role")}
+                value={[form.role]}
+                options={["admin", "member", "service"].map((role) => ({
+                  value: role,
+                  content: t(`users.roles.${role}`),
+                }))}
+                onUpdate={([role = "member"]) =>
+                  setForm((current) => ({
+                    ...current,
+                    role,
+                    temporary_password: role === "service" ? "" : current.temporary_password,
+                  }))
+                }
+              />
+              <Button
+                type="submit"
+                view="action"
+                size="xl"
+                disabled={busy || !form.username.trim()}
+                loading={busy}
+              >
+                {t("common.actions.create")}
+              </Button>
+            </Flex>
+          </Flex>
+        </Col>
+      </Row>
 
       <Dialog
         aria-label={t("users.resetPasswordFor", { username: resetTarget?.username })}

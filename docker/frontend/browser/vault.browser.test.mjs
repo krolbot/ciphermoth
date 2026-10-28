@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -7,6 +7,8 @@ import { chromium } from "playwright";
 import { startFrontend, stopFrontend } from "./frontend.mjs";
 const require = createRequire(import.meta.url);
 const axePath = require.resolve("axe-core/axe.min.js");
+import enText from "../../../frontend/src/i18n/en.js";
+import ruText from "../../../frontend/src/i18n/ru.js";
 // Synthetic records only. Exercise the shipped bundle without a real vault/session.
 const entries = [
     {
@@ -1260,7 +1262,7 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
         await page.keyboard.press("Escape");
 
         const trigger = github;
-        await trigger.click();
+        await trigger.click({ position: { x: 24, y: 24 } });
         const detail = page.getByRole("region", { name: "Entry details" });
         await detail
             .getByRole("heading", { name: "GitHub", exact: true })
@@ -1433,4 +1435,350 @@ for (const [width, language, theme] of [
             await context.close();
         }
     });
+}
+
+// Opt-in visual matrix uses exactly the synthetic API/session fixture above.
+// No backend, native runtime, real unlock, or external service is involved.
+if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
+    const combinations =
+        process.env.CIPHERMOTH_LAYOUT_MATRIX === "baseline"
+            ? [
+                  [375, "ru", "dark"],
+                  [1440, "en", "light"],
+              ]
+            : [320, 375, 768, 1440].flatMap((width) =>
+                  ["ru", "en"].flatMap((language) =>
+                      ["light", "dark"].map((theme) => [
+                          width,
+                          language,
+                          theme,
+                      ]),
+                  ),
+              );
+    for (const [width, language, theme] of combinations) {
+        test(`composition matrix ${width} ${language} ${theme}`, async () => {
+            const t = language === "ru" ? ruText : enText;
+            const options = {
+                role: "admin",
+                users: [
+                    {
+                        id: 1,
+                        username: "synthetic",
+                        role: "admin",
+                        active: true,
+                    },
+                    {
+                        id: 2,
+                        username: "team-member",
+                        role: "member",
+                        active: true,
+                    },
+                    {
+                        id: 3,
+                        username: "automation",
+                        role: "service",
+                        active: false,
+                    },
+                ],
+                groups: [{ id: 10, name: "Operations", member_count: 1 }],
+                groupMembers: [
+                    { user_id: 2, username: "team-member", role: "member" },
+                ],
+                shareTargets: [
+                    { id: 2, username: "team-member", role: "member" },
+                ],
+                folderGrants: [
+                    {
+                        target_type: "group",
+                        target_id: 10,
+                        target_name: "Operations",
+                        permission: "read",
+                        expires_at: null,
+                    },
+                ],
+                userFolderAccess: [
+                    {
+                        folder: {
+                            id: 1,
+                            name: "Work",
+                            owner_id: 1,
+                            owner_username: "synthetic",
+                            can_manage: true,
+                        },
+                        direct_permission: null,
+                        direct_expires_at: null,
+                        effective_permission: null,
+                        sources: [],
+                    },
+                ],
+            };
+            const { context, page, errors } = await vault(
+                width,
+                language,
+                theme,
+                entries,
+                options,
+            );
+            const metrics = [];
+            const prefix = `matrix-${width}-${language}-${theme}`;
+            const capture = async (name) => {
+                await page.evaluate(() => document.fonts.ready);
+                await page.evaluate(async () => {
+                    await Promise.all(
+                        document
+                            .getAnimations()
+                            .map((animation) =>
+                                animation.finished.catch(() => undefined),
+                            ),
+                    );
+                });
+                await fits(page);
+                // Dialogs and drawers are viewport overlays. A full-page capture
+                // stitches fixed layers over scrolled content and invents visual
+                // overlaps that are not present in the rendered viewport.
+                await viewportScreenshot(page, `${prefix}-${name}.png`);
+                metrics.push({
+                    state: name,
+                    ...(await page.evaluate(() => ({
+                        width: innerWidth,
+                        height: innerHeight,
+                        scrollWidth: document.documentElement.scrollWidth,
+                        dialogs: [
+                            ...document.querySelectorAll('[role="dialog"]'),
+                        ].map((node) => ({
+                            name: node.getAttribute("aria-label"),
+                            scrollWidth: node.scrollWidth,
+                            clientWidth: node.clientWidth,
+                        })),
+                    }))),
+                });
+            };
+            const button = (name) =>
+                page.getByRole("button", { name, exact: true });
+            const dismiss = async () => {
+                await page.keyboard.press("Escape");
+                await page.getByRole("dialog").waitFor({ state: "hidden" });
+            };
+            const utility = async (name) => {
+                if (width < 1080) await button(t.navigation.more).click();
+                // Utility rows have the same native List view as primary navigation.
+                await page.getByText(name, { exact: true }).click();
+            };
+            try {
+                await capture("vault");
+                if (width < 1080) {
+                    await button(t.navigation.more).click();
+                    await capture("drawer");
+                    if (process.env.CIPHERMOTH_LAYOUT_MATRIX !== "baseline") {
+                        for (const height of [480, 900]) {
+                            await page.setViewportSize({ width, height });
+                            await page.waitForTimeout(300);
+                            const geometry = await page
+                                .locator('[data-qa="navigation-shell"]')
+                                .evaluate((shell) => {
+                                    const rect = (name) => {
+                                        const r = shell
+                                            .querySelector(
+                                                `[data-qa="${name}"]`,
+                                            )
+                                            .getBoundingClientRect();
+                                        return {
+                                            top: r.top,
+                                            bottom: r.bottom,
+                                            height: r.height,
+                                        };
+                                    };
+                                    return {
+                                        header: rect("navigation-header"),
+                                        body: rect("navigation-body"),
+                                        footer: rect("navigation-footer"),
+                                        height: innerHeight,
+                                        controls: [
+                                            ...shell.querySelectorAll(
+                                                '[data-qa="navigation-preferences"] button',
+                                            ),
+                                        ].map(
+                                            (node) =>
+                                                node.getBoundingClientRect()
+                                                    .height,
+                                        ),
+                                    };
+                                });
+                            assert.ok(
+                                geometry.header.bottom <= geometry.body.top + 1,
+                            );
+                            assert.ok(
+                                geometry.body.bottom <= geometry.footer.top + 1,
+                            );
+                            assert.ok(
+                                Math.abs(geometry.footer.bottom - height) <= 1,
+                                JSON.stringify(geometry),
+                            );
+                            assert.deepEqual(geometry.controls, [44, 44]);
+                            metrics.push({
+                                state: `drawer-${height}`,
+                                ...geometry,
+                            });
+                            await capture(`drawer-${height}`);
+                        }
+                    }
+                    await dismiss();
+                    await page.setViewportSize({
+                        width,
+                        height: width < 600 ? 812 : 900,
+                    });
+                    if (process.env.CIPHERMOTH_LAYOUT_MATRIX !== "baseline") {
+                        const centers = await page
+                            .locator('[data-qa="mobile-header"]')
+                            .evaluate((header) =>
+                                ["burger", "brand-mark", "brand-title"].map(
+                                    (qa) => {
+                                        const r = header
+                                            .querySelector(`[data-qa="${qa}"]`)
+                                            .getBoundingClientRect();
+                                        return {
+                                            qa,
+                                            center: r.top + r.height / 2,
+                                        };
+                                    },
+                                ),
+                            );
+                        assert.ok(
+                            Math.max(...centers.map((r) => r.center)) -
+                                Math.min(...centers.map((r) => r.center)) <=
+                                1,
+                            JSON.stringify(centers),
+                        );
+                        metrics.push({ state: "header-axis", centers });
+                    }
+                }
+                const list = page.locator('[data-qa="entry-list"]');
+                for (const [name, state] of [
+                    ["GitHub", "details"],
+                    ["Read-only account", "readonly"],
+                    ["Recovery notes", "note"],
+                    [entries[3].password_name, "long-details"],
+                ]) {
+                    await list
+                        .getByRole("row")
+                        .filter({ hasText: name })
+                        .click({ position: { x: 24, y: 24 } });
+                    await capture(state);
+                    await page.keyboard.press("Escape");
+                }
+                await list
+                    .getByRole("row")
+                    .filter({ hasText: "GitHub" })
+                    .click();
+                await button(t.sharing.manage).click();
+                await capture("share");
+                await dismiss();
+                await page.keyboard.press("Escape");
+                await list
+                    .getByRole("row")
+                    .filter({ hasText: "GitHub" })
+                    .click();
+                await button(t.common.actions.delete).click();
+                await capture("delete-confirm");
+                await dismiss();
+                await page.keyboard.press("Escape");
+                for (const tool of [
+                    "backup",
+                    "health",
+                    "trash",
+                    "folders",
+                    "import",
+                ]) {
+                    await page.goto(`${origin}/passwords?tool=${tool}`);
+                    await page.getByRole("dialog").waitFor();
+                    await capture(tool);
+                    if (tool === "trash") {
+                        await page
+                            .getByRole("button", {
+                                name: /^(Удалить навсегда|Delete forever):/,
+                            })
+                            .click();
+                        await capture("purge-confirm");
+                        await page.keyboard.press("Escape");
+                    }
+                    await dismiss();
+                }
+                await utility(t.topMenu.settings);
+                await capture("settings");
+                await dismiss();
+                await utility(t.auth.changePassword);
+                await capture("change-password");
+                await dismiss();
+                await button(t.common.actions.add).click();
+                await capture("editor");
+                await button(t.entry.actions.generatePassword).click();
+                await capture("generator");
+                await button(t.common.actions.cancel).click();
+                await page.goto(`${origin}/users`);
+                await page.getByText("team-member", { exact: true }).waitFor();
+                await capture("users");
+                await button(t.groups.title).click();
+                await page
+                    .getByRole("dialog")
+                    .getByText("team-member", { exact: true })
+                    .waitFor();
+                await capture("groups");
+                await dismiss();
+                await button(`${t.navigation.more}: team-member`).click();
+                await page
+                    .getByRole("menuitem", {
+                        name: t.folderAccess.manage,
+                        exact: true,
+                    })
+                    .click();
+                await page
+                    .getByRole("dialog")
+                    .getByText("Work", { exact: true })
+                    .waitFor();
+                await capture("user-acl");
+                await dismiss();
+                await button(`${t.navigation.more}: team-member`).click();
+                await page
+                    .getByRole("menuitem", {
+                        name: t.users.resetPassword,
+                        exact: true,
+                    })
+                    .click();
+                await capture("reset-password");
+                await dismiss();
+                await page.route("**/api/passwords", (route) =>
+                    route.fulfill({ json: [] }),
+                );
+                await page.goto(`${origin}/passwords`);
+                await page
+                    .getByText(t.vault.subtitle.empty, { exact: true })
+                    .first()
+                    .waitFor();
+                await capture("empty");
+                await page.route("**/api/passwords", (route) =>
+                    route.fulfill({
+                        status: 503,
+                        json: { detail: "Synthetic UI request failure" },
+                    }),
+                );
+                await page.reload();
+                await page
+                    .getByText("Synthetic UI request failure", { exact: false })
+                    .first()
+                    .waitFor();
+                await capture("error");
+                assert.deepEqual(errors, []);
+            } finally {
+                if (process.env.CIPHERMOTH_SCREENSHOT_DIR)
+                    await writeFile(
+                        resolve(
+                            process.env.CIPHERMOTH_SCREENSHOT_DIR,
+                            `${prefix}-metrics.json`,
+                        ),
+                        JSON.stringify(metrics, null, 2),
+                    );
+                await context.close();
+            }
+        });
+    }
 }

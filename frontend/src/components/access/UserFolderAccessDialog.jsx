@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Flex, Text, Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Col, Dialog, Label, Row, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -28,7 +28,7 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
         alignItems="center"
         as="header"
       >
-        <Flex direction="column" gap="spacing-3" minWidth="0">
+        <Flex direction="column" gap="spacing-1" minWidth="0" flexGrow={1}>
           <Text as="h3" variant="subheader-2">
             {item.folder.name}
           </Text>
@@ -66,58 +66,64 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
           {t("folderAccess.ownerCannotChange")}
         </Text>
       ) : (
-        <Flex
-          direction={{ xs: "column", m: "row" }}
-          gap="spacing-3"
-          minWidth="0"
-          wrap="wrap"
-          alignItems={{ m: "center" }}
-        >
-          <Select
-            size="xl"
-            aria-label={t("sharing.permission")}
-            value={[permission]}
-            disabled={busy}
-            options={[
-              { value: "read", content: t("sharing.read") },
-              { value: "write", content: t("sharing.readWrite") },
-            ]}
-            onUpdate={([value = "read"]) => setPermission(value)}
-          />
-          <Flex as="label" direction="column" gap="spacing-2" minWidth="0" width="100%">
-            <Text>{t("folderAccess.expiresAt")}</Text>
-            <TextInput
+        <Row gap="spacing-4">
+          <Col size={{ xs: 12, s: 5 }} minWidth="0">
+            <Select
               size="xl"
-              type="datetime-local"
-              note={t("folderAccess.expiresHint")}
-              value={expiresAt}
+              width="max"
+              label={t("sharing.permission")}
+              aria-label={t("sharing.permission")}
+              value={[permission]}
               disabled={busy}
-              onUpdate={setExpiresAt}
-              validationState={expiryInvalid ? "invalid" : undefined}
-              errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
-              controlProps={{
-                "aria-label": t("folderAccess.expiresAt"),
-                min: toLocalExpiry(new Date().toISOString()),
-              }}
+              options={[
+                { value: "read", content: t("sharing.read") },
+                { value: "write", content: t("sharing.readWrite") },
+              ]}
+              onUpdate={([value = "read"]) => setPermission(value)}
             />
-          </Flex>
-          <Button
-            type="button"
-            view="action"
-            disabled={busy || expiryInvalid}
-            onClick={() => onSave(item.folder.id, permission, toUtcExpiry(expiresAt))}
-          >
-            {t("common.actions.save")}
-          </Button>
-          <Button
-            type="button"
-            view="outlined-danger"
-            disabled={busy || !item.direct_permission}
-            onClick={() => onRevoke(item.folder.id)}
-          >
-            {t("sharing.revoke")}
-          </Button>
-        </Flex>
+          </Col>
+          <Col size={{ xs: 12, s: 7 }} minWidth="0">
+            <Flex as="label" direction="column" gap="spacing-2" minWidth="0" width="100%">
+              <Text>{t("folderAccess.expiresAt")}</Text>
+              <TextInput
+                size="xl"
+                type="datetime-local"
+                note={t("folderAccess.expiresHint")}
+                value={expiresAt}
+                disabled={busy}
+                onUpdate={setExpiresAt}
+                validationState={expiryInvalid ? "invalid" : undefined}
+                errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
+                controlProps={{
+                  "aria-label": t("folderAccess.expiresAt"),
+                  min: toLocalExpiry(new Date().toISOString()),
+                }}
+              />
+            </Flex>
+          </Col>
+          <Col size={12}>
+            <Flex gap="spacing-2" wrap="wrap">
+              <Button
+                type="button"
+                size="xl"
+                view="action"
+                disabled={busy || expiryInvalid}
+                onClick={() => onSave(item.folder.id, permission, toUtcExpiry(expiresAt))}
+              >
+                {t("common.actions.save")}
+              </Button>
+              <Button
+                type="button"
+                size="xl"
+                view="outlined-danger"
+                disabled={busy || !item.direct_permission}
+                onClick={() => onRevoke(item.folder.id)}
+              >
+                {t("sharing.revoke")}
+              </Button>
+            </Flex>
+          </Col>
+        </Row>
       )}
     </Flex>
   );

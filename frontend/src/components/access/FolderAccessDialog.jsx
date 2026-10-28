@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Flex, Text, Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
+import {
+  Flex,
+  Text,
+  Button,
+  Col,
+  Dialog,
+  Divider,
+  Grid,
+  Label,
+  Row,
+  Select,
+  TextInput,
+} from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -30,62 +42,63 @@ const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
   }, [grant.expires_at, grant.permission]);
 
   return (
-    <Flex
-      direction={{ xs: "column", m: "row" }}
-      gap="spacing-3"
-      minWidth="0"
-      wrap="wrap"
-      alignItems={{ m: "center" }}
-      as="article"
-      paddingBlock="spacing-3"
-    >
-      <Flex direction="column" gap="spacing-3" minWidth="0">
-        <Text as="strong">{grant.target_name}</Text>
-        <span>
+    <Flex direction="column" gap="spacing-4" minWidth="0" as="article" paddingBlock="spacing-3">
+      <Flex gap="spacing-2" alignItems="center" wrap="wrap" minWidth="0">
+        <Text as="strong" wordBreak="break-word">
+          {grant.target_name}
+        </Text>
+        <Flex gap="spacing-2" wrap="wrap">
           <Label size="s">{t(`folderAccess.targetTypes.${grant.target_type}`)}</Label>
           {grant.expired && (
             <Label size="s" theme="warning">
               {t("folderAccess.expired")}
             </Label>
           )}
-        </span>
+        </Flex>
       </Flex>
-      <Select
-        size="xl"
-        aria-label={t("sharing.permission")}
-        value={[permission]}
-        disabled={busy}
-        options={permissionOptions(t)}
-        onUpdate={([value = "read"]) => setPermission(value)}
-      />
-      <Flex as="label" direction="column" gap="spacing-2" minWidth="0" width="100%">
-        <Text>{t("folderAccess.expiresAt")}</Text>
-        <TextInput
+      <Grid columns={{ xs: "minmax(0, 1fr)", l: "repeat(2, minmax(0, 1fr))" }} gap="spacing-4">
+        <Select
           size="xl"
-          type="datetime-local"
-          note={t("folderAccess.expiresHint")}
-          value={expiresAt}
+          width="max"
+          label={t("sharing.permission")}
+          aria-label={t("sharing.permission")}
+          value={[permission]}
           disabled={busy}
-          onUpdate={setExpiresAt}
-          validationState={expiryInvalid ? "invalid" : undefined}
-          errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
-          controlProps={{
-            "aria-label": t("folderAccess.expiresAt"),
-            min: toLocalExpiry(new Date().toISOString()),
-          }}
+          options={permissionOptions(t)}
+          onUpdate={([value = "read"]) => setPermission(value)}
         />
+        <Flex direction="column" gap="spacing-2" minWidth="0">
+          <TextInput
+            size="xl"
+            label={t("folderAccess.expiresAt")}
+            type="datetime-local"
+            note={t("folderAccess.expiresHint")}
+            value={expiresAt}
+            disabled={busy}
+            onUpdate={setExpiresAt}
+            validationState={expiryInvalid ? "invalid" : undefined}
+            errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
+            controlProps={{
+              "aria-label": t("folderAccess.expiresAt"),
+              min: toLocalExpiry(new Date().toISOString()),
+            }}
+          />
+        </Flex>
+      </Grid>
+      <Flex gap="spacing-2" wrap="wrap">
+        <Button
+          type="button"
+          size="xl"
+          view="outlined"
+          disabled={busy || expiryInvalid}
+          onClick={() => onSave(permission, toUtcExpiry(expiresAt))}
+        >
+          {t("common.actions.save")}
+        </Button>
+        <Button type="button" size="xl" view="flat-danger" disabled={busy} onClick={onRevoke}>
+          {t("sharing.revoke")}
+        </Button>
       </Flex>
-      <Button
-        type="button"
-        view="outlined"
-        disabled={busy || expiryInvalid}
-        onClick={() => onSave(permission, toUtcExpiry(expiresAt))}
-      >
-        {t("common.actions.save")}
-      </Button>
-      <Button type="button" view="flat-danger" disabled={busy} onClick={onRevoke}>
-        {t("sharing.revoke")}
-      </Button>
     </Flex>
   );
 };
@@ -267,11 +280,10 @@ const FolderAccessDialog = ({ open, onClose }) => {
                 {t("folderAccess.createFolder")}
               </Text>
               <Flex
-                direction={{ xs: "column", m: "row" }}
+                direction={{ xs: "column", s: "row" }}
                 gap="spacing-3"
                 minWidth="0"
-                wrap="wrap"
-                alignItems={{ m: "center" }}
+                alignItems={{ s: "center" }}
               >
                 <TextInput
                   size="xl"
@@ -282,6 +294,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
                 />
                 <Button
                   type="button"
+                  size="xl"
                   view="action"
                   disabled={busy || !newFolderName.trim()}
                   onClick={addFolder}
@@ -296,130 +309,21 @@ const FolderAccessDialog = ({ open, onClose }) => {
                 {t("folderAccess.empty")}
               </Text>
             ) : (
-              <>
-                <Select
-                  size="xl"
-                  aria-label={t("common.fields.folder")}
-                  value={folderId ? [folderId] : []}
-                  options={folders.map((folder) => ({
-                    value: String(folder.id),
-                    content: `${folder.name} · ${folder.owner_username}`,
-                  }))}
-                  onUpdate={([value = ""]) => setFolderId(value)}
-                />
-
-                <Flex
-                  direction="column"
-                  gap="spacing-3"
-                  minWidth="0"
-                  as="section"
-                  paddingBlock="spacing-3"
-                >
-                  <Flex
-                    direction={{ xs: "column", m: "row" }}
-                    gap="spacing-3"
-                    minWidth="0"
-                    wrap="wrap"
-                    alignItems={{ m: "center" }}
-                    as="header"
-                  >
-                    <Flex direction="column" gap="spacing-3" minWidth="0">
-                      <Text as="h3" variant="subheader-2">
-                        {selected?.name}
-                      </Text>
-                      <Text as="p" color="secondary" wordBreak="break-word">
-                        {t("folderAccess.ownerLabel", { owner: selected?.owner_username })}
-                      </Text>
-                    </Flex>
-                    <Label size="s">
-                      {t(
-                        selected?.access
-                          ? `folderAccess.permissions.${selected.access}`
-                          : "folderAccess.managementOnly"
-                      )}
-                    </Label>
-                  </Flex>
-                  {ownsSelected && (
-                    <Flex
-                      direction={{ xs: "column", m: "row" }}
-                      gap="spacing-3"
-                      minWidth="0"
-                      wrap="wrap"
-                      alignItems={{ m: "center" }}
-                    >
-                      <TextInput
-                        size="xl"
-                        placeholder={t("folderAccess.rename")}
-                        controlProps={{ "aria-label": t("folderAccess.rename") }}
-                        value={renameName}
-                        onUpdate={setRenameName}
-                      />
-                      <Button
-                        type="button"
-                        view="outlined"
-                        disabled={busy || !renameName.trim() || renameName.trim() === selected.name}
-                        onClick={() =>
-                          run(
-                            () =>
-                              renameFolder({
-                                folderId: selected.id,
-                                name: renameName.trim(),
-                              }),
-                            t("folderAccess.folderRenamed"),
-                            { refreshBase: true }
-                          )
-                        }
-                      >
-                        {t("common.actions.save")}
-                      </Button>
-                      <Button
-                        type="button"
-                        view="outlined-danger"
-                        disabled={busy}
-                        onClick={() => setDeleteTarget(selected)}
-                      >
-                        {t("common.actions.delete")}
-                      </Button>
-                    </Flex>
-                  )}
-                </Flex>
-
-                {selected?.can_manage && (
-                  <>
-                    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                      <Text as="h3" variant="subheader-2">
-                        {t("folderAccess.grants")}
-                      </Text>
-                      {grants.length === 0 ? (
-                        <Text as="p" color="secondary" wordBreak="break-word">
-                          {t("folderAccess.noGrants")}
-                        </Text>
-                      ) : (
-                        <Flex direction="column" gap="spacing-3" minWidth="0">
-                          {grants.map((grant) => (
-                            <GrantRow
-                              key={`${grant.target_type}-${grant.target_id}`}
-                              grant={grant}
-                              busy={busy}
-                              onSave={(nextPermission, nextExpiry) =>
-                                saveGrant(grant, nextPermission, nextExpiry)
-                              }
-                              onRevoke={() =>
-                                run(
-                                  () =>
-                                    revokeFolderGrant({
-                                      folderId: selected.id,
-                                      targetType: grant.target_type,
-                                      targetId: grant.target_id,
-                                    }),
-                                  t("folderAccess.revoked")
-                                )
-                              }
-                            />
-                          ))}
-                        </Flex>
-                      )}
-                    </Flex>
+              <Row gap="spacing-6">
+                <Col size={{ xs: 12, m: 5 }} minWidth="0">
+                  <Flex direction="column" gap="spacing-4">
+                    <Select
+                      size="xl"
+                      width="max"
+                      label={t("common.fields.folder")}
+                      aria-label={t("common.fields.folder")}
+                      value={folderId ? [folderId] : []}
+                      options={folders.map((folder) => ({
+                        value: String(folder.id),
+                        content: `${folder.name} · ${folder.owner_username}`,
+                      }))}
+                      onUpdate={([value = ""]) => setFolderId(value)}
+                    />
 
                     <Flex
                       direction="column"
@@ -428,128 +332,249 @@ const FolderAccessDialog = ({ open, onClose }) => {
                       as="section"
                       paddingBlock="spacing-3"
                     >
-                      <Text as="h3" variant="subheader-2">
-                        {t("sharing.grantAccess")}
-                      </Text>
                       <Flex
                         direction={{ xs: "column", m: "row" }}
                         gap="spacing-3"
                         minWidth="0"
                         wrap="wrap"
                         alignItems={{ m: "center" }}
+                        as="header"
                       >
-                        <Select
-                          size="xl"
-                          aria-label={t("folderAccess.targetType")}
-                          value={[targetType]}
-                          disabled={busy}
-                          options={[
-                            { value: "user", content: t("folderAccess.targetTypes.user") },
-                            { value: "group", content: t("folderAccess.targetTypes.group") },
-                          ]}
-                          onUpdate={([value = "user"]) => {
-                            setTargetType(value);
-                            setTargetId("");
-                          }}
-                        />
-                        <Select
-                          size="xl"
-                          aria-label={t("folderAccess.target")}
-                          placeholder={t("folderAccess.target")}
-                          value={targetId ? [targetId] : []}
-                          disabled={busy || grantTargets.length === 0}
-                          options={grantTargets.map((target) => ({
-                            value: String(target.id),
-                            content: target.name ?? target.username,
-                          }))}
-                          onUpdate={([value = ""]) => setTargetId(value)}
-                        />
-                        <Select
-                          size="xl"
-                          aria-label={t("sharing.permission")}
-                          value={[permission]}
-                          disabled={busy}
-                          options={permissionOptions(t)}
-                          onUpdate={([value = "read"]) => setPermission(value)}
-                        />
-                        <Flex
-                          as="label"
-                          direction="column"
-                          gap="spacing-2"
-                          minWidth="0"
-                          width="100%"
-                        >
-                          <Text>{t("folderAccess.expiresAt")}</Text>
+                        <Flex direction="column" gap="spacing-3" minWidth="0">
+                          <Text as="h3" variant="subheader-2">
+                            {selected?.name}
+                          </Text>
+                          <Text as="p" color="secondary" wordBreak="break-word">
+                            {t("folderAccess.ownerLabel", { owner: selected?.owner_username })}
+                          </Text>
+                        </Flex>
+                        <Label size="s">
+                          {t(
+                            selected?.access
+                              ? `folderAccess.permissions.${selected.access}`
+                              : "folderAccess.managementOnly"
+                          )}
+                        </Label>
+                      </Flex>
+                      {ownsSelected && (
+                        <Flex direction="column" gap="spacing-2" minWidth="0">
                           <TextInput
                             size="xl"
-                            type="datetime-local"
-                            note={t("folderAccess.expiresHint")}
-                            value={expiresAt}
-                            disabled={busy}
-                            onUpdate={setExpiresAt}
-                            validationState={expiryInvalid ? "invalid" : undefined}
-                            errorMessage={
-                              expiryInvalid ? t("folderAccess.expiresValidation") : undefined
-                            }
-                            controlProps={{
-                              "aria-label": t("folderAccess.expiresAt"),
-                              min: toLocalExpiry(new Date().toISOString()),
-                            }}
+                            label={t("folderAccess.rename")}
+                            placeholder={t("folderAccess.rename")}
+                            controlProps={{ "aria-label": t("folderAccess.rename") }}
+                            value={renameName}
+                            onUpdate={setRenameName}
                           />
-                        </Flex>
-                        <Button
-                          type="button"
-                          view="action"
-                          disabled={busy || !targetId || expiryInvalid}
-                          onClick={addGrant}
-                        >
-                          {t("sharing.grant")}
-                        </Button>
-                      </Flex>
-                    </Flex>
-
-                    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                      <Text as="h3" variant="subheader-2">
-                        {t("folderAccess.audit")}
-                      </Text>
-                      {audit.length === 0 ? (
-                        <Text as="p" color="secondary" wordBreak="break-word">
-                          {t("folderAccess.noAudit")}
-                        </Text>
-                      ) : (
-                        <Flex direction="column" gap="spacing-2" minWidth="0">
-                          {audit.slice(0, 20).map((event) => (
-                            <Flex
-                              direction={{ xs: "column", m: "row" }}
-                              gap="spacing-2"
-                              minWidth="0"
-                              paddingBlock="spacing-2"
-                              justifyContent="space-between"
-                              key={event.id}
+                          <Flex gap="spacing-2" wrap="wrap">
+                            <Button
+                              type="button"
+                              size="xl"
+                              view="outlined"
+                              disabled={
+                                busy || !renameName.trim() || renameName.trim() === selected.name
+                              }
+                              onClick={() =>
+                                run(
+                                  () =>
+                                    renameFolder({
+                                      folderId: selected.id,
+                                      name: renameName.trim(),
+                                    }),
+                                  t("folderAccess.folderRenamed"),
+                                  { refreshBase: true }
+                                )
+                              }
                             >
-                              <span>
-                                {t(`folderAccess.actions.${event.action}`, {
-                                  defaultValue: event.action,
-                                  actor: event.actor_username || t("folderAccess.systemActor"),
-                                  target: event.target_username || event.target_group_name || "",
-                                })}
-                              </span>
-                              <Text
-                                as="time"
-                                variant="caption-2"
-                                color="secondary"
-                                dateTime={event.created}
-                              >
-                                {eventDate(event.created, i18n.resolvedLanguage)}
-                              </Text>
-                            </Flex>
-                          ))}
+                              {t("common.actions.save")}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="xl"
+                              view="outlined-danger"
+                              disabled={busy}
+                              onClick={() => setDeleteTarget(selected)}
+                            >
+                              {t("common.actions.delete")}
+                            </Button>
+                          </Flex>
                         </Flex>
                       )}
                     </Flex>
-                  </>
-                )}
-              </>
+                  </Flex>
+                </Col>
+                <Col size={{ xs: 12, m: 7 }} minWidth="0">
+                  <Flex direction="column" gap="spacing-5">
+                    {selected?.can_manage && (
+                      <>
+                        <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                          <Text as="h3" variant="subheader-2">
+                            {t("folderAccess.grants")}
+                          </Text>
+                          {grants.length === 0 ? (
+                            <Text as="p" color="secondary" wordBreak="break-word">
+                              {t("folderAccess.noGrants")}
+                            </Text>
+                          ) : (
+                            <Flex direction="column" gap="spacing-3" minWidth="0">
+                              {grants.map((grant) => (
+                                <GrantRow
+                                  key={`${grant.target_type}-${grant.target_id}`}
+                                  grant={grant}
+                                  busy={busy}
+                                  onSave={(nextPermission, nextExpiry) =>
+                                    saveGrant(grant, nextPermission, nextExpiry)
+                                  }
+                                  onRevoke={() =>
+                                    run(
+                                      () =>
+                                        revokeFolderGrant({
+                                          folderId: selected.id,
+                                          targetType: grant.target_type,
+                                          targetId: grant.target_id,
+                                        }),
+                                      t("folderAccess.revoked")
+                                    )
+                                  }
+                                />
+                              ))}
+                            </Flex>
+                          )}
+                        </Flex>
+
+                        <Flex
+                          direction="column"
+                          gap="spacing-3"
+                          minWidth="0"
+                          as="section"
+                          paddingBlock="spacing-3"
+                        >
+                          <Text as="h3" variant="subheader-2">
+                            {t("sharing.grantAccess")}
+                          </Text>
+                          <Grid
+                            columns={{ xs: "minmax(0, 1fr)", l: "repeat(2, minmax(0, 1fr))" }}
+                            gap="spacing-4"
+                          >
+                            <Select
+                              size="xl"
+                              aria-label={t("folderAccess.targetType")}
+                              label={t("folderAccess.targetType")}
+                              width="max"
+                              value={[targetType]}
+                              disabled={busy}
+                              options={[
+                                { value: "user", content: t("folderAccess.targetTypes.user") },
+                                { value: "group", content: t("folderAccess.targetTypes.group") },
+                              ]}
+                              onUpdate={([value = "user"]) => {
+                                setTargetType(value);
+                                setTargetId("");
+                              }}
+                            />
+                            <Select
+                              size="xl"
+                              aria-label={t("folderAccess.target")}
+                              label={t("folderAccess.target")}
+                              width="max"
+                              placeholder={t("folderAccess.target")}
+                              value={targetId ? [targetId] : []}
+                              disabled={busy || grantTargets.length === 0}
+                              options={grantTargets.map((target) => ({
+                                value: String(target.id),
+                                content: target.name ?? target.username,
+                              }))}
+                              onUpdate={([value = ""]) => setTargetId(value)}
+                            />
+                            <Select
+                              size="xl"
+                              aria-label={t("sharing.permission")}
+                              label={t("sharing.permission")}
+                              width="max"
+                              value={[permission]}
+                              disabled={busy}
+                              options={permissionOptions(t)}
+                              onUpdate={([value = "read"]) => setPermission(value)}
+                            />
+                            <Flex direction="column" gap="spacing-2" minWidth="0" width="100%">
+                              <TextInput
+                                size="xl"
+                                label={t("folderAccess.expiresAt")}
+                                type="datetime-local"
+                                note={t("folderAccess.expiresHint")}
+                                value={expiresAt}
+                                disabled={busy}
+                                onUpdate={setExpiresAt}
+                                validationState={expiryInvalid ? "invalid" : undefined}
+                                errorMessage={
+                                  expiryInvalid ? t("folderAccess.expiresValidation") : undefined
+                                }
+                                controlProps={{
+                                  "aria-label": t("folderAccess.expiresAt"),
+                                  min: toLocalExpiry(new Date().toISOString()),
+                                }}
+                              />
+                            </Flex>
+                          </Grid>
+                          <Flex>
+                            <Button
+                              type="button"
+                              size="xl"
+                              view="action"
+                              disabled={busy || !targetId || expiryInvalid}
+                              onClick={addGrant}
+                            >
+                              {t("sharing.grant")}
+                            </Button>
+                          </Flex>
+                        </Flex>
+
+                        <Divider />
+                        <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                          <Text as="h3" variant="subheader-2">
+                            {t("folderAccess.audit")}
+                          </Text>
+                          {audit.length === 0 ? (
+                            <Text as="p" color="secondary" wordBreak="break-word">
+                              {t("folderAccess.noAudit")}
+                            </Text>
+                          ) : (
+                            <Flex direction="column" gap="spacing-2" minWidth="0">
+                              {audit.slice(0, 20).map((event) => (
+                                <Flex
+                                  direction={{ xs: "column", m: "row" }}
+                                  gap="spacing-2"
+                                  minWidth="0"
+                                  paddingBlock="spacing-2"
+                                  justifyContent="space-between"
+                                  key={event.id}
+                                >
+                                  <span>
+                                    {t(`folderAccess.actions.${event.action}`, {
+                                      defaultValue: event.action,
+                                      actor: event.actor_username || t("folderAccess.systemActor"),
+                                      target:
+                                        event.target_username || event.target_group_name || "",
+                                    })}
+                                  </span>
+                                  <Text
+                                    as="time"
+                                    variant="caption-2"
+                                    color="secondary"
+                                    dateTime={event.created}
+                                  >
+                                    {eventDate(event.created, i18n.resolvedLanguage)}
+                                  </Text>
+                                </Flex>
+                              ))}
+                            </Flex>
+                          )}
+                        </Flex>
+                      </>
+                    )}
+                  </Flex>
+                </Col>
+              </Row>
             )}
           </Flex>
         </Dialog.Body>

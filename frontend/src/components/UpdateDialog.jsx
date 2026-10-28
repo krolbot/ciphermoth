@@ -28,8 +28,9 @@ const UpdateDialog = ({ open, onClose }) => {
       <Dialog.Body>
         <Flex direction="column" gap="spacing-3" minWidth="0">
           <Flex
-            direction="column"
+            direction="row"
             gap="spacing-3"
+            alignItems="center"
             minWidth="0"
             aria-label={t("updateDialog.title")}
           >

@@ -49,6 +49,8 @@ const ru = {
     russian: "Русский",
   },
   theme: {
+    light: "Светлая",
+    dark: "Тёмная",
     toLight: "Включить светлую тему",
     toDark: "Включить тёмную тему",
     switchToLight: "Включить светлую тему",

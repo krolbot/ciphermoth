@@ -14,6 +14,7 @@ import {
   Button,
   DefinitionList,
   Disclosure,
+  Divider,
   Flex,
   Icon,
   Label,
@@ -61,27 +62,31 @@ const EntryValue = ({
     <Flex direction="column" gap="spacing-2" minWidth="0">
       <DefinitionList direction="vertical" responsive>
         <DefinitionList.Item name={label}>
-          <Flex gap="spacing-2" wrap="wrap" alignItems="center" minWidth="0">
-            <Text
-              variant={mono ? "code-1" : "body-1"}
-              wordBreak="break-all"
-              whiteSpace="break-spaces"
-            >
-              {hidden && !revealed ? "••••••••••••" : value}
-            </Text>
-            {hidden && (
+          <Flex gap="spacing-2" alignItems="flex-start" minWidth="0" justifyContent="space-between">
+            <Flex flexGrow={1} flexBasis="0" minWidth="0" paddingBlock="spacing-2">
+              <Text
+                variant={mono ? "code-1" : "body-1"}
+                wordBreak="break-all"
+                whiteSpace="break-spaces"
+              >
+                {hidden && !revealed ? "••••••••••••" : value}
+              </Text>
+            </Flex>
+            <Flex gap="spacing-1" flexShrink={0}>
+              {hidden && (
+                <IconAction
+                  label={visibilityLabel}
+                  icon={revealed ? EyeSlash : Eye}
+                  selected={revealed}
+                  onClick={() => setRevealed((current) => !current)}
+                />
+              )}
               <IconAction
-                label={visibilityLabel}
-                icon={revealed ? EyeSlash : Eye}
-                selected={revealed}
-                onClick={() => setRevealed((current) => !current)}
+                label={copyLabel || t("vault.browser.copyValue", { label })}
+                icon={Copy}
+                onClick={() => onCopy(value)}
               />
-            )}
-            <IconAction
-              label={copyLabel || t("vault.browser.copyValue", { label })}
-              icon={Copy}
-              onClick={() => onCopy(value)}
-            />
+            </Flex>
           </Flex>
         </DefinitionList.Item>
       </DefinitionList>
@@ -111,7 +116,7 @@ const EntryDetails = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFavori
           </Label>
         )}
       </Flex>
-      <Flex gap="spacing-2" wrap="wrap">
+      <Flex gap="spacing-2" wrap="wrap" alignItems="center">
         {writable && (
           <>
             <IconAction
@@ -122,19 +127,20 @@ const EntryDetails = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFavori
               selected={entry.favorite}
               onClick={() => onToggleFavorite(entry)}
             />
-            <Button view="outlined" onClick={() => onEdit(entry)}>
+            <Button size="xl" view="outlined" onClick={() => onEdit(entry)}>
               <Icon data={Pencil} />
               {t("common.actions.edit")}
             </Button>
           </>
         )}
         {entry.access === "owner" && (
-          <Button view="outlined" onClick={() => onShare(entry)}>
+          <Button size="xl" view="outlined" onClick={() => onShare(entry)}>
             <Icon data={PersonPlus} />
             {t("sharing.manage")}
           </Button>
         )}
       </Flex>
+      <Divider />
       {!isNote && entry.username && (
         <EntryValue
           label={t("common.fields.usernameEmail")}
@@ -228,10 +234,12 @@ const EntryDetails = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFavori
         </Disclosure>
       )}
       {writable && (
-        <Button view="outlined-danger" onClick={() => onDelete(entry.password_name)}>
-          <Icon data={TrashBin} />
-          {t("common.actions.delete")}
-        </Button>
+        <Flex paddingBlockStart="spacing-3">
+          <Button size="xl" view="flat-danger" onClick={() => onDelete(entry.password_name)}>
+            <Icon data={TrashBin} />
+            {t("common.actions.delete")}
+          </Button>
+        </Flex>
       )}
     </Flex>
   );
