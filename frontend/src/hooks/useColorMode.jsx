@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useLayoutEffect, useMemo, useState } from "react";
 import { LayoutProvider, Provider as GravityProvider, useLayoutContext } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
@@ -26,7 +26,7 @@ export const ColorModeProvider = ({ children }) => {
 
   const language = (i18n.resolvedLanguage ?? i18n.language)?.startsWith("ru") ? "ru" : "en";
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, mode);
     document.documentElement.dataset.theme = mode;
     document.documentElement.style.colorScheme = mode;

@@ -312,6 +312,10 @@ async function vault(
         )
         .waitFor();
     await page.getByText("GitHub", { exact: true }).first().waitFor();
+    assert.equal(
+        await page.evaluate(() => document.documentElement.dataset.theme),
+        theme,
+    );
     return { context, page, errors };
 }
 
