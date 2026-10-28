@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { useColorMode } from "../hooks/useColorMode";
 
-const ThemeToggle = ({ showLabel = false }) => {
+const ThemeToggle = ({ showLabel = false, width = "auto" }) => {
   const { t } = useTranslation();
   const { mode, toggle } = useColorMode();
   const dark = mode === "dark";
@@ -16,6 +16,7 @@ const ThemeToggle = ({ showLabel = false }) => {
         type="button"
         view="flat-secondary"
         size="xl"
+        width={width}
         aria-label={showLabel ? `${t(dark ? "theme.light" : "theme.dark")}: ${label}` : label}
         onClick={toggle}
       >

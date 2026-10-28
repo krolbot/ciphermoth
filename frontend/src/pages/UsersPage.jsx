@@ -5,6 +5,7 @@ import {
   Text,
   Alert,
   Button,
+  Card,
   Dialog,
   Icon,
   Menu,
@@ -169,114 +170,136 @@ const UsersPage = () => {
             {users.map((user) => {
               const isCurrent = user.id === currentUserId;
               return (
-                <Flex
-                  direction={{ xs: "column", m: "row" }}
-                  gap="spacing-3"
-                  minWidth="0"
-                  wrap="wrap"
-                  alignItems={{ m: "center" }}
-                  as="article"
-                  paddingBlock="spacing-3"
-                  key={user.id}
-                >
-                  <Flex direction="column" gap="spacing-1" minWidth="0" flexGrow={1}>
-                    <Text as="strong" wordBreak="break-word">
-                      {user.username}
-                    </Text>
-                    <Text as="small" variant="caption-2" color="secondary">
-                      {user.must_change_password && user.role !== "service"
-                        ? t("users.passwordChangeRequested")
-                        : user.role === "service"
-                          ? t("users.serviceAccount")
-                          : t("users.interactiveAccount")}
-                    </Text>
-                  </Flex>
-                  <Flex gap="spacing-3" alignItems="center" wrap="wrap" minWidth="0">
-                    <Select
-                      size="xl"
-                      aria-label={t("users.role")}
-                      value={[user.role]}
-                      disabled={busy || isCurrent || user.role === "service"}
-                      options={(user.role === "service" ? ["service"] : ["admin", "member"]).map(
-                        (role) => ({ value: role, content: t(`users.roles.${role}`) })
-                      )}
-                      onUpdate={([role = user.role]) =>
-                        run(
-                          () => update({ userId: user.id, role }),
-                          t("users.messages.roleUpdated")
-                        )
-                      }
-                    />
-                    <Switch
-                      size="m"
-                      checked={user.active}
-                      disabled={busy || isCurrent}
-                      onUpdate={(active) =>
-                        run(
-                          () => update({ userId: user.id, active }),
-                          t("users.messages.statusUpdated")
-                        )
-                      }
-                    >
-                      {t(user.active ? "users.active" : "users.inactive")}
-                    </Switch>
+                <Card type="container" view="outlined" size="l" qa="user-card" key={user.id}>
+                  <Flex
+                    direction={{ xs: "column", xl: "row" }}
+                    gap="spacing-3"
+                    minWidth="0"
+                    alignItems={{ xl: "center" }}
+                    as="article"
+                    data-user-id={user.id}
+                  >
+                    <Flex direction="column" gap="spacing-1" minWidth="0" flexGrow={1}>
+                      <Text as="strong" wordBreak="break-word">
+                        {user.username}
+                      </Text>
+                      <Text as="small" variant="caption-2" color="secondary">
+                        {user.must_change_password && user.role !== "service"
+                          ? t("users.passwordChangeRequested")
+                          : user.role === "service"
+                            ? t("users.serviceAccount")
+                            : t("users.interactiveAccount")}
+                      </Text>
+                    </Flex>
                     <Flex
-                      direction={{ xs: "column", m: "row" }}
+                      direction={{ xs: "column", xl: "row" }}
                       gap="spacing-3"
+                      alignItems={{ xl: "center" }}
+                      width={{ xs: "100%", xl: "auto" }}
                       minWidth="0"
-                      wrap="wrap"
-                      alignItems={{ m: "center" }}
+                      qa="user-controls"
                     >
-                      <Menu
-                        placement="bottom-end"
-                        trigger={
-                          <Button
-                            type="button"
-                            size="xl"
-                            view="flat-secondary"
-                            aria-label={`${t("navigation.more")}: ${user.username}`}
-                            data-user-menu={user.id}
-                          >
-                            <Icon data={EllipsisVertical} />
-                            {t("navigation.more")}
-                          </Button>
-                        }
+                      <Flex width={{ xs: "100%", xl: "200px" }} minWidth="0" qa="user-role-control">
+                        <Select
+                          width="max"
+                          size="xl"
+                          aria-label={t("users.role")}
+                          value={[user.role]}
+                          disabled={busy || isCurrent || user.role === "service"}
+                          options={(user.role === "service"
+                            ? ["service"]
+                            : ["admin", "member"]
+                          ).map((role) => ({
+                            value: role,
+                            content: t(
+                              role === "service"
+                                ? "users.roles.serviceShort"
+                                : `users.roles.${role}`
+                            ),
+                          }))}
+                          onUpdate={([role = user.role]) =>
+                            run(
+                              () => update({ userId: user.id, role }),
+                              t("users.messages.roleUpdated")
+                            )
+                          }
+                        />
+                      </Flex>
+                      <Flex
+                        width={{ xs: "100%", xl: "auto" }}
+                        gap="spacing-3"
+                        minWidth="0"
+                        alignItems="center"
+                        justifyContent="space-between"
+                        qa="user-actions"
                       >
-                        <MenuItem disabled={busy} onClick={() => setFolderAccessTarget(user)}>
-                          {t("folderAccess.manage")}
-                        </MenuItem>
-                        {user.role === "service" ? (
-                          <MenuItem disabled={busy} onClick={() => rotateToken(user)}>
-                            {t("users.rotateToken")}
-                          </MenuItem>
-                        ) : (
-                          <MenuItem
-                            disabled={busy || isCurrent}
-                            onClick={() => setResetTarget(user)}
-                          >
-                            {t("users.resetPassword")}
-                          </MenuItem>
-                        )}
-                        <MenuItem
-                          disabled={busy}
-                          onClick={() =>
-                            run(() => revokeSessions(user.id), t("users.messages.sessionsRevoked"))
+                        <Switch
+                          size="m"
+                          checked={user.active}
+                          disabled={busy || isCurrent}
+                          onUpdate={(active) =>
+                            run(
+                              () => update({ userId: user.id, active }),
+                              t("users.messages.statusUpdated")
+                            )
                           }
                         >
-                          {t("users.revokeSessions")}
-                        </MenuItem>
-                        <MenuDivider />
-                        <MenuItem
-                          theme="danger"
-                          disabled={busy || isCurrent}
-                          onClick={() => setDeleteTarget(user)}
+                          {t(user.active ? "users.active" : "users.inactive")}
+                        </Switch>
+                        <Menu
+                          placement="bottom-end"
+                          trigger={
+                            <Button
+                              type="button"
+                              size="xl"
+                              view="flat-secondary"
+                              aria-label={`${t("navigation.more")}: ${user.username}`}
+                              data-user-menu={user.id}
+                            >
+                              <Icon data={EllipsisVertical} />
+                              {t("navigation.more")}
+                            </Button>
+                          }
                         >
-                          {t("common.actions.delete")}
-                        </MenuItem>
-                      </Menu>
+                          <MenuItem disabled={busy} onClick={() => setFolderAccessTarget(user)}>
+                            {t("folderAccess.manage")}
+                          </MenuItem>
+                          {user.role === "service" ? (
+                            <MenuItem disabled={busy} onClick={() => rotateToken(user)}>
+                              {t("users.rotateToken")}
+                            </MenuItem>
+                          ) : (
+                            <MenuItem
+                              disabled={busy || isCurrent}
+                              onClick={() => setResetTarget(user)}
+                            >
+                              {t("users.resetPassword")}
+                            </MenuItem>
+                          )}
+                          <MenuItem
+                            disabled={busy}
+                            onClick={() =>
+                              run(
+                                () => revokeSessions(user.id),
+                                t("users.messages.sessionsRevoked")
+                              )
+                            }
+                          >
+                            {t("users.revokeSessions")}
+                          </MenuItem>
+                          <MenuDivider />
+                          <MenuItem
+                            theme="danger"
+                            disabled={busy || isCurrent}
+                            onClick={() => setDeleteTarget(user)}
+                          >
+                            {t("common.actions.delete")}
+                          </MenuItem>
+                        </Menu>
+                      </Flex>
                     </Flex>
                   </Flex>
-                </Flex>
+                </Card>
               );
             })}
           </Flex>

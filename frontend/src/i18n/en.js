@@ -114,6 +114,7 @@ const en = {
     workspace: "Workspace",
     manage: "Manage",
     administration: "Administration",
+    accounts: "Accounts",
     more: "More",
     newEntry: "Add entry",
   },
@@ -466,7 +467,12 @@ const en = {
       password: "Password change reminder enabled.",
       delete: "User deleted.",
     },
-    roles: { admin: "Administrator", member: "Member", service: "Service account" },
+    roles: {
+      admin: "Administrator",
+      member: "Member",
+      service: "Service account",
+      serviceShort: "Service",
+    },
   },
   errors: {
     invalidMasterPassword: "Incorrect password. Try again.",

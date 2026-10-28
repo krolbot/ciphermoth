@@ -7,7 +7,7 @@ const OPTIONS = [
   { language: "ru", labelKey: "language.russian" },
 ];
 
-const LanguageSwitcher = ({ placement = "inline" }) => {
+const LanguageSwitcher = ({ placement = "inline", width = "auto" }) => {
   const { t, i18n } = useTranslation();
   const current = (i18n.resolvedLanguage ?? i18n.language)?.split("-")[0] ?? "en";
 
@@ -19,6 +19,7 @@ const LanguageSwitcher = ({ placement = "inline" }) => {
           type="button"
           view="flat-secondary"
           size="xl"
+          width={width}
           aria-label={`${t("language.label")}: ${current.toUpperCase()}`}
         >
           <Icon data={Globe} />

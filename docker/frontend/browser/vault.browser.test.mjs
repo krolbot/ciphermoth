@@ -1592,6 +1592,53 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                                         body: rect("navigation-body"),
                                         footer: rect("navigation-footer"),
                                         height: innerHeight,
+                                        preferences: (() => {
+                                            const preferences =
+                                                shell.querySelector(
+                                                    '[data-qa="navigation-preferences"]',
+                                                );
+                                            const buttons = [
+                                                ...preferences.querySelectorAll(
+                                                    "button",
+                                                ),
+                                            ];
+                                            const logout = shell.querySelector(
+                                                '[data-qa="navigation-footer"] > button',
+                                            );
+                                            const intrinsicWidths = buttons.map(
+                                                (button) => {
+                                                    const clone =
+                                                        button.cloneNode(true);
+                                                    clone.style.position =
+                                                        "fixed";
+                                                    clone.style.visibility =
+                                                        "hidden";
+                                                    clone.style.width =
+                                                        "max-content";
+                                                    clone.style.maxWidth =
+                                                        "none";
+                                                    document.body.append(clone);
+                                                    const width =
+                                                        clone.getBoundingClientRect()
+                                                            .width;
+                                                    clone.remove();
+                                                    return width;
+                                                },
+                                            );
+                                            return {
+                                                width: preferences.getBoundingClientRect()
+                                                    .width,
+                                                buttonWidths: buttons.map(
+                                                    (button) =>
+                                                        button.getBoundingClientRect()
+                                                            .width,
+                                                ),
+                                                intrinsicWidths,
+                                                logoutWidth:
+                                                    logout.getBoundingClientRect()
+                                                        .width,
+                                            };
+                                        })(),
                                         controls: [
                                             ...shell.querySelectorAll(
                                                 '[data-qa="navigation-preferences"] button',
@@ -1614,6 +1661,34 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                                 JSON.stringify(geometry),
                             );
                             assert.deepEqual(geometry.controls, [44, 44]);
+                            assert.ok(
+                                geometry.preferences.buttonWidths.every(
+                                    (buttonWidth, index) =>
+                                        buttonWidth + 1 >=
+                                        geometry.preferences.intrinsicWidths[
+                                            index
+                                        ],
+                                ),
+                                JSON.stringify(geometry.preferences),
+                            );
+                            assert.ok(
+                                Math.abs(
+                                    geometry.preferences.buttonWidths.reduce(
+                                        (sum, value) => sum + value,
+                                        0,
+                                    ) +
+                                        8 -
+                                        geometry.preferences.width,
+                                ) <= 1,
+                                JSON.stringify(geometry.preferences),
+                            );
+                            assert.ok(
+                                Math.abs(
+                                    geometry.preferences.logoutWidth -
+                                        geometry.preferences.width,
+                                ) <= 1,
+                                JSON.stringify(geometry.preferences),
+                            );
                             metrics.push({
                                 state: `drawer-${height}`,
                                 ...geometry,
@@ -1715,6 +1790,90 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                 await button(t.common.actions.cancel).click();
                 await page.goto(`${origin}/users`);
                 await page.getByText("team-member", { exact: true }).waitFor();
+                if (width < 600) {
+                    const cards = await page
+                        .locator('[data-qa="user-card"]')
+                        .evaluateAll((nodes) =>
+                            nodes.map((card) => {
+                                const bounds = (node) => {
+                                    const rect = node.getBoundingClientRect();
+                                    return {
+                                        top: rect.top,
+                                        bottom: rect.bottom,
+                                        left: rect.left,
+                                        right: rect.right,
+                                        width: rect.width,
+                                        height: rect.height,
+                                        center: rect.top + rect.height / 2,
+                                    };
+                                };
+                                const controls = card.querySelector(
+                                    '[data-qa="user-controls"]',
+                                );
+                                const actions = card.querySelector(
+                                    '[data-qa="user-actions"]',
+                                );
+                                const role = card.querySelector(
+                                    '[data-qa="user-role-control"]',
+                                );
+                                const roleText =
+                                    role.querySelector('[role="combobox"]');
+                                const status = card
+                                    .querySelector('[role="switch"]')
+                                    .closest("label");
+                                const more =
+                                    card.querySelector("[data-user-menu]");
+                                return {
+                                    card: bounds(card),
+                                    controls: bounds(controls),
+                                    role: bounds(role),
+                                    roleText: {
+                                        clientWidth: roleText.clientWidth,
+                                        scrollWidth: roleText.scrollWidth,
+                                    },
+                                    actions: bounds(actions),
+                                    actionCenters: [
+                                        bounds(status).center,
+                                        bounds(more).center,
+                                    ],
+                                };
+                            }),
+                        );
+                    assert.equal(cards.length, 3);
+                    for (const geometry of cards) {
+                        assert.ok(
+                            geometry.card.left >= 0 &&
+                                geometry.card.right <= width &&
+                                geometry.card.height <= 220,
+                            JSON.stringify(geometry),
+                        );
+                        assert.ok(
+                            Math.abs(
+                                geometry.role.width - geometry.controls.width,
+                            ) <= 1,
+                            JSON.stringify(geometry),
+                        );
+                        assert.ok(
+                            geometry.roleText.scrollWidth <=
+                                geometry.roleText.clientWidth,
+                            JSON.stringify(geometry),
+                        );
+                        assert.ok(
+                            Math.abs(
+                                geometry.actions.width -
+                                    geometry.controls.width,
+                            ) <= 1,
+                            JSON.stringify(geometry),
+                        );
+                        assert.ok(
+                            Math.max(...geometry.actionCenters) -
+                                Math.min(...geometry.actionCenters) <=
+                                1,
+                            JSON.stringify(geometry),
+                        );
+                    }
+                    metrics.push({ state: "user-cards", cards });
+                }
                 await capture("users");
                 await button(t.groups.title).click();
                 await page

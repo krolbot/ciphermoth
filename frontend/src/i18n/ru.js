@@ -114,6 +114,7 @@ const ru = {
     workspace: "Рабочая область",
     manage: "Управление",
     administration: "Администрирование",
+    accounts: "Учётные записи",
     more: "Ещё",
     newEntry: "Добавить запись",
   },
@@ -470,7 +471,12 @@ const ru = {
       password: "Напоминание о смене пароля включено.",
       delete: "Пользователь удалён.",
     },
-    roles: { admin: "Администратор", member: "Участник", service: "Служебная учётная запись" },
+    roles: {
+      admin: "Администратор",
+      member: "Участник",
+      service: "Служебная учётная запись",
+      serviceShort: "Служебная",
+    },
   },
   errors: {
     invalidMasterPassword: "Неверный пароль. Повторите попытку.",

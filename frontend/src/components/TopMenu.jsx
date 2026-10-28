@@ -132,7 +132,7 @@ const TopMenu = () => {
     { id: "/passwords?tool=backup", label: t("vault.backup"), icon: CloudArrowUpIn },
     { id: "/passwords?tool=health", label: t("vault.health"), icon: HeartPulse },
     { id: "/passwords?tool=trash", label: t("vault.trash"), icon: TrashBin },
-    ...(admin ? [{ id: "/users", label: t("users.title"), icon: Persons }] : []),
+    ...(admin ? [{ id: "/users", label: t("navigation.accounts"), icon: Persons }] : []),
   ];
   const navigation = (
     <Box as="nav" aria-label={t("navigation.workspace")}>
@@ -222,10 +222,14 @@ const TopMenu = () => {
         <EnvBadge />
       </Flex>
       <Flex gap="spacing-2" alignItems="center" qa="navigation-preferences">
-        <LanguageSwitcher />
-        <ThemeToggle showLabel />
+        <Flex flexGrow={1} minWidth="0">
+          <LanguageSwitcher width="max" />
+        </Flex>
+        <Flex flexGrow={1} minWidth="0">
+          <ThemeToggle showLabel width="max" />
+        </Flex>
       </Flex>
-      <Button view="flat-secondary" size="xl" onClick={logOut}>
+      <Button view="flat-secondary" size="xl" width="max" onClick={logOut}>
         <Icon data={ArrowRightFromSquare} />
         {t("auth.logOut")}
       </Button>
