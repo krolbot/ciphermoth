@@ -831,6 +831,17 @@ for (const [width, authenticated] of [
                 exact: true,
             });
             await toggle.waitFor();
+            const toggleHandle = await toggle.elementHandle();
+            assert.ok(toggleHandle);
+            await page.waitForFunction((button) => {
+                const rect = button.getBoundingClientRect();
+                return (
+                    rect.x >= 0 &&
+                    rect.y >= 0 &&
+                    rect.right <= innerWidth &&
+                    rect.bottom <= innerHeight
+                );
+            }, toggleHandle);
             const geometry = () =>
                 toggle.evaluate((button) => {
                     const style = getComputedStyle(button);
