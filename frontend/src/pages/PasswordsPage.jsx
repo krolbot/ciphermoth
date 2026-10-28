@@ -11,6 +11,8 @@ import {
 } from "@gravity-ui/icons";
 import {
   Flex,
+  Row,
+  Col,
   Text,
   Alert,
   Button,
@@ -47,7 +49,7 @@ const buildSubtitle = (loading, passwords, t) => {
   if (loading) return t("common.labels.loading");
   const count = passwords.length;
   if (count === 0) return t("vault.subtitle.empty");
-  return `${t("vault.subtitle.secretCount", { count })}.`;
+  return t("vault.subtitle.secretCount", { count });
 };
 
 const PasswordsPage = () => {
@@ -374,29 +376,23 @@ const PasswordsPage = () => {
   return (
     <Flex direction="column" gap="spacing-5" minWidth="0" as="section">
       <Flex
-        direction="column"
+        direction={{ xs: "column", m: "row" }}
         gap="spacing-3"
         minWidth="0"
         as="header"
+        alignItems={{ m: "center" }}
         justifyContent="space-between"
       >
-        <Flex direction="column" gap="spacing-3" minWidth="0">
-          <Text as="h1" variant="header-1">
+        <Flex alignItems="baseline" gap="spacing-3" wrap="wrap" minWidth="0">
+          <Text as="h1" variant="header-1" style={{ margin: 0 }}>
             {t("vault.title")}
           </Text>
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text color="secondary" wordBreak="break-word" role="status">
             {subtitle}
           </Text>
         </Flex>
-        <Flex
-          direction={{ xs: "column", m: "row" }}
-          gap="spacing-3"
-          minWidth="0"
-          wrap="wrap"
-          alignItems={{ m: "center" }}
-          justifyContent="space-between"
-        >
-          <Button type="button" view="action" size="l" disabled={!draftReady} onClick={openAdd}>
+        <Flex direction="row" gap="spacing-3" minWidth="0" wrap="wrap" alignItems="center">
+          <Button type="button" view="action" size="xl" disabled={!draftReady} onClick={openAdd}>
             <Icon data={Plus} />
             {t("common.actions.add")}
           </Button>
@@ -423,108 +419,124 @@ const PasswordsPage = () => {
         </Flex>
       </Flex>
 
-      <Flex direction="column" gap="spacing-3" minWidth="0">
-        {error && <Alert theme="danger" view="outlined" message={error} />}
-        {draftError && !draftReady && (
-          <Alert
-            theme="danger"
-            view="outlined"
-            message={t("entry.draft.unavailable")}
-            actions={
-              <>
-                <Button
-                  type="button"
-                  view="flat-danger"
-                  onClick={() => setDraftAttempt((n) => n + 1)}
-                >
-                  {t("common.actions.retry")}
-                </Button>
-                {draftStore && (
+      {(error || (draftError && !draftReady) || damageCheckError || damagedCount > 0) && (
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          {error && <Alert theme="danger" view="outlined" message={error} />}
+          {draftError && !draftReady && (
+            <Alert
+              theme="danger"
+              view="outlined"
+              message={t("entry.draft.unavailable")}
+              actions={
+                <>
                   <Button
                     type="button"
                     view="flat-danger"
-                    onClick={() => {
-                      draftStore.clear();
-                      setDraftError(false);
-                      setDraftReady(true);
-                    }}
+                    onClick={() => setDraftAttempt((n) => n + 1)}
                   >
-                    {t("entry.draft.discard")}
+                    {t("common.actions.retry")}
                   </Button>
-                )}
-              </>
-            }
-            actionsLayout="horizontal"
-          />
-        )}
-        {damageCheckError && (
-          <Alert
-            theme="warning"
-            view="outlined"
-            message={damageCheckError}
-            actions={
-              <Button type="button" view="flat-warning" onClick={() => getDamaged()}>
-                {t("common.actions.retry")}
-              </Button>
-            }
-          />
-        )}
-        {damagedCount > 0 && (
-          <Alert
-            theme="warning"
-            view="outlined"
-            message={t("vault.damage.message", { count: damagedCount })}
-            actions={
-              <Button type="button" view="flat-warning" onClick={() => setRemoveDamagedOpen(true)}>
-                {t("common.actions.remove")}
-              </Button>
-            }
-          />
-        )}
-      </Flex>
-
-      {!isEmpty && (
-        <Flex direction="column" gap="spacing-3" minWidth="0">
-          <TextInput
-            size="l"
-            type="search"
-            placeholder={t("vault.searchPlaceholder")}
-            value={search}
-            onUpdate={setSearch}
-            hasClear
-            startContent={<Icon data={Magnifier} />}
-            controlProps={{ "aria-label": t("vault.searchPlaceholder") }}
-          />
-          {folderOptions.length > 0 && (
-            <Select
-              size="l"
-              aria-label={t("common.fields.folder")}
-              label={`${t("common.fields.folder")}:`}
-              value={[activeFolder]}
-              onUpdate={([value = ""]) => setFolderFilter(value)}
-              options={[
-                { value: "", content: t("vault.allFolders") },
-                ...folderOptions.map((folder) => ({
-                  value: String(folder.id),
-                  content: `${folder.name} · ${folder.owner_username ?? folder.owner_id}`,
-                })),
-              ]}
+                  {draftStore && (
+                    <Button
+                      type="button"
+                      view="flat-danger"
+                      onClick={() => {
+                        draftStore.clear();
+                        setDraftError(false);
+                        setDraftReady(true);
+                      }}
+                    >
+                      {t("entry.draft.discard")}
+                    </Button>
+                  )}
+                </>
+              }
+              actionsLayout="horizontal"
             />
           )}
-          <Select
-            size="l"
-            aria-label={t("vault.browser.sort")}
-            label={`${t("vault.browser.sort")}:`}
-            value={[sortOrder]}
-            onUpdate={([value = "created-desc"]) => setSortOrder(value)}
-            options={[
-              { value: "favorites", content: t("vault.browser.favoritesFirst") },
-              { value: "name", content: t("vault.browser.nameAscending") },
-              { value: "name-desc", content: t("vault.browser.nameDescending") },
-              { value: "created-desc", content: t("vault.browser.dateAdded") },
-            ]}
-          />
+          {damageCheckError && (
+            <Alert
+              theme="warning"
+              view="outlined"
+              message={damageCheckError}
+              actions={
+                <Button type="button" view="flat-warning" onClick={() => getDamaged()}>
+                  {t("common.actions.retry")}
+                </Button>
+              }
+            />
+          )}
+          {damagedCount > 0 && (
+            <Alert
+              theme="warning"
+              view="outlined"
+              message={t("vault.damage.message", { count: damagedCount })}
+              actions={
+                <Button
+                  type="button"
+                  view="flat-warning"
+                  onClick={() => setRemoveDamagedOpen(true)}
+                >
+                  {t("common.actions.remove")}
+                </Button>
+              }
+            />
+          )}
         </Flex>
+      )}
+
+      {!isEmpty && (
+        <Row gap="spacing-3">
+          <Col
+            size={{ xs: 12, m: folderOptions.length ? 12 : 8, xl: folderOptions.length ? 6 : 8 }}
+          >
+            <TextInput
+              size="xl"
+              type="search"
+              placeholder={t("vault.searchPlaceholder")}
+              value={search}
+              onUpdate={setSearch}
+              hasClear
+              startContent={<Icon data={Magnifier} />}
+              controlProps={{ "aria-label": t("vault.searchPlaceholder") }}
+            />
+          </Col>
+          {folderOptions.length > 0 && (
+            <Col size={{ xs: 12, m: 6, xl: 3 }}>
+              <Select
+                size="xl"
+                width="max"
+                aria-label={t("common.fields.folder")}
+                label={`${t("common.fields.folder")}:`}
+                value={[activeFolder]}
+                onUpdate={([value = ""]) => setFolderFilter(value)}
+                options={[
+                  { value: "", content: t("vault.allFolders") },
+                  ...folderOptions.map((folder) => ({
+                    value: String(folder.id),
+                    content: `${folder.name} · ${folder.owner_username ?? folder.owner_id}`,
+                  })),
+                ]}
+              />
+            </Col>
+          )}
+          <Col size={{ xs: 12, m: folderOptions.length ? 6 : 4, xl: folderOptions.length ? 3 : 4 }}>
+            <Select
+              size="xl"
+              width="max"
+              aria-label={t("vault.browser.sort")}
+              label={`${t("vault.browser.sort")}:`}
+              value={[sortOrder]}
+              onUpdate={([value = "created-desc"]) => setSortOrder(value)}
+              options={[
+                { value: "favorites", content: t("vault.browser.favoritesFirst") },
+                { value: "name", content: t("vault.browser.nameAscending") },
+                { value: "name-desc", content: t("vault.browser.nameDescending") },
+                { value: "created-desc", content: t("vault.browser.dateAdded") },
+              ]}
+            />
+          </Col>
+        </Row>
       )}
 
       {loading && (
@@ -545,6 +557,7 @@ const PasswordsPage = () => {
       {passwords.length > 0 && (
         <EntryBrowser
           entries={filteredPasswords}
+          totalCount={passwords.length}
           emptyMessage={t("vault.noSearchResults", { search: search.trim() })}
           requestedEntryId={requestedEntryId}
           onRequestedEntryOpen={() => setRequestedEntryId(null)}

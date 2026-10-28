@@ -437,55 +437,57 @@ const PasswordFormDialog = ({
 
   const body = (
     <Flex direction="column" gap="spacing-5" minWidth="0">
-      <Flex direction="column" gap="spacing-3" minWidth="0">
-        {favoriteButton}
-      </Flex>
       {!editTarget && !draftError && (
         <Text as="p" color="secondary" wordBreak="break-word" role="status">
           {t("entry.draft.savedLocally")}
         </Text>
       )}
-      {!editTarget && (
-        <SegmentedRadioGroup
-          name="entry-kind"
-          width="max"
-          value={form.kind}
-          onUpdate={(value) => setForm((previous) => ({ ...previous, kind: value }))}
-        >
-          <SegmentedRadioGroup.Option value="login">
-            <Text wordBreak="break-word">
-              <Icon data={Key} />
-              {t("entry.kind.login")}
-            </Text>
-          </SegmentedRadioGroup.Option>
-          <SegmentedRadioGroup.Option value="note">
-            <Text wordBreak="break-word">
-              <Icon data={FileText} />
-              {t("entry.kind.note")}
-            </Text>
-          </SegmentedRadioGroup.Option>
-        </SegmentedRadioGroup>
-      )}
+      <Flex alignItems="center" gap="spacing-2" minWidth="0">
+        {!editTarget && (
+          <SegmentedRadioGroup
+            size="l"
+            name="entry-kind"
+            value={form.kind}
+            onUpdate={(value) => setForm((previous) => ({ ...previous, kind: value }))}
+          >
+            <SegmentedRadioGroup.Option value="login">
+              <Text wordBreak="break-word">
+                <Icon data={Key} />
+                {t("common.fields.password")}
+              </Text>
+            </SegmentedRadioGroup.Option>
+            <SegmentedRadioGroup.Option value="note">
+              <Text wordBreak="break-word">
+                <Icon data={FileText} />
+                {t("entry.labels.note")}
+              </Text>
+            </SegmentedRadioGroup.Option>
+          </SegmentedRadioGroup>
+        )}
+        {favoriteButton}
+      </Flex>
 
       <Flex direction="column" gap="spacing-3" minWidth="0">
-        <TextInput
-          label={t("common.fields.name")}
-          size="l"
-          value={form.password_name}
-          onUpdate={setValue("password_name")}
-          disabled={Boolean(editTarget)}
-          required
-          autoFocus
-          controlRef={nameInputRef}
-          controlProps={{ maxLength: 255 }}
-          note={
-            editTarget
-              ? t("entry.help.nameCannotChange")
-              : isNote
-                ? t("entry.placeholders.noteName")
-                : t("entry.placeholders.passwordName")
-          }
-        />
+        <Flex as="label" direction="column" gap="spacing-2" minWidth="0">
+          <Text>{t("common.fields.name")}</Text>
+          <TextInput
+            size="xl"
+            value={form.password_name}
+            onUpdate={setValue("password_name")}
+            disabled={Boolean(editTarget)}
+            required
+            autoFocus
+            controlRef={nameInputRef}
+            controlProps={{ maxLength: 255, "aria-label": t("common.fields.name") }}
+            note={
+              editTarget
+                ? t("entry.help.nameCannotChange")
+                : isNote
+                  ? t("entry.placeholders.noteName")
+                  : t("entry.placeholders.passwordName")
+            }
+          />
+        </Flex>
 
         {isNote ? (
           <TextArea
@@ -503,25 +505,39 @@ const PasswordFormDialog = ({
           />
         ) : (
           <>
-            <TextInput
-              label={t("entry.labels.usernameOptional")}
-              size="l"
-              value={form.username}
-              onUpdate={setValue("username")}
-              placeholder={t("entry.placeholders.username")}
-              controlProps={{ spellCheck: false, autoCorrect: "off", autoCapitalize: "none" }}
-            />
-            <TextInput
-              label={t("entry.labels.websiteOptional")}
-              size="l"
-              value={form.url}
-              onUpdate={setValue("url")}
-              placeholder={t("entry.placeholders.website")}
-              controlProps={{ spellCheck: false, autoCorrect: "off", autoCapitalize: "none" }}
-            />
+            <Flex as="label" direction="column" gap="spacing-2" minWidth="0">
+              <Text>{t("entry.labels.usernameOptional")}</Text>
+              <TextInput
+                size="xl"
+                value={form.username}
+                onUpdate={setValue("username")}
+                placeholder={t("entry.placeholders.username")}
+                controlProps={{
+                  "aria-label": t("entry.labels.usernameOptional"),
+                  spellCheck: false,
+                  autoCorrect: "off",
+                  autoCapitalize: "none",
+                }}
+              />
+            </Flex>
+            <Flex as="label" direction="column" gap="spacing-2" minWidth="0">
+              <Text>{t("entry.labels.websiteOptional")}</Text>
+              <TextInput
+                size="xl"
+                value={form.url}
+                onUpdate={setValue("url")}
+                placeholder={t("entry.placeholders.website")}
+                controlProps={{
+                  "aria-label": t("entry.labels.websiteOptional"),
+                  spellCheck: false,
+                  autoCorrect: "off",
+                  autoCapitalize: "none",
+                }}
+              />
+            </Flex>
             <PasswordField
               label={t("common.fields.password")}
-              size="l"
+              size="xl"
               value={form.password_value}
               onChange={(event) => {
                 setField("password_value")(event);
@@ -572,23 +588,28 @@ const PasswordFormDialog = ({
         )}
       </Flex>
 
-      <TextInput
-        label={t("entry.labels.folderOptional")}
-        size="l"
-        value={form.folder}
-        onUpdate={(value) => {
-          const match = folderOptions.find((folder) => folder.name === value);
-          setForm((previous) => ({
-            ...previous,
-            folder: value,
-            folder_id: match?.id ?? null,
-          }));
-          closeSnackbar("entry-form-error");
-        }}
-        disabled={Boolean(editTarget && editTarget.access !== "owner")}
-        placeholder={t("entry.placeholders.folder")}
-        controlProps={{ list: "cm-entry-folder-options" }}
-      />
+      <Flex as="label" direction="column" gap="spacing-2" minWidth="0">
+        <Text>{t("entry.labels.folderOptional")}</Text>
+        <TextInput
+          size="xl"
+          value={form.folder}
+          onUpdate={(value) => {
+            const match = folderOptions.find((folder) => folder.name === value);
+            setForm((previous) => ({
+              ...previous,
+              folder: value,
+              folder_id: match?.id ?? null,
+            }));
+            closeSnackbar("entry-form-error");
+          }}
+          disabled={Boolean(editTarget && editTarget.access !== "owner")}
+          placeholder={t("entry.placeholders.folder")}
+          controlProps={{
+            list: "cm-entry-folder-options",
+            "aria-label": t("entry.labels.folderOptional"),
+          }}
+        />
+      </Flex>
       <datalist id="cm-entry-folder-options">
         {folderOptions.map((folder) => (
           <option key={folder.id} value={folder.name} />
@@ -748,14 +769,7 @@ const PasswordFormDialog = ({
   if (page) {
     return (
       <Flex direction="column" gap="spacing-5" minWidth="0" as="section" aria-label={t(titleKey)}>
-        <Flex
-          direction={{ xs: "column", m: "row" }}
-          gap="spacing-5"
-          minWidth="0"
-          wrap="wrap"
-          alignItems={{ m: "center" }}
-          as="header"
-        >
+        <Flex alignItems="center" gap="spacing-3" minWidth="0" as="header">
           <Text as="h1" variant="header-1">
             {t(titleKey)}
           </Text>

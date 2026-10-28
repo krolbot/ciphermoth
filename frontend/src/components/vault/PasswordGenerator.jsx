@@ -23,13 +23,7 @@ const PasswordGenerator = ({
 
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-      <Flex
-        direction={{ xs: "column", m: "row" }}
-        gap="spacing-3"
-        minWidth="0"
-        wrap="wrap"
-        alignItems={{ m: "center" }}
-      >
+      <Flex gap="spacing-2" alignItems="baseline" justifyContent="space-between">
         <span>{t("generator.length")}</span>
         <output>{options.length}</output>
       </Flex>
@@ -41,13 +35,7 @@ const PasswordGenerator = ({
         onUpdate={onChangeLength}
         aria-label={t("generator.length")}
       />
-      <Flex
-        direction={{ xs: "column", m: "row" }}
-        gap="spacing-3"
-        minWidth="0"
-        wrap="wrap"
-        alignItems={{ m: "center" }}
-      >
+      <Flex gap="spacing-2" minWidth="0" wrap="wrap" alignItems="center">
         {CHAR_OPTS.map(({ key, label }) => (
           <Button
             key={key}

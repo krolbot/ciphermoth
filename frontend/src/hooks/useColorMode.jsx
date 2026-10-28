@@ -50,7 +50,12 @@ export const ColorModeProvider = ({ children }) => {
           theme={mode}
           lang={language}
 
-          defaultProps={{ TooltipDelayGroup: { skipDelay: 300 } }}
+          defaultProps={{
+            TooltipDelayGroup: { skipDelay: 300 },
+            // Layout gaps own the rhythm, including semantic headings and paragraphs.
+            Text: { style: { margin: 0 } },
+            Button: { size: "xl" },
+          }}
         >
           {children}
         </ResponsiveGravity>

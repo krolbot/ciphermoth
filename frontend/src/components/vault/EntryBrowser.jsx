@@ -19,6 +19,7 @@ import EntryListActions from "./EntryListActions";
 
 const EntryBrowser = ({
   entries,
+  totalCount,
   emptyMessage,
   onCopy,
   requestedEntryId,
@@ -103,10 +104,12 @@ const EntryBrowser = ({
         as="section"
         aria-label={t("vault.browser.entries")}
       >
-        <Flex alignItems="center" gap="spacing-2" paddingBlockEnd="spacing-3">
-          <Text variant="subheader-1">{t("vault.browser.entries")}</Text>
-          <Label>{entries.length}</Label>
-        </Flex>
+        {entries.length !== totalCount && (
+          <Flex alignItems="center" gap="spacing-2" paddingBlockEnd="spacing-3">
+            <Text variant="subheader-1">{t("vault.browser.entries")}</Text>
+            <Label>{entries.length}</Label>
+          </Flex>
+        )}
         {entries.length === 0 ? (
           <PlaceholderContainer size="s" title={emptyMessage} />
         ) : (

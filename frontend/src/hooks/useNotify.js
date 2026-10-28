@@ -19,8 +19,7 @@ export const useSnackbar = () => {
       const name = String(options.key ?? `cm-notification-${++notificationId}`);
       add({
         name,
-        title: typeof message === "string" ? message : undefined,
-        content: typeof message === "string" ? undefined : message,
+        content: message,
         theme: themes[options.variant] ?? "normal",
         autoHiding: options.persist ? false : (options.autoHideDuration ?? 5000),
         isClosable: true,

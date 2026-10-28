@@ -55,6 +55,7 @@ html[data-theme="dark"] body {
   --g-color-text-secondary: #b8bac2;
   --g-color-text-danger: #ff8299;
   --g-color-text-danger-heavy: #ff9bae;
+  --g-color-text-warning: #ffbe5c;
   --g-color-text-misc: #b7c5d1;
   --g-color-text-misc-heavy: #b7c5d1;
   --g-color-text-link: #b5f602;

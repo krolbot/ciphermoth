@@ -18,7 +18,7 @@ const LanguageSwitcher = ({ placement = "inline" }) => {
         <Button
           type="button"
           view="flat-secondary"
-          size="l"
+          size="xl"
           aria-label={`${t("language.label")}: ${current.toUpperCase()}`}
         >
           <Icon data={Globe} />

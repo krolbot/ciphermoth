@@ -51,25 +51,30 @@ const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
         </span>
       </Flex>
       <Select
-        size="m"
+        size="xl"
         aria-label={t("sharing.permission")}
         value={[permission]}
         disabled={busy}
         options={permissionOptions(t)}
         onUpdate={([value = "read"]) => setPermission(value)}
       />
-      <TextInput
-        size="m"
-        type="datetime-local"
-        label={t("folderAccess.expiresAt")}
-        note={t("folderAccess.expiresHint")}
-        value={expiresAt}
-        disabled={busy}
-        onUpdate={setExpiresAt}
-        validationState={expiryInvalid ? "invalid" : undefined}
-        errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
-        controlProps={{ min: toLocalExpiry(new Date().toISOString()) }}
-      />
+      <Flex as="label" direction="column" gap="spacing-2" minWidth="0" width="100%">
+        <Text>{t("folderAccess.expiresAt")}</Text>
+        <TextInput
+          size="xl"
+          type="datetime-local"
+          note={t("folderAccess.expiresHint")}
+          value={expiresAt}
+          disabled={busy}
+          onUpdate={setExpiresAt}
+          validationState={expiryInvalid ? "invalid" : undefined}
+          errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
+          controlProps={{
+            "aria-label": t("folderAccess.expiresAt"),
+            min: toLocalExpiry(new Date().toISOString()),
+          }}
+        />
+      </Flex>
       <Button
         type="button"
         view="outlined"
@@ -269,8 +274,9 @@ const FolderAccessDialog = ({ open, onClose }) => {
                 alignItems={{ m: "center" }}
               >
                 <TextInput
-                  size="m"
-                  label={t("common.fields.name")}
+                  size="xl"
+                  placeholder={t("common.fields.name")}
+                  controlProps={{ "aria-label": t("common.fields.name") }}
                   value={newFolderName}
                   onUpdate={setNewFolderName}
                 />
@@ -292,7 +298,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
             ) : (
               <>
                 <Select
-                  size="l"
+                  size="xl"
                   aria-label={t("common.fields.folder")}
                   value={folderId ? [folderId] : []}
                   options={folders.map((folder) => ({
@@ -342,8 +348,9 @@ const FolderAccessDialog = ({ open, onClose }) => {
                       alignItems={{ m: "center" }}
                     >
                       <TextInput
-                        size="m"
-                        label={t("folderAccess.rename")}
+                        size="xl"
+                        placeholder={t("folderAccess.rename")}
+                        controlProps={{ "aria-label": t("folderAccess.rename") }}
                         value={renameName}
                         onUpdate={setRenameName}
                       />
@@ -432,7 +439,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
                         alignItems={{ m: "center" }}
                       >
                         <Select
-                          size="m"
+                          size="xl"
                           aria-label={t("folderAccess.targetType")}
                           value={[targetType]}
                           disabled={busy}
@@ -446,7 +453,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
                           }}
                         />
                         <Select
-                          size="m"
+                          size="xl"
                           aria-label={t("folderAccess.target")}
                           placeholder={t("folderAccess.target")}
                           value={targetId ? [targetId] : []}
@@ -458,27 +465,38 @@ const FolderAccessDialog = ({ open, onClose }) => {
                           onUpdate={([value = ""]) => setTargetId(value)}
                         />
                         <Select
-                          size="m"
+                          size="xl"
                           aria-label={t("sharing.permission")}
                           value={[permission]}
                           disabled={busy}
                           options={permissionOptions(t)}
                           onUpdate={([value = "read"]) => setPermission(value)}
                         />
-                        <TextInput
-                          size="m"
-                          type="datetime-local"
-                          label={t("folderAccess.expiresAt")}
-                          note={t("folderAccess.expiresHint")}
-                          value={expiresAt}
-                          disabled={busy}
-                          onUpdate={setExpiresAt}
-                          validationState={expiryInvalid ? "invalid" : undefined}
-                          errorMessage={
-                            expiryInvalid ? t("folderAccess.expiresValidation") : undefined
-                          }
-                          controlProps={{ min: toLocalExpiry(new Date().toISOString()) }}
-                        />
+                        <Flex
+                          as="label"
+                          direction="column"
+                          gap="spacing-2"
+                          minWidth="0"
+                          width="100%"
+                        >
+                          <Text>{t("folderAccess.expiresAt")}</Text>
+                          <TextInput
+                            size="xl"
+                            type="datetime-local"
+                            note={t("folderAccess.expiresHint")}
+                            value={expiresAt}
+                            disabled={busy}
+                            onUpdate={setExpiresAt}
+                            validationState={expiryInvalid ? "invalid" : undefined}
+                            errorMessage={
+                              expiryInvalid ? t("folderAccess.expiresValidation") : undefined
+                            }
+                            controlProps={{
+                              "aria-label": t("folderAccess.expiresAt"),
+                              min: toLocalExpiry(new Date().toISOString()),
+                            }}
+                          />
+                        </Flex>
                         <Button
                           type="button"
                           view="action"

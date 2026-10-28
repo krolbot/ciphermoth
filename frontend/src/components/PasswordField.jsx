@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Eye, EyeSlash, MagicWand } from "@gravity-ui/icons";
-import { Button, Flex, Icon, PasswordInput, Tooltip } from "@gravity-ui/uikit";
+import { Button, Flex, Icon, PasswordInput, Text, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { IS_DESKTOP } from "../platform";
@@ -17,7 +17,7 @@ const PasswordField = ({
   label,
   helperText,
   required = false,
-  size = "l",
+  size = "xl",
   id: idProp,
   inputRef,
   error,
@@ -31,6 +31,7 @@ const PasswordField = ({
   const { t } = useTranslation();
   const generatedId = useId();
   const id = idProp ?? `cm-password-${generatedId}`;
+  const controlSize = SIZE_MAP[size] ?? size;
 
   const [showInternal, setShowInternal] = useState(false);
   const controlled = showProp !== undefined;
@@ -47,7 +48,7 @@ const PasswordField = ({
       <Button
         type="button"
         view="flat-secondary"
-        size="xl"
+        size={controlSize}
         aria-label={t("entry.actions.generatePassword")}
         onClick={() => onGenerate(generatePassword())}
         disabled={props.disabled}
@@ -57,10 +58,9 @@ const PasswordField = ({
     </Tooltip>
   );
 
-  return (
+  const input = (
     <PasswordInput
       {...props}
-      label={label}
       required={required}
       controlRef={inputRef ?? props.controlRef}
       validationState={error ? "invalid" : props.validationState}
@@ -68,7 +68,7 @@ const PasswordField = ({
       note={!error && props.validationState !== "invalid" ? helperText : undefined}
 
       id={id}
-      size={SIZE_MAP[size] ?? size}
+      size={controlSize}
       hideCopyButton
       hideRevealButton
       revealValue={show}
@@ -81,7 +81,7 @@ const PasswordField = ({
             <Button
               type="button"
               view="flat-secondary"
-              size="xl"
+              size={controlSize}
               qa="reveal-button"
               aria-label={t(show ? "passwordField.hide" : "passwordField.show")}
               disabled={props.disabled}
@@ -103,6 +103,17 @@ const PasswordField = ({
         ...slotProps?.htmlInput,
       }}
     />
+  );
+
+  return label ? (
+    <Flex direction="column" gap="spacing-2" minWidth="0">
+      <Text as="label" htmlFor={id}>
+        {label}
+      </Text>
+      {input}
+    </Flex>
+  ) : (
+    input
   );
 };
 

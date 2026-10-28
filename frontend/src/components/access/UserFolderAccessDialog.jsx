@@ -21,11 +21,11 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0" as="article" paddingBlock="spacing-3">
       <Flex
-        direction={{ xs: "column", m: "row" }}
+        direction="row"
         gap="spacing-3"
         minWidth="0"
         wrap="wrap"
-        alignItems={{ m: "center" }}
+        alignItems="center"
         as="header"
       >
         <Flex direction="column" gap="spacing-3" minWidth="0">
@@ -45,7 +45,7 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
         </Label>
       </Flex>
 
-      <Flex direction="column" gap="spacing-3" minWidth="0">
+      <Flex gap="spacing-2" wrap="wrap" minWidth="0">
         {item.sources.map((source, index) => (
           <Label
             key={`${source.source}-${source.source_id}-${index}`}
@@ -74,7 +74,7 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
           alignItems={{ m: "center" }}
         >
           <Select
-            size="m"
+            size="xl"
             aria-label={t("sharing.permission")}
             value={[permission]}
             disabled={busy}
@@ -84,18 +84,23 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
             ]}
             onUpdate={([value = "read"]) => setPermission(value)}
           />
-          <TextInput
-            size="m"
-            type="datetime-local"
-            label={t("folderAccess.expiresAt")}
-            note={t("folderAccess.expiresHint")}
-            value={expiresAt}
-            disabled={busy}
-            onUpdate={setExpiresAt}
-            validationState={expiryInvalid ? "invalid" : undefined}
-            errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
-            controlProps={{ min: toLocalExpiry(new Date().toISOString()) }}
-          />
+          <Flex as="label" direction="column" gap="spacing-2" minWidth="0" width="100%">
+            <Text>{t("folderAccess.expiresAt")}</Text>
+            <TextInput
+              size="xl"
+              type="datetime-local"
+              note={t("folderAccess.expiresHint")}
+              value={expiresAt}
+              disabled={busy}
+              onUpdate={setExpiresAt}
+              validationState={expiryInvalid ? "invalid" : undefined}
+              errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
+              controlProps={{
+                "aria-label": t("folderAccess.expiresAt"),
+                min: toLocalExpiry(new Date().toISOString()),
+              }}
+            />
+          </Flex>
           <Button
             type="button"
             view="action"

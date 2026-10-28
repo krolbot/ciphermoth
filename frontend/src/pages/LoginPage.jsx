@@ -101,26 +101,26 @@ const LoginPage = () => {
           as="form"
           direction="column"
           gap="spacing-5"
-          padding="spacing-6"
+          padding={{ xs: "spacing-4", s: "spacing-6" }}
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
             if (!loading) (initialized ? handleLogin : handleCreate)();
           }}
         >
-          <Flex alignItems="center" justifyContent="space-between" gap="spacing-3">
+          <Flex alignItems="center" justifyContent="space-between" gap="spacing-2">
             <Flex alignItems="center" gap="spacing-2">
               <BrandMark />
               <Text variant="subheader-3">
                 {i18n.resolvedLanguage?.startsWith("ru") ? "Недра" : "Nedra"}
               </Text>
             </Flex>
-            <Flex gap="spacing-2">
+            <Flex alignItems="center" gap="spacing-1" flexShrink={0}>
               <ThemeToggle />
               <LanguageSwitcher />
             </Flex>
           </Flex>
-          <Text as="h1" variant="header-1">
+          <Text as="h1" variant="header-1" style={{ margin: 0 }}>
             {t(initialized ? "auth.unlock" : "auth.setupTitle")}
           </Text>
           <Text color="secondary">{t(initialized ? "auth.tagline" : "auth.setupDescription")}</Text>
@@ -128,9 +128,9 @@ const LoginPage = () => {
           {error && <Alert theme="danger" message={error} />}
           <TextInput
             id="cm-auth-username"
-            label={t(initialized ? "auth.username" : "auth.administratorUsername")}
+            placeholder={t(initialized ? "auth.username" : "auth.administratorUsername")}
             required
-            size="l"
+            size="xl"
             value={username}
             disabled={loading}
             autoFocus
@@ -140,10 +140,15 @@ const LoginPage = () => {
               setError(null);
             }}
             note={initialized ? undefined : t("auth.usernameRules")}
-            controlProps={{ autoCapitalize: "none", spellCheck: false, required: true }}
+            controlProps={{
+              "aria-label": t(initialized ? "auth.username" : "auth.administratorUsername"),
+              autoCapitalize: "none",
+              spellCheck: false,
+              required: true,
+            }}
           />
           <PasswordField
-            label={t("auth.masterPassword")}
+            placeholder={t("auth.masterPassword")}
             required
             value={value}
             onGenerate={initialized ? undefined : setValue}
@@ -153,6 +158,7 @@ const LoginPage = () => {
               setError(null);
             }}
             autoComplete={initialized ? "current-password" : "new-password"}
+            controlProps={{ "aria-label": t("auth.masterPassword") }}
           />
           {!initialized && value && strength && (
             <Flex direction="column" gap="spacing-2" aria-live="polite">
@@ -163,7 +169,7 @@ const LoginPage = () => {
           {!initialized && (
             <>
               <PasswordField
-                label={t("auth.confirmMasterPassword")}
+                placeholder={t("auth.confirmMasterPassword")}
                 required
                 value={confirm}
                 disabled={loading}
@@ -172,6 +178,7 @@ const LoginPage = () => {
                   setError(null);
                 }}
                 autoComplete="new-password"
+                controlProps={{ "aria-label": t("auth.confirmMasterPassword") }}
               />
               <Alert theme="warning" message={t("auth.noRecoveryWarning")} />
               <Checkbox
@@ -189,7 +196,7 @@ const LoginPage = () => {
           <Button
             type="submit"
             view="action"
-            size="l"
+            size="xl"
             width="max"
             loading={loading}
             disabled={!initialized && !acknowledged}

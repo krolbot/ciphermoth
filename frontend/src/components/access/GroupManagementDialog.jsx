@@ -146,8 +146,9 @@ const GroupManagementDialog = ({ open, onClose }) => {
                 alignItems={{ m: "center" }}
               >
                 <TextInput
-                  size="m"
-                  label={t("groups.name")}
+                  size="xl"
+                  placeholder={t("groups.name")}
+                  controlProps={{ "aria-label": t("groups.name") }}
                   value={newName}
                   onUpdate={setNewName}
                 />
@@ -169,7 +170,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
             ) : (
               <>
                 <Select
-                  size="l"
+                  size="xl"
                   aria-label={t("groups.group")}
                   value={groupId ? [groupId] : []}
                   options={groups.map((group) => ({
@@ -194,8 +195,9 @@ const GroupManagementDialog = ({ open, onClose }) => {
                     alignItems={{ m: "center" }}
                   >
                     <TextInput
-                      size="m"
-                      label={t("groups.rename")}
+                      size="xl"
+                      placeholder={t("groups.rename")}
+                      controlProps={{ "aria-label": t("groups.rename") }}
                       value={renameName}
                       onUpdate={setRenameName}
                     />
@@ -236,19 +238,28 @@ const GroupManagementDialog = ({ open, onClose }) => {
                     <Flex direction="column" gap="spacing-2" minWidth="0">
                       {members.map((member) => (
                         <Flex
-                          direction={{ xs: "column", m: "row" }}
+                          direction="row"
                           gap="spacing-2"
+                          alignItems="center"
                           minWidth="0"
                           paddingBlock="spacing-2"
                           justifyContent="space-between"
                           key={member.user_id}
                         >
-                          <span>
-                            <Text as="strong">{member.username}</Text>
+                          <Flex
+                            direction="column"
+                            gap="spacing-1"
+                            minWidth="0"
+                            flexGrow={1}
+                            flexBasis={0}
+                          >
+                            <Text as="strong" wordBreak="break-word">
+                              {member.username}
+                            </Text>
                             <Text as="small" variant="caption-2" color="secondary">
                               {t(`users.roles.${member.role}`)}
                             </Text>
-                          </span>
+                          </Flex>
                           <Button
                             type="button"
                             view="flat-danger"
@@ -278,7 +289,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
                     alignItems={{ m: "center" }}
                   >
                     <Select
-                      size="m"
+                      size="xl"
                       aria-label={t("groups.addMember")}
                       placeholder={t("groups.addMember")}
                       value={userId ? [userId] : []}
