@@ -1,4 +1,4 @@
-import { Dialog, Label } from "@gravity-ui/uikit";
+import { Flex, Text, Dialog, Label } from "@gravity-ui/uikit";
 import { useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -15,7 +15,7 @@ const UpdateDialog = ({ open, onClose }) => {
   return (
     <Dialog
       aria-label={t("updateDialog.title")}
-      className="cm-secondary-dialog cm-update-dialog"
+
       contentOverflow="auto"
       fullWidth
       maxWidth="s"
@@ -26,31 +26,35 @@ const UpdateDialog = ({ open, onClose }) => {
     >
       <Dialog.Header caption={t("updateDialog.title")} />
       <Dialog.Body>
-        <div className="cm-update-dialog__content">
-          <div className="cm-update-dialog__versions" aria-label={t("updateDialog.title")}>
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          <Flex
+            direction="column"
+            gap="spacing-3"
+            minWidth="0"
+            aria-label={t("updateDialog.title")}
+          >
             <Label size="s">{current ? `v${stripV(current)}` : "-"}</Label>
             <span aria-hidden="true">→</span>
             <Label size="s" theme="success">
               {latest ?? "-"}
             </Label>
-          </div>
+          </Flex>
 
           {releaseUrl && (
-            <a
-              className="cm-inline-link"
-              href={releaseUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <a href={releaseUrl} target="_blank" rel="noopener noreferrer">
               {t("updateDialog.releaseNotes")}
             </a>
           )}
 
-          <div>
-            <p className="cm-secondary-copy">{t("updateDialog.manualBackupDescription")}</p>
-            <pre className="cm-command-block">{MANUAL_UPDATE_COMMAND}</pre>
-          </div>
-        </div>
+          <Flex direction="column" gap="spacing-3" minWidth="0">
+            <Text as="p" color="secondary" wordBreak="break-word">
+              {t("updateDialog.manualBackupDescription")}
+            </Text>
+            <Text as="pre" variant="code-1" whiteSpace="break-spaces" wordBreak="break-all">
+              {MANUAL_UPDATE_COMMAND}
+            </Text>
+          </Flex>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer
         onClickButtonApply={onClose}

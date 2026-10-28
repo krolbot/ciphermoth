@@ -166,7 +166,7 @@ describe("authenticate", () => {
     await authenticate(actions, "/auth/login", "wrong");
 
     expect(isAuth()).toBe(false);
-    expect(current().error).toBe("Too many attempts. Please try again in an hour.");
+    expect(current().error).toBe("Too many login attempts. Try again in an hour.");
   });
 
   it("shows the server detail on other errors", async () => {

@@ -20,7 +20,6 @@ const LanguageSwitcher = ({ placement = "inline" }) => {
           view="flat-secondary"
           size="l"
           aria-label={`${t("language.label")}: ${current.toUpperCase()}`}
-          className={placement === "floating" ? "cm-language-switcher--floating" : undefined}
         >
           <Icon data={Globe} />
           {current.toUpperCase()}

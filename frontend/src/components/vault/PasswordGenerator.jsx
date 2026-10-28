@@ -1,5 +1,5 @@
 import { ArrowRotateRight } from "@gravity-ui/icons";
-import { Button, Icon, Slider, Tooltip } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Icon, Slider, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 const CHAR_OPTS = [
@@ -22,11 +22,17 @@ const PasswordGenerator = ({
   const { t } = useTranslation();
 
   return (
-    <section className="cm-password-generator">
-      <div className="cm-password-generator__length">
+    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+      <Flex
+        direction={{ xs: "column", m: "row" }}
+        gap="spacing-3"
+        minWidth="0"
+        wrap="wrap"
+        alignItems={{ m: "center" }}
+      >
         <span>{t("generator.length")}</span>
         <output>{options.length}</output>
-      </div>
+      </Flex>
       <Slider
         value={options.length}
         min={8}
@@ -35,29 +41,37 @@ const PasswordGenerator = ({
         onUpdate={onChangeLength}
         aria-label={t("generator.length")}
       />
-      <div className="cm-password-generator__classes">
+      <Flex
+        direction={{ xs: "column", m: "row" }}
+        gap="spacing-3"
+        minWidth="0"
+        wrap="wrap"
+        alignItems={{ m: "center" }}
+      >
         {CHAR_OPTS.map(({ key, label }) => (
           <Button
             key={key}
             type="button"
-            size="s"
+            size="xl"
             selected={options[key]}
             view={options[key] ? "action" : "outlined"}
             onClick={() => onToggleClass(key)}
             aria-pressed={options[key]}
           >
-            <span className="cm-password-generator__class-label">{label}</span>
+            <Text wordBreak="break-word" variant="code-1">
+              {label}
+            </Text>
           </Button>
         ))}
         {canUndo && (
-          <Button type="button" size="s" view="flat-secondary" onClick={onUndo}>
+          <Button type="button" size="xl" view="flat-secondary" onClick={onUndo}>
             {t("generator.undoReplacement")}
           </Button>
         )}
         <Tooltip content={t("generator.regenerate")}>
           <Button
             type="button"
-            size="s"
+            size="xl"
             view="flat-secondary"
             onClick={onRegenerate}
             aria-label={t("generator.regenerate")}
@@ -65,8 +79,8 @@ const PasswordGenerator = ({
             <Icon data={ArrowRotateRight} />
           </Button>
         </Tooltip>
-      </div>
-    </section>
+      </Flex>
+    </Flex>
   );
 };
 

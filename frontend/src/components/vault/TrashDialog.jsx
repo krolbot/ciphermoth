@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { ArrowUturnCcwLeft, TrashBin } from "@gravity-ui/icons";
-import { Button, Dialog, Icon, Tooltip } from "@gravity-ui/uikit";
+import { Text, Flex, Button, Dialog, Icon, Tooltip } from "@gravity-ui/uikit";
 import { Trans, useTranslation } from "react-i18next";
 
 import ConfirmDialog from "../ConfirmDialog";
@@ -45,12 +45,12 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
   return (
     <Dialog
       aria-labelledby={titleId}
-      className="cm-secondary-dialog cm-secondary-dialog--trash"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={false}
       maxWidth="m"
-      modalClassName="cm-secondary-dialog-modal"
+
       onOpenChange={(nextOpen) => {
         if (!nextOpen && pendingId === null) onClose();
       }}
@@ -59,24 +59,39 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
       <Dialog.Header caption={t("vault.trash")} id={titleId} />
       <Dialog.Body hasBorders>
         {trash.length === 0 ? (
-          <p className="cm-trash__empty">{t("trashDialog.empty")}</p>
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {t("trashDialog.empty")}
+          </Text>
         ) : (
-          <ul aria-label={t("vault.trash")} className="cm-trash__list">
+          <Flex direction="column" gap="spacing-2" minWidth="0" aria-label={t("vault.trash")}>
             {trash.map((entry) => (
-              <li className="cm-trash__row" key={entry.id}>
-                <div className="cm-trash__details">
-                  <span className="cm-trash__name">{entry.password_name}</span>
-                  {entry.username && <span className="cm-trash__username">{entry.username}</span>}
-                  <span className="cm-trash__deleted">
+              <Flex
+                direction={{ xs: "column", m: "row" }}
+                gap="spacing-2"
+                minWidth="0"
+                paddingBlock="spacing-2"
+                justifyContent="space-between"
+                key={entry.id}
+              >
+                <Flex direction="column" gap="spacing-3" minWidth="0">
+                  <Text wordBreak="break-word">{entry.password_name}</Text>
+                  {entry.username && <Text wordBreak="break-word">{entry.username}</Text>}
+                  <Text wordBreak="break-word">
                     {t("trashDialog.deleted")}:{" "}
                     {formatDeleted(entry.deleted, i18n.resolvedLanguage)}
-                  </span>
-                </div>
-                <div className="cm-trash__actions">
+                  </Text>
+                </Flex>
+                <Flex
+                  direction={{ xs: "column", m: "row" }}
+                  gap="spacing-3"
+                  minWidth="0"
+                  wrap="wrap"
+                  alignItems={{ m: "center" }}
+                >
                   <Tooltip content={t("trashDialog.restore")} role="label">
                     <Button
                       aria-label={`${t("trashDialog.restore")}: ${entry.password_name}`}
-                      className="cm-trash__action"
+
                       disabled={pendingId !== null}
                       loading={pendingId === entry.id && !purgeTarget}
                       onClick={() => handleRestore(entry)}
@@ -90,7 +105,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
                   <Tooltip content={t("trashDialog.deleteForever")} role="label">
                     <Button
                       aria-label={`${t("trashDialog.deleteForever")}: ${entry.password_name}`}
-                      className="cm-trash__action"
+
                       disabled={pendingId !== null}
                       onClick={() => {
                         setPurgeError("");
@@ -103,10 +118,10 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
                       <Icon data={TrashBin} />
                     </Button>
                   </Tooltip>
-                </div>
-              </li>
+                </Flex>
+              </Flex>
             ))}
-          </ul>
+          </Flex>
         )}
       </Dialog.Body>
       <Dialog.Footer
@@ -128,7 +143,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
         title={t("trashDialog.deleteForeverTitle")}
       >
         <Trans
-          components={{ strong: <strong /> }}
+          components={{ strong: <Text as="strong" /> }}
           i18nKey="trashDialog.deleteForeverMessage"
           values={{ name: purgeTarget?.password_name }}
         />

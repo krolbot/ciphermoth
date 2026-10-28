@@ -37,7 +37,7 @@ async function openPage(
     const writes = [];
     const user = { id: 1, username: "synthetic-user", role, active: true };
     const t = language === "ru" ? ru : en;
-    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
     await page.addInitScript(
         ({ authenticated, user, language }) => {
             if (
@@ -300,7 +300,7 @@ async function screenshot(page, name) {
 }
 
 async function openMobileMenu(page, width, t) {
-    if (width >= 900) return;
+    if (width >= 1080) return;
     await page
         .getByRole("button", { name: t.navigation.more, exact: true })
         .click();
@@ -428,6 +428,9 @@ for (const [width, language] of [
                 resetPassword,
             );
             await reset.waitFor({ state: "hidden" });
+            for (const toast of await page.locator('[data-toast="true"]').all()) {
+                await toast.getByRole("button").click();
+            }
             await create
                 .getByRole("combobox", { name: t.users.role, exact: true })
                 .click();
@@ -624,17 +627,14 @@ test("existing vault generator stays singular; backup, restore and TOTP never ge
         "/passwords",
     );
     try {
-        await page.locator(".cm-entry-row__open").first().click();
+        await page.locator('[data-qa="entry-list"]').getByRole("row").first().click();
         const detail = page.getByRole("dialog", { name: "Synthetic entry" });
         await detail
             .getByRole("button", { name: t.common.actions.edit, exact: true })
             .click();
-        const editForm = page.getByRole("dialog", {
-            name: t.entry.title.editPassword,
-        });
-        const existingPassword = editForm.locator(
-            'input[autocomplete="new-password"]',
-        );
+        const existingPassword = page.locator('input[autocomplete="new-password"]').last();
+        await existingPassword.waitFor();
+        const editForm = page.getByRole("dialog").filter({ has: existingPassword });
         await editForm
             .getByRole("button", {
                 name: t.entry.actions.generatePassword,
@@ -782,10 +782,7 @@ for (const role of ["admin", "member"]) {
                 await page
                     .getByRole("heading", { name: t.users.title, exact: true })
                     .waitFor();
-                const logo = page.getByRole("link", {
-                    name: "CipherMoth",
-                    exact: true,
-                });
+                const logo = page.locator('a[href="/passwords"]').first();
                 const box = await logo.boundingBox();
                 assert.ok(box.width >= 44 && box.height >= 44);
                 await logo.focus();
@@ -813,7 +810,7 @@ for (const [width, authenticated] of [
     [375, false],
     [1440, true],
 ]) {
-    test(`theme toggle stays fixed and usable across scroll/viewport changes at ${width}px, auth=${authenticated}`, async () => {
+    test(`theme toggle is reachable and touch-safe at ${width}px, auth=${authenticated}`, async () => {
         const { context, page, t, errors } = await openPage(
             width,
             "en",

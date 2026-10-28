@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -30,9 +30,17 @@ const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
   }, [grant.expires_at, grant.permission]);
 
   return (
-    <article className="cm-grant-row">
-      <div className="cm-grant-row__target">
-        <strong>{grant.target_name}</strong>
+    <Flex
+      direction={{ xs: "column", m: "row" }}
+      gap="spacing-3"
+      minWidth="0"
+      wrap="wrap"
+      alignItems={{ m: "center" }}
+      as="article"
+      paddingBlock="spacing-3"
+    >
+      <Flex direction="column" gap="spacing-3" minWidth="0">
+        <Text as="strong">{grant.target_name}</Text>
         <span>
           <Label size="s">{t(`folderAccess.targetTypes.${grant.target_type}`)}</Label>
           {grant.expired && (
@@ -41,7 +49,7 @@ const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
             </Label>
           )}
         </span>
-      </div>
+      </Flex>
       <Select
         size="m"
         aria-label={t("sharing.permission")}
@@ -73,7 +81,7 @@ const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
       <Button type="button" view="flat-danger" disabled={busy} onClick={onRevoke}>
         {t("sharing.revoke")}
       </Button>
-    </article>
+    </Flex>
   );
 };
 
@@ -230,7 +238,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
     <>
       <Dialog
         aria-label={t("folderAccess.title")}
-        className="cm-secondary-dialog cm-access-dialog cm-access-dialog--wide"
+
         contentOverflow="auto"
         fullWidth
         hasCloseButton={!busy}
@@ -242,10 +250,24 @@ const FolderAccessDialog = ({ open, onClose }) => {
       >
         <Dialog.Header caption={t("folderAccess.title")} />
         <Dialog.Body>
-          <div className="cm-access-dialog__content">
-            <section className="cm-access-panel">
-              <h3>{t("folderAccess.createFolder")}</h3>
-              <div className="cm-access-inline-form">
+          <Flex direction="column" gap="spacing-5" minWidth="0">
+            <Flex
+              direction="column"
+              gap="spacing-3"
+              minWidth="0"
+              as="section"
+              paddingBlock="spacing-3"
+            >
+              <Text as="h3" variant="subheader-2">
+                {t("folderAccess.createFolder")}
+              </Text>
+              <Flex
+                direction={{ xs: "column", m: "row" }}
+                gap="spacing-3"
+                minWidth="0"
+                wrap="wrap"
+                alignItems={{ m: "center" }}
+              >
                 <TextInput
                   size="m"
                   label={t("common.fields.name")}
@@ -260,11 +282,13 @@ const FolderAccessDialog = ({ open, onClose }) => {
                 >
                   {t("common.actions.create")}
                 </Button>
-              </div>
-            </section>
+              </Flex>
+            </Flex>
 
             {folders.length === 0 ? (
-              <p className="cm-secondary-copy">{t("folderAccess.empty")}</p>
+              <Text as="p" color="secondary" wordBreak="break-word">
+                {t("folderAccess.empty")}
+              </Text>
             ) : (
               <>
                 <Select
@@ -278,12 +302,29 @@ const FolderAccessDialog = ({ open, onClose }) => {
                   onUpdate={([value = ""]) => setFolderId(value)}
                 />
 
-                <section className="cm-access-panel">
-                  <header className="cm-access-panel__header">
-                    <div>
-                      <h3>{selected?.name}</h3>
-                      <p>{t("folderAccess.ownerLabel", { owner: selected?.owner_username })}</p>
-                    </div>
+                <Flex
+                  direction="column"
+                  gap="spacing-3"
+                  minWidth="0"
+                  as="section"
+                  paddingBlock="spacing-3"
+                >
+                  <Flex
+                    direction={{ xs: "column", m: "row" }}
+                    gap="spacing-3"
+                    minWidth="0"
+                    wrap="wrap"
+                    alignItems={{ m: "center" }}
+                    as="header"
+                  >
+                    <Flex direction="column" gap="spacing-3" minWidth="0">
+                      <Text as="h3" variant="subheader-2">
+                        {selected?.name}
+                      </Text>
+                      <Text as="p" color="secondary" wordBreak="break-word">
+                        {t("folderAccess.ownerLabel", { owner: selected?.owner_username })}
+                      </Text>
+                    </Flex>
                     <Label size="s">
                       {t(
                         selected?.access
@@ -291,9 +332,15 @@ const FolderAccessDialog = ({ open, onClose }) => {
                           : "folderAccess.managementOnly"
                       )}
                     </Label>
-                  </header>
+                  </Flex>
                   {ownsSelected && (
-                    <div className="cm-access-inline-form cm-access-inline-form--danger">
+                    <Flex
+                      direction={{ xs: "column", m: "row" }}
+                      gap="spacing-3"
+                      minWidth="0"
+                      wrap="wrap"
+                      alignItems={{ m: "center" }}
+                    >
                       <TextInput
                         size="m"
                         label={t("folderAccess.rename")}
@@ -326,18 +373,22 @@ const FolderAccessDialog = ({ open, onClose }) => {
                       >
                         {t("common.actions.delete")}
                       </Button>
-                    </div>
+                    </Flex>
                   )}
-                </section>
+                </Flex>
 
                 {selected?.can_manage && (
                   <>
-                    <section className="cm-access-section">
-                      <h3>{t("folderAccess.grants")}</h3>
+                    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                      <Text as="h3" variant="subheader-2">
+                        {t("folderAccess.grants")}
+                      </Text>
                       {grants.length === 0 ? (
-                        <p className="cm-secondary-copy">{t("folderAccess.noGrants")}</p>
+                        <Text as="p" color="secondary" wordBreak="break-word">
+                          {t("folderAccess.noGrants")}
+                        </Text>
                       ) : (
-                        <div className="cm-grant-list">
+                        <Flex direction="column" gap="spacing-3" minWidth="0">
                           {grants.map((grant) => (
                             <GrantRow
                               key={`${grant.target_type}-${grant.target_id}`}
@@ -359,13 +410,27 @@ const FolderAccessDialog = ({ open, onClose }) => {
                               }
                             />
                           ))}
-                        </div>
+                        </Flex>
                       )}
-                    </section>
+                    </Flex>
 
-                    <section className="cm-access-panel">
-                      <h3>{t("sharing.grantAccess")}</h3>
-                      <div className="cm-grant-form">
+                    <Flex
+                      direction="column"
+                      gap="spacing-3"
+                      minWidth="0"
+                      as="section"
+                      paddingBlock="spacing-3"
+                    >
+                      <Text as="h3" variant="subheader-2">
+                        {t("sharing.grantAccess")}
+                      </Text>
+                      <Flex
+                        direction={{ xs: "column", m: "row" }}
+                        gap="spacing-3"
+                        minWidth="0"
+                        wrap="wrap"
+                        alignItems={{ m: "center" }}
+                      >
                         <Select
                           size="m"
                           aria-label={t("folderAccess.targetType")}
@@ -422,17 +487,28 @@ const FolderAccessDialog = ({ open, onClose }) => {
                         >
                           {t("sharing.grant")}
                         </Button>
-                      </div>
-                    </section>
+                      </Flex>
+                    </Flex>
 
-                    <section className="cm-access-section">
-                      <h3>{t("folderAccess.audit")}</h3>
+                    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                      <Text as="h3" variant="subheader-2">
+                        {t("folderAccess.audit")}
+                      </Text>
                       {audit.length === 0 ? (
-                        <p className="cm-secondary-copy">{t("folderAccess.noAudit")}</p>
+                        <Text as="p" color="secondary" wordBreak="break-word">
+                          {t("folderAccess.noAudit")}
+                        </Text>
                       ) : (
-                        <ol className="cm-audit-list">
+                        <Flex direction="column" gap="spacing-2" minWidth="0">
                           {audit.slice(0, 20).map((event) => (
-                            <li key={event.id}>
+                            <Flex
+                              direction={{ xs: "column", m: "row" }}
+                              gap="spacing-2"
+                              minWidth="0"
+                              paddingBlock="spacing-2"
+                              justifyContent="space-between"
+                              key={event.id}
+                            >
                               <span>
                                 {t(`folderAccess.actions.${event.action}`, {
                                   defaultValue: event.action,
@@ -440,19 +516,24 @@ const FolderAccessDialog = ({ open, onClose }) => {
                                   target: event.target_username || event.target_group_name || "",
                                 })}
                               </span>
-                              <time dateTime={event.created}>
+                              <Text
+                                as="time"
+                                variant="caption-2"
+                                color="secondary"
+                                dateTime={event.created}
+                              >
                                 {eventDate(event.created, i18n.resolvedLanguage)}
-                              </time>
-                            </li>
+                              </Text>
+                            </Flex>
                           ))}
-                        </ol>
+                        </Flex>
                       )}
-                    </section>
+                    </Flex>
                   </>
                 )}
               </>
             )}
-          </div>
+          </Flex>
         </Dialog.Body>
         <Dialog.Footer
           onClickButtonApply={onClose}

@@ -1,6 +1,16 @@
 import { useEffect, useId, useState } from "react";
 import { CircleQuestion } from "@gravity-ui/icons";
-import { Alert, Button, Dialog, Icon, Switch, TextInput, Tooltip } from "@gravity-ui/uikit";
+import {
+  Flex,
+  Text,
+  Alert,
+  Button,
+  Dialog,
+  Icon,
+  Switch,
+  TextInput,
+  Tooltip,
+} from "@gravity-ui/uikit";
 import { toaster } from "@gravity-ui/uikit/toaster-singleton";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
@@ -118,7 +128,7 @@ const SettingsModal = ({ open, onClose }) => {
   return (
     <Dialog
       aria-labelledby={titleId}
-      className="cm-secondary-dialog cm-secondary-dialog--settings"
+
       contentOverflow="auto"
       disableEscapeKeyDown={saving}
       disableOutsideClick={saving}
@@ -132,25 +142,21 @@ const SettingsModal = ({ open, onClose }) => {
     >
       <Dialog.Header caption={t("settings.title")} id={titleId} />
       <Dialog.Body>
-        <div className="cm-secondary-form cm-settings-form">
+        <Flex direction="column" gap="spacing-5" minWidth="0">
           {FIELDS.map(({ key, labelKey, tooltipKey, min, max }) => {
             const inputId = `${titleId}-${key}`;
             return (
-              <div className="cm-field cm-settings-form__field" key={key}>
-                <label className="cm-field__label" htmlFor={inputId}>
-                  {t(labelKey)}
-                </label>
+              <Flex direction="column" gap="spacing-3" minWidth="0" key={key}>
+                <label htmlFor={inputId}>{t(labelKey)}</label>
                 <TextInput
                   controlProps={{ min, max, step: 1 }}
                   endContent={
-                    <span className="cm-settings-form__input-actions">
-                      <span className="cm-settings-form__unit">
-                        {t("common.labels.secondsShort")}
-                      </span>
+                    <Text wordBreak="break-word">
+                      <Text wordBreak="break-word">{t("common.labels.secondsShort")}</Text>
                       <Tooltip content={t(tooltipKey)} placement="top" role="label">
                         <Button
                           aria-label={t(tooltipKey)}
-                          className="cm-settings-form__help"
+
                           size="s"
                           type="button"
                           view="flat-secondary"
@@ -158,7 +164,7 @@ const SettingsModal = ({ open, onClose }) => {
                           <Icon data={CircleQuestion} />
                         </Button>
                       </Tooltip>
-                    </span>
+                    </Text>
                   }
                   id={inputId}
                   onChange={handleChange(key)}
@@ -166,19 +172,19 @@ const SettingsModal = ({ open, onClose }) => {
                   type="number"
                   value={form[key]}
                 />
-              </div>
+              </Flex>
             );
           })}
-          <hr className="cm-settings-form__separator" />
-          <div className="cm-settings-form__updates">
-            <div className="cm-settings-form__updates-copy">
-              <span className="cm-field__label" id={updatesLabelId}>
+          <hr />
+          <Flex direction="column" gap="spacing-3" minWidth="0">
+            <Flex direction="column" gap="spacing-3" minWidth="0">
+              <Text wordBreak="break-word" id={updatesLabelId}>
                 {t("settings.fields.updates")}
-              </span>
+              </Text>
               <Tooltip content={t("settings.fields.updatesHelp")} placement="top" role="label">
                 <Button
                   aria-label={t("settings.fields.updatesHelp")}
-                  className="cm-settings-form__help"
+
                   size="s"
                   type="button"
                   view="flat-secondary"
@@ -186,7 +192,7 @@ const SettingsModal = ({ open, onClose }) => {
                   <Icon data={CircleQuestion} />
                 </Button>
               </Tooltip>
-            </div>
+            </Flex>
             <Switch
               checked={form.update_check_enabled}
               controlProps={{ "aria-labelledby": updatesLabelId }}
@@ -195,13 +201,13 @@ const SettingsModal = ({ open, onClose }) => {
               }
               size="l"
             />
-          </div>
+          </Flex>
           {formError && (
-            <div role="alert">
+            <Flex direction="column" gap="spacing-3" minWidth="0" role="alert">
               <Alert message={formError} size="s" theme="danger" />
-            </div>
+            </Flex>
           )}
-        </div>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer
         loading={saving}

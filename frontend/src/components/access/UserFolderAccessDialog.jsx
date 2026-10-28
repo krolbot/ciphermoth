@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Dialog, Label, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -19,12 +19,23 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
   }, [item.direct_expires_at, item.direct_permission]);
 
   return (
-    <article className="cm-access-card">
-      <header className="cm-access-card__header">
-        <div>
-          <h3>{item.folder.name}</h3>
-          <p>{t("folderAccess.ownerLabel", { owner: item.folder.owner_username })}</p>
-        </div>
+    <Flex direction="column" gap="spacing-3" minWidth="0" as="article" paddingBlock="spacing-3">
+      <Flex
+        direction={{ xs: "column", m: "row" }}
+        gap="spacing-3"
+        minWidth="0"
+        wrap="wrap"
+        alignItems={{ m: "center" }}
+        as="header"
+      >
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          <Text as="h3" variant="subheader-2">
+            {item.folder.name}
+          </Text>
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {t("folderAccess.ownerLabel", { owner: item.folder.owner_username })}
+          </Text>
+        </Flex>
         <Label size="s" theme={item.effective_permission ? "success" : "unknown"}>
           {t(
             item.effective_permission
@@ -32,9 +43,9 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
               : "folderAccess.permissions.none"
           )}
         </Label>
-      </header>
+      </Flex>
 
-      <div className="cm-access-card__sources">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         {item.sources.map((source, index) => (
           <Label
             key={`${source.source}-${source.source_id}-${index}`}
@@ -48,12 +59,20 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
             })}
           </Label>
         ))}
-      </div>
+      </Flex>
 
       {owned ? (
-        <p className="cm-secondary-copy">{t("folderAccess.ownerCannotChange")}</p>
+        <Text as="p" color="secondary" wordBreak="break-word">
+          {t("folderAccess.ownerCannotChange")}
+        </Text>
       ) : (
-        <div className="cm-access-card__controls">
+        <Flex
+          direction={{ xs: "column", m: "row" }}
+          gap="spacing-3"
+          minWidth="0"
+          wrap="wrap"
+          alignItems={{ m: "center" }}
+        >
           <Select
             size="m"
             aria-label={t("sharing.permission")}
@@ -93,9 +112,9 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
           >
             {t("sharing.revoke")}
           </Button>
-        </div>
+        </Flex>
       )}
-    </article>
+    </Flex>
   );
 };
 
@@ -134,7 +153,7 @@ const UserFolderAccessDialog = ({ open, user, onClose }) => {
   return (
     <Dialog
       aria-label={t("folderAccess.userTitle", { username: user?.username })}
-      className="cm-secondary-dialog cm-access-dialog"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={!busy}
@@ -146,10 +165,14 @@ const UserFolderAccessDialog = ({ open, user, onClose }) => {
     >
       <Dialog.Header caption={t("folderAccess.userTitle", { username: user?.username })} />
       <Dialog.Body>
-        <div className="cm-access-dialog__content">
-          <p className="cm-secondary-copy">{t("folderAccess.userDescription")}</p>
+        <Flex direction="column" gap="spacing-5" minWidth="0">
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {t("folderAccess.userDescription")}
+          </Text>
           {items.length === 0 ? (
-            <p className="cm-secondary-copy">{t("folderAccess.empty")}</p>
+            <Text as="p" color="secondary" wordBreak="break-word">
+              {t("folderAccess.empty")}
+            </Text>
           ) : (
             items.map((item) => (
               <AccessRow
@@ -183,7 +206,7 @@ const UserFolderAccessDialog = ({ open, user, onClose }) => {
               />
             ))
           )}
-        </div>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer
         onClickButtonApply={onClose}

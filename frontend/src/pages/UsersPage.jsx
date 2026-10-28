@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, EllipsisVertical, Persons } from "@gravity-ui/icons";
 import {
+  Flex,
+  Text,
   Alert,
   Button,
   Dialog,
@@ -101,13 +103,32 @@ const UsersPage = () => {
   };
 
   return (
-    <section className="cm-users-page">
-      <header className="cm-page-header cm-users-page__header">
-        <div>
-          <h1>{t("users.title")}</h1>
-          <p>{t("users.subtitle")}</p>
-        </div>
-        <div className="cm-page-header__actions">
+    <Flex direction="column" gap="spacing-5" minWidth="0" as="section">
+      <Flex
+        direction={{ xs: "column", m: "row" }}
+        gap="spacing-5"
+        minWidth="0"
+        wrap="wrap"
+        alignItems={{ m: "center" }}
+        as="header"
+        justifyContent="space-between"
+      >
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          <Text as="h1" variant="header-1">
+            {t("users.title")}
+          </Text>
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {t("users.subtitle")}
+          </Text>
+        </Flex>
+        <Flex
+          direction={{ xs: "column", m: "row" }}
+          gap="spacing-3"
+          minWidth="0"
+          wrap="wrap"
+          alignItems={{ m: "center" }}
+          justifyContent="space-between"
+        >
           <Button type="button" view="outlined" onClick={() => setGroupsOpen(true)}>
             <Icon data={Persons} />
             {t("groups.title")}
@@ -116,8 +137,8 @@ const UsersPage = () => {
             <Icon data={ArrowLeft} />
             {t("users.backToVault")}
           </Button>
-        </div>
-      </header>
+        </Flex>
+      </Flex>
 
       {serviceToken && (
         <Alert
@@ -125,36 +146,45 @@ const UsersPage = () => {
           view="outlined"
           title={t("users.serviceTokenOnce")}
           message={
-            <div className="cm-users-token">
+            <Flex direction="column" gap="spacing-3" minWidth="0">
               <TextInput value={serviceToken} controlProps={{ readOnly: true }} />
-              <div>
+              <Flex direction="column" gap="spacing-3" minWidth="0">
                 <Button type="button" view="outlined" onClick={() => copy(serviceToken)}>
                   {t("users.copyToken")}
                 </Button>
                 <Button type="button" view="flat" onClick={() => setServiceToken("")}>
                   {t("common.actions.dismiss")}
                 </Button>
-              </div>
-            </div>
+              </Flex>
+            </Flex>
           }
         />
       )}
 
-      <div className="cm-users-list">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         {users.map((user) => {
           const isCurrent = user.id === currentUserId;
           return (
-            <article className="cm-user-row" key={user.id}>
-              <div className="cm-user-row__identity">
-                <strong>{user.username}</strong>
-                <small>
+            <Flex
+              direction={{ xs: "column", m: "row" }}
+              gap="spacing-3"
+              minWidth="0"
+              wrap="wrap"
+              alignItems={{ m: "center" }}
+              as="article"
+              paddingBlock="spacing-3"
+              key={user.id}
+            >
+              <Flex direction="column" gap="spacing-3" minWidth="0">
+                <Text as="strong">{user.username}</Text>
+                <Text as="small" variant="caption-2" color="secondary">
                   {user.must_change_password && user.role !== "service"
                     ? t("users.passwordChangeRequested")
                     : user.role === "service"
                       ? t("users.serviceAccount")
                       : t("users.interactiveAccount")}
-                </small>
-              </div>
+                </Text>
+              </Flex>
               <Select
                 size="m"
                 aria-label={t("users.role")}
@@ -177,13 +207,19 @@ const UsersPage = () => {
               >
                 {t(user.active ? "users.active" : "users.inactive")}
               </Switch>
-              <div className="cm-user-row__actions">
+              <Flex
+                direction={{ xs: "column", m: "row" }}
+                gap="spacing-3"
+                minWidth="0"
+                wrap="wrap"
+                alignItems={{ m: "center" }}
+              >
                 <Menu
                   placement="bottom-end"
                   trigger={
                     <Button
                       type="button"
-                      size="l"
+                      size="xl"
                       view="flat-secondary"
                       aria-label={`${t("navigation.more")}: ${user.username}`}
                       data-user-menu={user.id}
@@ -222,15 +258,17 @@ const UsersPage = () => {
                     {t("common.actions.delete")}
                   </MenuItem>
                 </Menu>
-              </div>
-            </article>
+              </Flex>
+            </Flex>
           );
         })}
-      </div>
+      </Flex>
 
-      <section className="cm-users-create">
-        <h2>{t("users.createAccount")}</h2>
-        <form className="cm-users-create__form" onSubmit={add}>
+      <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+        <Text as="h2" variant="subheader-3">
+          {t("users.createAccount")}
+        </Text>
+        <Flex direction="column" gap="spacing-3" minWidth="0" as="form" onSubmit={add}>
           <TextInput
             size="l"
             label={t("auth.username")}
@@ -242,7 +280,7 @@ const UsersPage = () => {
             controlProps={{ autoCapitalize: "none", spellCheck: false }}
           />
           {form.role === "service" ? (
-            <div />
+            <Flex direction="column" gap="spacing-3" minWidth="0" />
           ) : (
             <PasswordField
               label={t("users.temporaryPassword")}
@@ -287,12 +325,12 @@ const UsersPage = () => {
           >
             {t("common.actions.create")}
           </Button>
-        </form>
-      </section>
+        </Flex>
+      </Flex>
 
       <Dialog
         aria-label={t("users.resetPasswordFor", { username: resetTarget?.username })}
-        className="cm-secondary-dialog"
+
         fullWidth
         maxWidth="s"
         open={Boolean(resetTarget)}
@@ -302,8 +340,10 @@ const UsersPage = () => {
       >
         <Dialog.Header caption={t("users.resetPasswordFor", { username: resetTarget?.username })} />
         <Dialog.Body>
-          <div className="cm-secondary-form">
-            <p className="cm-secondary-copy">{t("users.resetPasswordDescription")}</p>
+          <Flex direction="column" gap="spacing-5" minWidth="0">
+            <Text as="p" color="secondary" wordBreak="break-word">
+              {t("users.resetPasswordDescription")}
+            </Text>
             <PasswordField
               label={t("users.temporaryPassword")}
               value={temporaryPassword}
@@ -313,7 +353,7 @@ const UsersPage = () => {
               autoComplete="new-password"
               autoFocus
             />
-          </div>
+          </Flex>
         </Dialog.Body>
         <Dialog.Footer
           onClickButtonApply={saveReset}
@@ -342,7 +382,7 @@ const UsersPage = () => {
         onClose={() => closeUserAction(setFolderAccessTarget, folderAccessTarget)}
       />
       <GroupManagementDialog open={groupsOpen} onClose={() => setGroupsOpen(false)} />
-    </section>
+    </Flex>
   );
 };
 

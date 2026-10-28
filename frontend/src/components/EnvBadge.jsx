@@ -1,4 +1,4 @@
-import { Tooltip } from "@gravity-ui/uikit";
+import { Label, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { IS_DEV } from "../lib/appEnv";
@@ -10,14 +10,13 @@ const EnvBadge = () => {
 
   return (
     <Tooltip content={tooltip}>
-      <span
-        className={`cm-env-badge${IS_DEV ? " cm-env-badge--development" : ""}`}
+      <Label
+        theme={IS_DEV ? "warning" : "normal"}
         aria-label={t(IS_DEV ? "environment.developmentAria" : "environment.liveAria")}
         tabIndex={0}
       >
-        {!IS_DEV && <span className="cm-env-badge__dot" aria-hidden="true" />}
         {label}
-      </span>
+      </Label>
     </Tooltip>
   );
 };

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CipherMoth",
+  "productName": "Nedra",
   "version": "3.1.0",
   "identifier": "com.ciphermoth.desktop",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CipherMoth",
+        "title": "Nedra",
         "width": 1100,
         "height": 800,
         "minWidth": 640,

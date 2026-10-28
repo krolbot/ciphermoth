@@ -9,7 +9,19 @@ import {
   Plus,
   TrashBin,
 } from "@gravity-ui/icons";
-import { Alert, Button, Icon, Loader, Menu, MenuItem, Select, TextInput } from "@gravity-ui/uikit";
+import {
+  Flex,
+  Text,
+  Alert,
+  Button,
+  Icon,
+  Loader,
+  Menu,
+  MenuItem,
+  Select,
+  TextInput,
+  useLayoutContext,
+} from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 
 import { Trans, useTranslation } from "react-i18next";
@@ -30,9 +42,6 @@ import { useSnackbar } from "../hooks/useNotify";
 import apiClient from "../api/client";
 import { createEntryDraftStore } from "../lib/entryDraft";
 import { getCurrentUser } from "../utils";
-import "../styles/passwords.css";
-
-const MOBILE_QUERY = "(max-width: 599px)";
 
 const buildSubtitle = (loading, passwords, t) => {
   if (loading) return t("common.labels.loading");
@@ -45,7 +54,8 @@ const PasswordsPage = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [mobile, setMobile] = useState(() => window.matchMedia?.(MOBILE_QUERY).matches ?? false);
+  const { isMediaActive } = useLayoutContext();
+  const mobile = !isMediaActive("s");
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -96,14 +106,6 @@ const PasswordsPage = () => {
     next.delete("tool");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
-
-  useEffect(() => {
-    const query = window.matchMedia?.(MOBILE_QUERY);
-    if (!query) return undefined;
-    const updateViewport = ({ matches }) => setMobile(matches);
-    query.addEventListener("change", updateViewport);
-    return () => query.removeEventListener("change", updateViewport);
-  }, []);
 
   useEffect(() => {
     const tool = searchParams.get("tool");
@@ -370,13 +372,30 @@ const PasswordsPage = () => {
   ];
 
   return (
-    <section className="cm-vault-page">
-      <header className="cm-page-header">
-        <div>
-          <h1>{t("vault.title")}</h1>
-          <p>{subtitle}</p>
-        </div>
-        <div className="cm-page-header__actions">
+    <Flex direction="column" gap="spacing-5" minWidth="0" as="section">
+      <Flex
+        direction="column"
+        gap="spacing-3"
+        minWidth="0"
+        as="header"
+        justifyContent="space-between"
+      >
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          <Text as="h1" variant="header-1">
+            {t("vault.title")}
+          </Text>
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {subtitle}
+          </Text>
+        </Flex>
+        <Flex
+          direction={{ xs: "column", m: "row" }}
+          gap="spacing-3"
+          minWidth="0"
+          wrap="wrap"
+          alignItems={{ m: "center" }}
+          justifyContent="space-between"
+        >
           <Button type="button" view="action" size="l" disabled={!draftReady} onClick={openAdd}>
             <Icon data={Plus} />
             {t("common.actions.add")}
@@ -384,7 +403,7 @@ const PasswordsPage = () => {
           <Menu
             placement="bottom-end"
             trigger={
-              <Button type="button" view="outlined" size="l" aria-label={t("vault.browser.tools")}>
+              <Button type="button" view="outlined" size="xl" aria-label={t("vault.browser.tools")}>
                 <Icon data={Ellipsis} />
                 {t("vault.browser.tools")}
               </Button>
@@ -401,10 +420,10 @@ const PasswordsPage = () => {
               </MenuItem>
             ))}
           </Menu>
-        </div>
-      </header>
+        </Flex>
+      </Flex>
 
-      <div className="cm-vault-alerts">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         {error && <Alert theme="danger" view="outlined" message={error} />}
         {draftError && !draftReady && (
           <Alert
@@ -462,14 +481,11 @@ const PasswordsPage = () => {
             }
           />
         )}
-      </div>
+      </Flex>
 
       {!isEmpty && (
-        <div
-          className={`cm-vault-filters${folderOptions.length ? "" : " cm-vault-filters--without-folder"}`}
-        >
+        <Flex direction="column" gap="spacing-3" minWidth="0">
           <TextInput
-            className="cm-vault-search"
             size="l"
             type="search"
             placeholder={t("vault.searchPlaceholder")}
@@ -508,13 +524,20 @@ const PasswordsPage = () => {
               { value: "created-desc", content: t("vault.browser.dateAdded") },
             ]}
           />
-        </div>
+        </Flex>
       )}
 
       {loading && (
-        <div className="cm-vault-loader">
+        <Flex
+          direction="column"
+          gap="spacing-3"
+          minWidth="0"
+          alignItems="center"
+          justifyContent="center"
+          paddingBlock="spacing-10"
+        >
           <Loader size="l" />
-        </div>
+        </Flex>
       )}
 
       {isEmpty && <EmptyVault onAdd={openAdd} />}
@@ -606,7 +629,7 @@ const PasswordsPage = () => {
         <Trans
           i18nKey="vault.moveToTrash.message"
           values={{ name: deleteTarget }}
-          components={{ strong: <strong /> }}
+          components={{ strong: <Text as="strong" /> }}
         />
       </ConfirmDialog>
       <ConfirmDialog
@@ -629,7 +652,7 @@ const PasswordsPage = () => {
         onRestore={handleRestore}
         onPurge={handlePurge}
       />
-    </section>
+    </Flex>
   );
 };
 

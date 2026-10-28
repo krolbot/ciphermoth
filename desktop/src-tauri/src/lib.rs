@@ -189,7 +189,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("CipherMoth could not initialize its window");
+        .expect("Nedra could not initialize its window");
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
             handle.state::<Arc<clipboard::Clipboard>>().clear();

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { useColorMode } from "../hooks/useColorMode";
 
-const ThemeToggle = ({ placement = "inline", showLabel = false }) => {
+const ThemeToggle = ({ showLabel = false }) => {
   const { t } = useTranslation();
   const { mode, toggle } = useColorMode();
   const dark = mode === "dark";
@@ -12,14 +12,7 @@ const ThemeToggle = ({ placement = "inline", showLabel = false }) => {
 
   return (
     <Tooltip content={label} role={showLabel ? "tooltip" : "label"}>
-      <Button
-        type="button"
-        view="flat-secondary"
-        size="l"
-        aria-label={label}
-        onClick={toggle}
-        className={placement === "floating" ? "cm-theme-toggle--floating" : undefined}
-      >
+      <Button type="button" view="flat-secondary" size="xl" aria-label={label} onClick={toggle}>
         <Icon data={dark ? Sun : Moon} />
         {showLabel && t(dark ? "theme.toLight" : "theme.toDark")}
       </Button>

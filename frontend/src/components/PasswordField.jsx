@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
-import { MagicWand } from "@gravity-ui/icons";
-import { Button, Icon, PasswordInput, Tooltip } from "@gravity-ui/uikit";
+import { Eye, EyeSlash, MagicWand } from "@gravity-ui/icons";
+import { Button, Flex, Icon, PasswordInput, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { IS_DESKTOP } from "../platform";
@@ -19,7 +19,8 @@ const PasswordField = ({
   required = false,
   size = "l",
   id: idProp,
-  className,
+  inputRef,
+  error,
   fullWidth: _fullWidth,
   sx: _sx,
   ...props
@@ -30,7 +31,7 @@ const PasswordField = ({
   const { t } = useTranslation();
   const generatedId = useId();
   const id = idProp ?? `cm-password-${generatedId}`;
-  const labelId = `${id}-label`;
+
   const [showInternal, setShowInternal] = useState(false);
   const controlled = showProp !== undefined;
   const show = controlled ? showProp : showInternal;
@@ -46,7 +47,7 @@ const PasswordField = ({
       <Button
         type="button"
         view="flat-secondary"
-        size="m"
+        size="xl"
         aria-label={t("entry.actions.generatePassword")}
         onClick={() => onGenerate(generatePassword())}
         disabled={props.disabled}
@@ -57,45 +58,51 @@ const PasswordField = ({
   );
 
   return (
-    <div className={`cm-password-field${className ? ` ${className}` : ""}`}>
-      {label && (
-        <span id={labelId} className="cm-field__label">
-          {label}
-          {required && (
-            <span className="cm-field__required" aria-hidden="true">
-              *
-            </span>
-          )}
-        </span>
-      )}
-      <PasswordInput
-        {...props}
-        id={id}
-        size={SIZE_MAP[size] ?? size}
-        hideCopyButton
-        showRevealTooltip
-        revealValue={show}
-        onRevealValueUpdate={updateReveal}
-        endContent={
-          adornment || generateAction ? (
-            <span className="cm-password-field__actions">
-              {adornment}
-              {generateAction}
-            </span>
-          ) : undefined
-        }
-        autoComplete={IS_DESKTOP ? "off" : props.autoComplete}
-        controlProps={{
-          spellCheck: false,
-          autoCorrect: "off",
-          autoCapitalize: "none",
-          required,
-          ...(label ? { "aria-labelledby": labelId } : {}),
-          ...slotProps?.htmlInput,
-        }}
-      />
-      {helperText && <span className="cm-password-field__note">{helperText}</span>}
-    </div>
+    <PasswordInput
+      {...props}
+      label={label}
+      required={required}
+      controlRef={inputRef ?? props.controlRef}
+      validationState={error ? "invalid" : props.validationState}
+      errorMessage={error || props.validationState === "invalid" ? helperText : undefined}
+      note={!error && props.validationState !== "invalid" ? helperText : undefined}
+
+      id={id}
+      size={SIZE_MAP[size] ?? size}
+      hideCopyButton
+      hideRevealButton
+      revealValue={show}
+      onRevealValueUpdate={updateReveal}
+      endContent={
+        <Flex alignItems="center" gap="spacing-1">
+          {adornment}
+          {generateAction}
+          <Tooltip content={t(show ? "passwordField.hide" : "passwordField.show")} role="label">
+            <Button
+              type="button"
+              view="flat-secondary"
+              size="xl"
+              qa="reveal-button"
+              aria-label={t(show ? "passwordField.hide" : "passwordField.show")}
+              disabled={props.disabled}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => updateReveal(!show)}
+            >
+              <Icon data={show ? EyeSlash : Eye} />
+            </Button>
+          </Tooltip>
+        </Flex>
+      }
+      autoComplete={IS_DESKTOP ? "off" : props.autoComplete}
+      controlProps={{
+        spellCheck: false,
+        autoCorrect: "off",
+        autoCapitalize: "none",
+        required,
+        ...props.controlProps,
+        ...slotProps?.htmlInput,
+      }}
+    />
   );
 };
 

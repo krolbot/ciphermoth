@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Copy, FileText, Key, Paperclip, StarFill } from "@gravity-ui/icons";
-import { Button, Dialog, Icon, Label, Tooltip } from "@gravity-ui/uikit";
+import { FileText, Key, Paperclip, StarFill } from "@gravity-ui/icons";
+import {
+  Box,
+  Button,
+  Dialog,
+  Flex,
+  Icon,
+  Label,
+  List,
+  PlaceholderContainer,
+  Text,
+  useLayoutContext,
+} from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import EntryDetails from "./EntryDetails";
 import EntryListActions from "./EntryListActions";
-import "../../styles/vault.css";
-
-const DESKTOP_QUERY = "(min-width: 1200px)";
 
 const EntryBrowser = ({
   entries,
@@ -18,20 +26,13 @@ const EntryBrowser = ({
   ...actions
 }) => {
   const { t } = useTranslation();
-  const [desktop, setDesktop] = useState(() => window.matchMedia?.(DESKTOP_QUERY).matches ?? false);
+  const { isMediaActive } = useLayoutContext();
+  const desktop = isMediaActive("xl");
   const [selectedId, setSelectedId] = useState(null);
-  const browserRef = useRef(null);
-  const focusRequested = useRef(false);
+  const listRef = useRef(null);
+  const closeRef = useRef(null);
   const selectedTrigger = useRef(null);
   const selected = entries.find((entry) => entry.id === selectedId);
-
-  useEffect(() => {
-    const query = window.matchMedia?.(DESKTOP_QUERY);
-    if (!query) return undefined;
-    const update = ({ matches }) => setDesktop(matches);
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
 
   useEffect(() => {
     if (selectedId !== null && !selected) setSelectedId(null);
@@ -39,45 +40,55 @@ const EntryBrowser = ({
 
   useEffect(() => {
     if (requestedEntryId == null || !entries.some((entry) => entry.id === requestedEntryId)) return;
-    selectedTrigger.current = browserRef.current?.querySelector(
+    selectedTrigger.current = listRef.current?.querySelector(
       `[data-entry-id="${requestedEntryId}"]`
     );
-    focusRequested.current = true;
     setSelectedId(requestedEntryId);
     onRequestedEntryOpen?.();
   }, [entries, requestedEntryId, onRequestedEntryOpen]);
 
   useEffect(() => {
-    if (!focusRequested.current || selectedId === null) return;
-    focusRequested.current = false;
-    [
-      ...(browserRef.current?.querySelectorAll(
-        ".cm-entry-detail__back, .cm-entry-detail__close .g-button"
-      ) ?? []),
-    ]
-      .find((element) => element.offsetParent !== null)
-      ?.focus();
-  }, [selectedId]);
+    if (desktop && selectedId !== null) closeRef.current?.focus();
+  }, [selectedId, desktop]);
 
   const closeDetails = () => {
     setSelectedId(null);
     window.requestAnimationFrame(() => selectedTrigger.current?.focus());
   };
-
   const details = selected && (
     <EntryDetails
       key={selected.id}
       entry={selected}
       onCopy={onCopy}
       {...actions}
-      onClose={closeDetails}
+      onEdit={(entry) => {
+        if (desktop) actions.onEdit(entry);
+        else {
+          setSelectedId(null);
+          window.requestAnimationFrame(() => actions.onEdit(entry));
+        }
+      }}
+      onDelete={(entry) => {
+        if (desktop) actions.onDelete(entry);
+        else {
+          setSelectedId(null);
+          window.requestAnimationFrame(() => actions.onDelete(entry));
+        }
+      }}
+      onShare={(entry) => {
+        if (desktop) actions.onShare(entry);
+        else {
+          setSelectedId(null);
+          window.requestAnimationFrame(() => actions.onShare(entry));
+        }
+      }}
     />
   );
 
   return (
-    <div
-      ref={browserRef}
-      className={`cm-entry-browser${desktop && selected ? " cm-entry-browser--split" : ""}`}
+    <Flex
+      gap="spacing-6"
+      alignItems="flex-start"
       onKeyDown={(event) => {
         if (desktop && selected && event.key === "Escape" && !event.defaultPrevented) {
           event.stopPropagation();
@@ -85,125 +96,118 @@ const EntryBrowser = ({
         }
       }}
     >
-      <section className="cm-entry-list-pane" aria-label={t("vault.browser.entries")}>
-        <header className="cm-entry-list-header">
-          <span>{t("vault.browser.entries")}</span>
-          <span className="cm-entry-list-count">{entries.length}</span>
-        </header>
+      <Box
+        minWidth="0"
+        flexGrow={1}
+        flexBasis="0"
+        as="section"
+        aria-label={t("vault.browser.entries")}
+      >
+        <Flex alignItems="center" gap="spacing-2" paddingBlockEnd="spacing-3">
+          <Text variant="subheader-1">{t("vault.browser.entries")}</Text>
+          <Label>{entries.length}</Label>
+        </Flex>
         {entries.length === 0 ? (
-          <p className="cm-entry-list-empty" role="status">
-            {emptyMessage}
-          </p>
+          <PlaceholderContainer size="s" title={emptyMessage} />
         ) : (
-          <ul className="cm-entry-list">
-            {entries.map((entry) => {
-              const isNote = entry.kind === "note";
-              const copyLabel = t(isNote ? "vault.browser.copyNote" : "vault.columns.copyPassword");
-              const current = entry.id === selected?.id;
-              return (
-                <li
-                  key={entry.id}
-                  className={`cm-entry-row${current ? " cm-entry-row--selected" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="cm-entry-row__open"
-                    data-entry-id={entry.id}
-                    aria-current={current ? "true" : undefined}
-                    onClick={(event) => {
-                      selectedTrigger.current = event.currentTarget;
-                      setSelectedId(entry.id);
-                    }}
-                  >
-                    <span className="cm-entry-row__type" aria-hidden="true">
-                      <Icon data={isNote ? FileText : Key} size={18} />
-                    </span>
-                    <span className="cm-entry-row__content">
-                      <span className="cm-entry-row__title-line">
-                        <span className="cm-entry-row__title">{entry.password_name}</span>
-                        {entry.favorite && (
-                          <Tooltip content={t("vault.columns.favorite")}>
-                            <span className="cm-entry-row__status-icon" aria-hidden="true">
-                              <Icon data={StarFill} size={14} />
-                            </span>
-                          </Tooltip>
-                        )}
-                      </span>
-                      <span className="cm-entry-row__summary">
-                        {isNote
-                          ? t("entry.kind.note")
-                          : entry.username || entry.url || t("entry.kind.login")}
-                      </span>
-                      {(entry.access === "read" || entry.folder || entry.attachment_count > 0) && (
-                        <span className="cm-entry-row__meta-line">
-                          {entry.access === "read" && (
-                            <Label size="s" theme="normal">
-                              {t("sharing.readOnlyAccess")}
-                            </Label>
-                          )}
-                          {entry.folder && (
-                            <span className="cm-entry-row__meta">{entry.folder}</span>
-                          )}
-                          {entry.attachment_count > 0 && (
-                            <>
-                              <Icon data={Paperclip} size={13} />
-                              <span>{entry.attachment_count}</span>
-                            </>
-                          )}
-                        </span>
-                      )}
-                    </span>
-                    <Icon className="cm-entry-row__chevron" data={ChevronRight} size={16} />
-                  </button>
-
-                  {desktop && selected ? (
-                    <div className="cm-entry-row__actions">
-                      <Tooltip content={copyLabel} role="label">
-                        <Button
-                          type="button"
-                          view="flat-secondary"
-                          size="l"
-                          aria-label={`${copyLabel}: ${entry.password_name}`}
-                          onClick={() => onCopy(entry.password_value)}
-                        >
-                          <Icon data={Copy} />
-                        </Button>
-                      </Tooltip>
-                    </div>
-                  ) : (
-                    <EntryListActions entry={entry} onCopy={onCopy} {...actions} />
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          <List
+            ref={listRef}
+            qa="entry-list"
+            aria-label={t("vault.browser.entries")}
+            role="grid"
+            size="xl"
+            items={entries}
+            getItemId={(entry) => String(entry.id)}
+            getItemTextValue={(entry) => entry.password_name}
+            selectionMode="single"
+            selectedIds={selected ? [String(selected.id)] : []}
+            onItemAction={(_id, entry, event) => {
+              selectedTrigger.current = event.currentTarget;
+              setSelectedId(entry.id);
+            }}
+            renderItem={(ctx, { getItemProps, getItemViewProps, getCellProps }) => (
+              <List.ItemView
+                {...getItemProps({ "data-entry-id": ctx.item.id })}
+                {...getItemViewProps()}
+                startContent={<Icon data={ctx.item.kind === "note" ? FileText : Key} />}
+                description={
+                  <Flex gap="spacing-2" wrap="wrap" alignItems="center">
+                    <Text ellipsis>
+                      {ctx.item.kind === "note"
+                        ? t("entry.kind.note")
+                        : ctx.item.username || ctx.item.url || t("entry.kind.login")}
+                    </Text>
+                    {ctx.item.access === "read" && (
+                      <Label size="s">{t("sharing.readOnlyAccess")}</Label>
+                    )}
+                    {ctx.item.folder && (
+                      <Text ellipsis color="secondary">
+                        {ctx.item.folder}
+                      </Text>
+                    )}
+                    {ctx.item.attachment_count > 0 && (
+                      <Text>
+                        <Icon data={Paperclip} size={12} /> {ctx.item.attachment_count}
+                      </Text>
+                    )}
+                  </Flex>
+                }
+                endContent={
+                  desktop && !selected ? (
+                    <Box {...getCellProps()} onClick={(event) => event.stopPropagation()}>
+                      <EntryListActions entry={ctx.item} onCopy={onCopy} {...actions} />
+                    </Box>
+                  ) : undefined
+                }
+              >
+                <span {...getCellProps()}>
+                  <Text ellipsis>{ctx.item.password_name}</Text>
+                  {ctx.item.favorite && <Icon data={StarFill} size={12} />}
+                </span>
+              </List.ItemView>
+            )}
+          />
         )}
-      </section>
-
+      </Box>
       {desktop && selected && (
-        <section className="cm-entry-detail-pane" aria-label={t("vault.browser.details")}>
+        <Flex
+          as="section"
+          aria-label={t("vault.browser.details")}
+          direction="column"
+          gap="spacing-4"
+          flexBasis="50%"
+          minWidth="0"
+        >
+          <Button ref={closeRef} view="flat-secondary" onClick={closeDetails}>
+            {t("vault.browser.back")}
+          </Button>
+          <Text as="h2" variant="header-1" wordBreak="break-word">
+            {selected.password_name}
+          </Text>
           {details}
-        </section>
+        </Flex>
       )}
-
       {!desktop && (
         <Dialog
           open={Boolean(selected)}
           onOpenChange={(open) => {
             if (!open) closeDetails();
           }}
-          aria-labelledby="entry-detail-title"
-          hasCloseButton={false}
+          aria-label={selected?.password_name}
           fullWidth
-          maxWidth="l"
+          maxWidth="m"
           contentOverflow="auto"
-          className="cm-entry-mobile-dialog"
+          returnFocus={selectedTrigger}
         >
+          <Dialog.Header caption={selected?.password_name} />
           <Dialog.Body>{details}</Dialog.Body>
+          <Dialog.Footer
+            onClickButtonCancel={closeDetails}
+            textButtonCancel={t("vault.browser.back")}
+          />
         </Dialog>
       )}
-    </div>
+    </Flex>
   );
 };
-
 export default EntryBrowser;

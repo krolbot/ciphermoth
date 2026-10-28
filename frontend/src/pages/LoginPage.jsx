@@ -1,12 +1,22 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Button, Checkbox, Progress, TextInput } from "@gravity-ui/uikit";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Container,
+  Flex,
+  Progress,
+  Text,
+  TextInput,
+} from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
 import LanguageSwitcher from "../components/LanguageSwitcher";
 import LoadingScreen from "../components/LoadingScreen";
-import MothIcon from "../components/MothIcon";
+import BrandMark from "../components/BrandMark";
 import PasswordField from "../components/PasswordField";
 import ThemeToggle from "../components/ThemeToggle";
 import { getMasterPasswordStrength } from "../lib/passwordStrength";
@@ -15,7 +25,7 @@ import { LOGOUT_NOTICE } from "../utils";
 const STRENGTH_THEME = { error: "danger", warning: "warning", success: "success" };
 
 const LoginPage = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { state } = useLocation();
   const [acknowledged, setAcknowledged] = useState(false);
   const [notice, setNotice] = useState("");
@@ -81,139 +91,117 @@ const LoginPage = () => {
   if (initialized === null) return <LoadingScreen />;
 
   return (
-    <div className="cm-auth-page">
-      <section className="cm-auth-workspace">
-        <form
-          className="cm-auth-form"
+    <Container
+      maxWidth="440px"
+      gutters="spacing-3"
+      paddingBlock={{ xs: "spacing-6", m: "spacing-10" }}
+    >
+      <Card view="outlined">
+        <Flex
+          as="form"
+          direction="column"
+          gap="spacing-5"
+          padding="spacing-6"
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
             if (!loading) (initialized ? handleLogin : handleCreate)();
           }}
         >
-          <div className="cm-auth-form__brand">
-            <div className="cm-auth-form__brand-identity">
-              <span className="cm-auth-form__brand-mark" aria-hidden="true">
-                <MothIcon />
-              </span>
-              <span className="cm-auth-form__brand-name">
-                Cipher<span className="cm-brand__name-accent">Moth</span>
-              </span>
-            </div>
-            <div className="cm-auth-form__utilities">
+          <Flex alignItems="center" justifyContent="space-between" gap="spacing-3">
+            <Flex alignItems="center" gap="spacing-2">
+              <BrandMark />
+              <Text variant="subheader-3">
+                {i18n.resolvedLanguage?.startsWith("ru") ? "Недра" : "Nedra"}
+              </Text>
+            </Flex>
+            <Flex gap="spacing-2">
               <ThemeToggle />
-              <LanguageSwitcher placement="auth" />
-            </div>
-          </div>
-          <h2>{t(initialized ? "auth.unlock" : "auth.setupTitle")}</h2>
-          <p className="cm-auth-form__description">
-            {t(initialized ? "auth.tagline" : "auth.setupDescription")}
-          </p>
-
-          <div className="cm-auth-form__fields">
-            {notice && (
-              <div className="cm-auth-form__notice" role="status">
-                {notice}
-              </div>
-            )}
-            {error && (
-              <div className="cm-auth-form__error" role="alert">
-                {error}
-              </div>
-            )}
-
-            <label className="cm-field" htmlFor="cm-auth-username">
-              <span className="cm-field__label">
-                {t(initialized ? "auth.username" : "auth.administratorUsername")}
-                <span className="cm-field__required" aria-hidden="true">
-                  *
-                </span>
-              </span>
-              <TextInput
-                id="cm-auth-username"
-                size="xl"
-                value={username}
-                onUpdate={(nextUsername) => {
-                  setUsername(nextUsername);
+              <LanguageSwitcher />
+            </Flex>
+          </Flex>
+          <Text as="h1" variant="header-1">
+            {t(initialized ? "auth.unlock" : "auth.setupTitle")}
+          </Text>
+          <Text color="secondary">{t(initialized ? "auth.tagline" : "auth.setupDescription")}</Text>
+          {notice && <Alert theme="info" message={notice} />}
+          {error && <Alert theme="danger" message={error} />}
+          <TextInput
+            id="cm-auth-username"
+            label={t(initialized ? "auth.username" : "auth.administratorUsername")}
+            required
+            size="l"
+            value={username}
+            disabled={loading}
+            autoFocus
+            autoComplete="username"
+            onUpdate={(next) => {
+              setUsername(next);
+              setError(null);
+            }}
+            note={initialized ? undefined : t("auth.usernameRules")}
+            controlProps={{ autoCapitalize: "none", spellCheck: false, required: true }}
+          />
+          <PasswordField
+            label={t("auth.masterPassword")}
+            required
+            value={value}
+            onGenerate={initialized ? undefined : setValue}
+            disabled={loading}
+            onUpdate={(next) => {
+              setValue(next);
+              setError(null);
+            }}
+            autoComplete={initialized ? "current-password" : "new-password"}
+          />
+          {!initialized && value && strength && (
+            <Flex direction="column" gap="spacing-2" aria-live="polite">
+              <Progress value={strength.value} theme={STRENGTH_THEME[strength.color]} size="s" />
+              <Text color="secondary">{t(strength.labelKey)}</Text>
+            </Flex>
+          )}
+          {!initialized && (
+            <>
+              <PasswordField
+                label={t("auth.confirmMasterPassword")}
+                required
+                value={confirm}
+                disabled={loading}
+                onUpdate={(next) => {
+                  setConfirm(next);
                   setError(null);
                 }}
-                autoComplete="username"
-                autoFocus
-                note={initialized ? undefined : t("auth.usernameRules")}
-                controlProps={{ autoCapitalize: "none", spellCheck: false, required: true }}
+                autoComplete="new-password"
               />
-            </label>
-
-            <PasswordField
-              label={t("auth.masterPassword")}
-              required
-              size="xl"
-              value={value}
-              onGenerate={initialized ? undefined : setValue}
-              disabled={loading}
-              onUpdate={(nextPassword) => {
-                setValue(nextPassword);
-                setError(null);
-              }}
-              autoComplete={initialized ? "current-password" : "new-password"}
-            />
-
-            {!initialized && value && strength && (
-              <div className="cm-auth-form__strength" aria-live="polite">
-                <Progress value={strength.value} theme={STRENGTH_THEME[strength.color]} size="s" />
-                <span className="cm-auth-form__strength-label">{t(strength.labelKey)}</span>
-              </div>
-            )}
-
-            {!initialized && (
-              <div className="cm-auth-form__bootstrap">
-                <PasswordField
-                  label={t("auth.confirmMasterPassword")}
-                  required
-                  size="xl"
-                  value={confirm}
-                  onUpdate={(nextConfirm) => {
-                    setConfirm(nextConfirm);
-                    setError(null);
-                  }}
-                  autoComplete="new-password"
-                />
-                <div className="cm-auth-form__warning" role="note">
-                  {t("auth.noRecoveryWarning")}
-                </div>
-                <Checkbox
-                  size="l"
-                  checked={acknowledged}
-                  onUpdate={(checked) => {
-                    setAcknowledged(checked);
-                    setError(null);
-                  }}
-                  content={
-                    <span className="cm-auth-form__acknowledgement">
-                      {t("auth.noRecoveryAcknowledgement")}
-                    </span>
-                  }
-                />
-              </div>
-            )}
-          </div>
-
+              <Alert theme="warning" message={t("auth.noRecoveryWarning")} />
+              <Checkbox
+                checked={acknowledged}
+                disabled={loading}
+                size="l"
+                onUpdate={(checked) => {
+                  setAcknowledged(checked);
+                  setError(null);
+                }}
+                content={t("auth.noRecoveryAcknowledgement")}
+              />
+            </>
+          )}
           <Button
-            className="cm-auth-form__submit"
             type="submit"
             view="action"
-            size="xl"
+            size="l"
             width="max"
             loading={loading}
             disabled={!initialized && !acknowledged}
           >
             {t(initialized ? "auth.unlock" : "auth.create")}
           </Button>
-
-          <p className="cm-auth-form__lock-note">{t("auth.closeLocks")}</p>
-        </form>
-      </section>
-    </div>
+          <Text color="secondary" variant="caption-2">
+            {t("auth.closeLocks")}
+          </Text>
+        </Flex>
+      </Card>
+    </Container>
   );
 };
 

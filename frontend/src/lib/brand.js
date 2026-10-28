@@ -1,6 +1,4 @@
-// CipherMoth brand tokens. React-free and tiny so the palette is easy to audit
-// and share between the MUI theme and the handful of custom dark surfaces
-// (login, setup, loading) that render outside it.
+// Nedra brand constants shared by runtime branding and semantic Gravity theme setup.
 
 export const INK = "#0b0b0c";
 export const SURFACE = "#f4f4f2";

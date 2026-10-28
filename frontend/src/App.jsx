@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter as Router, Navigate, Route, Routes } from "react-router-dom";
 import { useStoreActions } from "easy-peasy";
-import { ToasterComponent } from "@gravity-ui/uikit";
+import { Box, Container, Flex, ToasterComponent } from "@gravity-ui/uikit";
 
 import DesktopGate from "./platform/DesktopGate";
 import apiClient from "./api/client";
@@ -44,18 +44,20 @@ const AppContent = () => {
   if (!authed) return appRoutes;
 
   return (
-    <div className="cm-app">
+    <Flex minHeight="100dvh" direction={{ xs: "column", l: "row" }}>
       <TopMenu />
-      <main className="cm-main">
-        <div className="cm-page">{!passwordChangeRequired && appRoutes}</div>
-      </main>
+      <Box as="main" flexGrow={1} minWidth="0">
+        <Container paddingBlock="spacing-6" gutters={{ xs: "spacing-3", m: "spacing-6" }}>
+          {!passwordChangeRequired && appRoutes}
+        </Container>
+      </Box>
       <PasswordChangeDialog
         open={passwordChangeRequired}
         required
         onClose={() => {}}
         onChanged={setUser}
       />
-    </div>
+    </Flex>
   );
 };
 

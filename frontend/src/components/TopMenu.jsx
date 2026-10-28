@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowRightFromSquare,
   ArrowRotateRight,
@@ -10,68 +10,58 @@ import {
   Key,
   Lock,
   Persons,
-  Plus,
   TrashBin,
   Xmark,
 } from "@gravity-ui/icons";
-import { Button, Drawer, Icon, Tooltip } from "@gravity-ui/uikit";
+import {
+  Box,
+  Button,
+  Divider,
+  Drawer,
+  Flex,
+  Icon,
+  List,
+  Text,
+  useLayoutContext,
+} from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
 import { endSession } from "../api/session";
 import { getCurrentUser } from "../utils";
-import { IS_DEV } from "../lib/appEnv";
+
 import EnvBadge from "./EnvBadge";
 import LanguageSwitcher from "./LanguageSwitcher";
-import MothIcon from "./MothIcon";
+import BrandMark from "./BrandMark";
 import PasswordChangeDialog from "./PasswordChangeDialog";
 import SettingsModal from "./SettingsModal";
 import ThemeToggle from "./ThemeToggle";
 import UpdateDialog from "./UpdateDialog";
 
-const NavigationItem = ({ to, icon, label, end = false, badge = false, onClick }) => {
-  const location = useLocation();
-  const [pathname, query] = to.split("?");
-  const active =
-    location.pathname === pathname &&
-    (query ? location.search === `?${query}` : !location.search) &&
-    (!end || location.pathname === pathname);
-
+const Brand = ({ version, onClick }) => {
+  const { i18n } = useTranslation();
+  const name = i18n.resolvedLanguage?.startsWith("ru") ? "Недра" : "Nedra";
   return (
-    <Link
-      to={to}
-      className={`cm-nav__item${active ? " cm-nav__item--active" : ""}`}
-      aria-current={active ? "page" : undefined}
-      onClick={onClick}
-    >
-      <Icon data={icon} size={18} />
-      <span>{label}</span>
-      {badge && <span className="cm-nav__badge" aria-hidden="true" />}
-    </Link>
+    <Button component={Link} to="/passwords" view="flat" size="xl" onClick={onClick}>
+      <Flex alignItems="center" gap="spacing-2">
+        <BrandMark />
+        <Text variant="subheader-2">{name}</Text>
+        {version && (
+          <Text color="secondary" variant="caption-2">
+            v{String(version).replace(/^v/, "")}
+          </Text>
+        )}
+      </Flex>
+    </Button>
   );
 };
-
-const Brand = ({ version, compact = false, onClick }) => (
-  <Link className="cm-brand" to="/passwords" onClick={onClick}>
-    <span className="cm-brand__mark" aria-hidden="true">
-      <MothIcon />
-    </span>
-    <span className="cm-brand__copy">
-      <span className="cm-brand__name">
-        Cipher<span className="cm-brand__name-accent">Moth</span>
-      </span>
-      {!compact && (
-        <span className="cm-brand__meta">
-          {version ? `v${String(version).replace(/^v/, "")}` : ""}
-        </span>
-      )}
-    </span>
-  </Link>
-);
 
 const TopMenu = () => {
   const { t } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { isMediaActive } = useLayoutContext();
+  const desktop = isMediaActive("l");
   const currentUser = getCurrentUser();
   const admin = currentUser?.role === "admin";
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -128,153 +118,139 @@ const TopMenu = () => {
     endSession();
   };
 
-  const navigation = (mobile = false) => (
-    <nav className="cm-nav" aria-label={t("navigation.workspace")}>
-      <p className="cm-nav__section-label">{t("navigation.workspace")}</p>
-      <NavigationItem
-        to="/passwords"
-        icon={Lock}
-        label={t("vault.title")}
-        end
-        onClick={mobile ? closeMobileNav : undefined}
+  const navItems = [
+    { id: "/passwords", label: t("vault.title"), icon: Lock },
+    { id: "/passwords?tool=backup", label: t("vault.backup"), icon: CloudArrowUpIn },
+    { id: "/passwords?tool=health", label: t("vault.health"), icon: HeartPulse },
+    { id: "/passwords?tool=trash", label: t("vault.trash"), icon: TrashBin },
+    ...(admin ? [{ id: "/users", label: t("users.title"), icon: Persons }] : []),
+  ];
+  const navigation = (
+    <Box as="nav" aria-label={t("navigation.workspace")}>
+      <List
+        aria-label={t("navigation.workspace")}
+        items={navItems}
+        selectionMode="single"
+        selectedIds={[`${location.pathname}${location.search}`]}
+        getItemTextValue={(item) => item.label}
+        onItemAction={(id, item, event) => {
+          if ("key" in event) {
+            event.preventDefault();
+            navigate(id);
+          }
+          closeMobileNav();
+        }}
+        renderItem={(ctx, { getItemProps, getItemViewProps }) => (
+          <List.ItemView
+            component={Link}
+            to={ctx.id}
+            {...getItemProps()}
+            {...getItemViewProps()}
+            aria-current={`${location.pathname}${location.search}` === ctx.id ? "page" : undefined}
+            startContent={<Icon data={ctx.item.icon} />}
+          >
+            {ctx.item.label}
+          </List.ItemView>
+        )}
       />
-      <NavigationItem
-        to="/passwords?tool=backup"
-        icon={CloudArrowUpIn}
-        label={t("vault.backup")}
-        onClick={mobile ? closeMobileNav : undefined}
-      />
-      <NavigationItem
-        to="/passwords?tool=health"
-        icon={HeartPulse}
-        label={t("vault.health")}
-        onClick={mobile ? closeMobileNav : undefined}
-      />
-      <NavigationItem
-        to="/passwords?tool=trash"
-        icon={TrashBin}
-        label={t("vault.trash")}
-        onClick={mobile ? closeMobileNav : undefined}
-      />
-
-      {admin && (
-        <>
-          <p className="cm-nav__section-label">{t("navigation.administration")}</p>
-          <NavigationItem
-            to="/users"
-            icon={Persons}
-            label={t("users.title")}
-            onClick={mobile ? closeMobileNav : undefined}
-          />
-        </>
-      )}
-
-      <p className="cm-nav__section-label">{t("navigation.manage")}</p>
-      {admin && (
-        <button type="button" className="cm-nav__item" onClick={openSettings}>
-          <Icon data={Gear} size={18} />
-          <span>{t("topMenu.settings")}</span>
-        </button>
-      )}
-      <button type="button" className="cm-nav__item" onClick={openPassword}>
-        <Icon data={Key} size={18} />
-        <span>{t("auth.changePassword")}</span>
-      </button>
-      {updateAvailable && (
-        <button type="button" className="cm-nav__item" onClick={openUpdate}>
-          <Icon data={ArrowRotateRight} size={18} />
-          <span>{t("common.actions.update")}</span>
-          <span className="cm-nav__badge" aria-hidden="true" />
-        </button>
-      )}
-    </nav>
+    </Box>
   );
-
-  const accountFooter = (
-    <footer className="cm-sidebar__footer">
-      <EnvBadge />
-      <div className="cm-sidebar__utility">
-        <div className="cm-sidebar__user">
-          <span className="cm-sidebar__username">{currentUser?.username}</span>
-          <span className="cm-sidebar__role">{currentUser?.role}</span>
-        </div>
+  const utilities = (
+    <Flex direction="column" gap="spacing-2">
+      <Divider />
+      {admin && (
+        <Button view="flat" onClick={openSettings}>
+          <Icon data={Gear} />
+          {t("topMenu.settings")}
+        </Button>
+      )}
+      <Button view="flat" onClick={openPassword}>
+        <Icon data={Key} />
+        {t("auth.changePassword")}
+      </Button>
+      {updateAvailable && (
+        <Button view="flat-action" onClick={openUpdate}>
+          <Icon data={ArrowRotateRight} />
+          {t("common.actions.update")}
+        </Button>
+      )}
+      <Divider />
+      <Text ellipsis>{currentUser?.username}</Text>
+      <Text color="secondary" variant="caption-2">
+        {t(`users.roles.${currentUser?.role}`)}
+      </Text>
+      <Flex alignItems="center" gap="spacing-2" wrap="wrap">
+        <EnvBadge />
         <LanguageSwitcher />
         <ThemeToggle />
-      </div>
-      <button type="button" className="cm-nav__item cm-nav__item--danger" onClick={logOut}>
-        <Icon data={ArrowRightFromSquare} size={18} />
-        <span>{t("auth.logOut")}</span>
-      </button>
-    </footer>
+      </Flex>
+      <Button view="flat-danger" onClick={logOut}>
+        <Icon data={ArrowRightFromSquare} />
+        {t("auth.logOut")}
+      </Button>
+    </Flex>
   );
 
   return (
     <>
-      <aside className={`cm-sidebar${IS_DEV ? " cm-sidebar--development" : ""}`}>
-        <header className="cm-sidebar__header">
-          <Brand version={version} />
-        </header>
-        {navigation()}
-        {accountFooter}
-      </aside>
-
-      <header className="cm-mobile-header">
-        <Button
-          ref={mobileMenuButton}
-          type="button"
-          view="flat-secondary"
-          size="l"
-          aria-label={t("navigation.more")}
-          onClick={() => setMobileNavOpen(true)}
+      {desktop ? (
+        <Flex
+          as="aside"
+          direction="column"
+          width="240px"
+          flexShrink={0}
+          padding="spacing-3"
+          gap="spacing-5"
+          backgroundColor="generic"
         >
-          <Icon data={Bars} />
-        </Button>
-        <Brand compact />
-        <div className="cm-mobile-header__actions">
-          {["/passwords", "/entries/new"].includes(location.pathname) ? (
-            <span className="cm-mobile-header__action-spacer" aria-hidden="true" />
-          ) : (
-            <Tooltip content={t("navigation.newEntry")}>
-              <Button
-                component={Link}
-                to="/entries/new"
-                view="action"
-                size="l"
-                aria-label={`${t("common.actions.add")} — ${t("navigation.newEntry")}`}
-              >
-                <Icon data={Plus} />
-                <span className="cm-mobile-header__new-label">{t("common.actions.add")}</span>
-              </Button>
-            </Tooltip>
-          )}
-        </div>
-      </header>
+          <Brand version={version} />
+          {navigation}
+          {utilities}
+        </Flex>
+      ) : (
+        <Flex as="header" alignItems="center" gap="spacing-3" padding="spacing-3">
+          <Button
+            ref={mobileMenuButton}
+            type="button"
+            view="flat-secondary"
+            size="xl"
+            aria-label={t("navigation.more")}
+            onClick={() => setMobileNavOpen(true)}
+          >
+            <Icon data={Bars} />
+          </Button>
+          <Brand />
+        </Flex>
+      )}
 
       <Drawer
         open={mobileNavOpen}
         onOpenChange={setMobileNavOpen}
         placement="left"
         size={304}
+        maxSize={360}
+        returnFocus={mobileMenuButton}
+        disableLayer={false}
         aria-label={t("navigation.workspace")}
-        contentClassName="cm-mobile-drawer"
+
         contentOverflow="auto"
       >
-        <div className="cm-mobile-drawer__content">
-          <header className="cm-sidebar__header">
+        <Flex direction="column" gap="spacing-5" padding="spacing-3">
+          <Flex alignItems="center" justifyContent="space-between">
             <Brand version={version} onClick={closeMobileNav} />
             <Button
               type="button"
               view="flat-secondary"
-              size="l"
+              size="xl"
               aria-label={t("common.actions.close")}
               onClick={closeMobileNav}
             >
               <Icon data={Xmark} />
             </Button>
-          </header>
-          {navigation(true)}
-          {accountFooter}
-        </div>
+          </Flex>
+          {navigation}
+          {utilities}
+        </Flex>
       </Drawer>
 
       {admin && <SettingsModal open={settingsOpen} onClose={() => closeUtility(setSettingsOpen)} />}

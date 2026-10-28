@@ -201,7 +201,7 @@ describe("unsafe configuration", () => {
       try {
         const response = await fetch(`${frontend.url}/passwords`);
         const html = await response.text();
-        assert.match(html, /CipherMoth cannot start/);
+        assert.match(html, /Nedra cannot start/);
         assert.match(html, /CIPHERMOTH_API_URL/);
         assert.doesNotMatch(html, /<script/);
         assert.equal(
@@ -209,7 +209,7 @@ describe("unsafe configuration", () => {
           "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         );
         const logs = spawnSync("docker", ["logs", frontend.name]);
-        assert.match(logs.stderr.toString(), /CipherMoth cannot start: the API URL/);
+        assert.match(logs.stderr.toString(), /Nedra cannot start: the API URL/);
       } finally {
         stopFrontend(frontend);
       }

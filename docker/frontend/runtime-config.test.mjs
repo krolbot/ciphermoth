@@ -164,7 +164,7 @@ test("the error page explains the problem without serving the app", () => {
   const config = join(dir, "error.json");
   writeErrorSite(site, config, `the API URL is not valid: <script>alert("x")</script>`);
   const html = readFileSync(join(site, "index.html"), "utf8");
-  assert.match(html, /CipherMoth cannot start/);
+  assert.match(html, /Nedra cannot start/);
   assert.match(html, /CIPHERMOTH_API_URL/);
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&#60;script&#62;/);

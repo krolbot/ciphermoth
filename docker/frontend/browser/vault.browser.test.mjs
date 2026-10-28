@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { after, before, test } from "node:test";
 import { chromium } from "playwright";
 import { startFrontend, stopFrontend } from "./frontend.mjs";
+const require = createRequire(import.meta.url);
+const axePath = require.resolve("axe-core/axe.min.js");
 // Synthetic records only. Exercise the shipped bundle without a real vault/session.
 const entries = [
     {
@@ -96,6 +99,7 @@ async function vault(
 ) {
     const context = await browser.newContext({
         viewport: { width, height: width < 600 ? 812 : 900 },
+        bypassCSP: true,
         permissions: ["clipboard-read", "clipboard-write"],
     });
     const page = await context.newPage();
@@ -304,7 +308,7 @@ async function vault(
     await page.goto(`${origin}/passwords`);
     await page
         .getByPlaceholder(
-            language === "ru" ? "Поиск по хранилищу…" : "Search vault…",
+            language === "ru" ? "Поиск записей…" : "Search entries…",
         )
         .waitFor();
     await page.getByText("GitHub", { exact: true }).first().waitFor();
@@ -361,14 +365,14 @@ async function fits(page) {
         );
     assert.deepEqual(overflowing, []);
     const invalidActions = await page
-        .locator(".cm-entry-list")
+        .locator('[data-qa="entry-list"]')
         .locator("button")
         .evaluateAll((buttons) =>
             buttons.flatMap((button) => {
                 if (button.offsetParent === null) return [];
                 const rect = button.getBoundingClientRect();
-                return rect.width < 40 ||
-                    rect.height < 40 ||
+                return rect.width < 44 ||
+                    rect.height < 44 ||
                     rect.left < 0 ||
                     rect.right > innerWidth
                     ? [
@@ -388,6 +392,25 @@ async function fits(page) {
     );
 }
 
+async function axe(page) {
+    await page.addScriptTag({ path: axePath });
+    const violations = await page.evaluate(async () =>
+        (
+            await window.axe.run(document, {
+                runOnly: {
+                    type: "tag",
+                    values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
+                },
+            })
+        ).violations.map(({ id, impact, nodes }) => ({
+            id,
+            impact,
+            nodes: nodes.map(({ target, failureSummary, any }) => ({ target, failureSummary, any })),
+        })),
+    );
+    assert.deepEqual(violations, []);
+}
+
 async function visibleTouchAction(page, locator) {
     await page.waitForTimeout(300);
     const box = await locator.boundingBox();
@@ -405,6 +428,12 @@ async function visibleTouchAction(page, locator) {
 
 async function openAdd(page) {
     await page.getByRole("button", { name: "Add", exact: true }).click();
+}
+
+function entryEditor(page, width) {
+    return page.getByRole(width >= 1080 ? "dialog" : "region", {
+        name: "Add entry",
+    });
 }
 
 async function mobileToastFits(page, text, width) {
@@ -460,11 +489,7 @@ for (const [width, reason] of [
                     mutations.push(request);
             });
             await openAdd(page, width);
-            const dialog = page.getByRole("dialog");
-            const editor =
-                width < 900
-                    ? page.getByRole("region", { name: "Add Password" })
-                    : dialog;
+            const editor = entryEditor(page, width);
             await editor
                 .getByRole("textbox", { name: /^Name/ })
                 .fill("Unsaved synthetic entry");
@@ -518,7 +543,7 @@ for (const [width, reason] of [
                 );
             }
             await page
-                .getByRole("button", { name: "Unlock Vault", exact: true })
+                .getByRole("button", { name: "Unlock vault", exact: true })
                 .waitFor();
             const stored = await page.evaluate(() =>
                 JSON.stringify({ ...sessionStorage }),
@@ -535,7 +560,7 @@ for (const [width, reason] of [
                 .locator('input[autocomplete="current-password"]')
                 .fill("Synthetic-login-only!");
             await page
-                .getByRole("button", { name: "Unlock Vault", exact: true })
+                .getByRole("button", { name: "Unlock vault", exact: true })
                 .click();
             await editor.waitFor();
             assert.equal(
@@ -610,14 +635,13 @@ test("a damaged draft is kept until explicit discard, and does not permanently b
         );
         await page.reload();
         await page
-            .getByText("Could not prepare or restore a secure draft.", {
+            .getByText("Could not create or restore an encrypted draft.", {
                 exact: false,
             })
             .waitFor();
         assert.equal(
             await page
-                .locator(".cm-page-header__actions > button")
-                .first()
+                .getByRole("button", { name: "Add", exact: true })
                 .isDisabled(),
             true,
         );
@@ -628,7 +652,7 @@ test("a damaged draft is kept until explicit discard, and does not permanently b
             "damaged",
         );
         await fits(page);
-        await page.getByRole("button", { name: "Retry", exact: true }).click();
+        await page.getByRole("button", { name: "Try again", exact: true }).click();
         await page
             .getByRole("button", { name: "Discard draft", exact: true })
             .waitFor();
@@ -642,7 +666,7 @@ test("a damaged draft is kept until explicit discard, and does not permanently b
             .getByRole("button", { name: "Discard draft", exact: true })
             .click();
         await openAdd(page, 375);
-        const editor = page.getByRole("region", { name: "Add Password" });
+        const editor = entryEditor(page, 375);
         await editor.waitFor();
         await editor
             .getByRole("button", { name: "Cancel", exact: true })
@@ -666,14 +690,11 @@ for (const width of [375, 1440]) {
             await page.getByRole("option", { name: /^Work/ }).click();
             await openAdd(page, width);
 
-            const editor =
-                width < 600
-                    ? page.getByRole("region", { name: "Add Password" })
-                    : page.getByRole("dialog");
+            const editor = entryEditor(page, width);
             await editor.waitFor();
             assert.equal(
                 await page.getByRole("dialog").count(),
-                width < 600 ? 0 : 1,
+                width >= 1080 ? 1 : 0,
             );
             assert.equal(
                 await editor
@@ -682,11 +703,8 @@ for (const width of [375, 1440]) {
                 "Work",
             );
             assert.deepEqual(
-                await editor
-                    .locator("#cm-entry-folder-options option")
-                    .evaluateAll((options) =>
-                        options.map((option) => option.value),
-                    ),
+                await editor.getByLabel("Folder (optional)", { exact: true })
+                    .evaluate((input) => [...input.list.options].map((option) => option.value)),
                 ["Work", "Personal"],
             );
             await screenshot(page, `entry-create-${width}.png`);
@@ -723,21 +741,14 @@ for (const width of [375, 1440]) {
             await page.getByRole("combobox", { name: /^Folder/ }).click();
             await page.getByRole("option", { name: /^Shared/ }).click();
             await openAdd(page, width);
-            const editor =
-                width < 600
-                    ? page.getByRole("region", { name: "Add Password" })
-                    : page.getByRole("dialog");
+            const editor = entryEditor(page, width);
             const folder = editor.getByLabel("Folder (optional)", {
                 exact: true,
             });
             await folder.waitFor();
             assert.equal(await folder.inputValue(), "");
             assert.deepEqual(
-                await editor
-                    .locator("#cm-entry-folder-options option")
-                    .evaluateAll((options) =>
-                        options.map((option) => option.value),
-                    ),
+                await folder.evaluate((input) => [...input.list.options].map((option) => option.value)),
                 ["Work", "Personal"],
             );
             await editor
@@ -821,7 +832,7 @@ for (const width of [375, 1440]) {
             });
             await page.goto(`${origin}/users`);
             await page
-                .getByRole("heading", { name: "Users and service access" })
+                .getByRole("heading", { name: "Accounts and service access" })
                 .waitFor();
             await page
                 .getByRole("button", { name: "Groups", exact: true })
@@ -870,7 +881,7 @@ for (const width of [375, 1440]) {
             await noAccess.waitFor();
             assert.equal(await noAccess.count(), 1);
             await dialog
-                .getByRole("button", { name: "Save", exact: true })
+                .getByRole("button", { name: "Save changes", exact: true })
                 .click();
             await page
                 .getByText("Folder access saved.", { exact: true })
@@ -884,7 +895,7 @@ for (const width of [375, 1440]) {
                 .waitFor();
             const bounds = await dialog.boundingBox();
             assert.ok(
-                bounds && (width >= 600 || Math.abs(bounds.width - width) < 1),
+                bounds && bounds.x >= 0 && bounds.x + bounds.width <= width,
             );
             assert.equal(
                 await dialog.evaluate(
@@ -944,7 +955,7 @@ for (const width of [375, 1440]) {
                     grants.push(request.postDataJSON());
             });
             await page
-                .getByRole("button", { name: "Vault tools", exact: true })
+                .getByRole("button", { name: "Vault actions", exact: true })
                 .click();
             await page
                 .getByRole("menuitem", {
@@ -977,7 +988,7 @@ for (const width of [375, 1440]) {
                 /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,
             );
             await dialog
-                .getByRole("button", { name: "Grant", exact: true })
+                .getByRole("button", { name: "Grant access", exact: true })
                 .click();
             await page
                 .getByText("Folder access saved.", { exact: true })
@@ -1027,7 +1038,7 @@ for (const width of [375, 899, 900, 1024, 1440]) {
             });
             await visibleTouchAction(page, tools);
             for (const name of [
-                "Состояние",
+                "Проверка паролей",
                 "Резервная копия",
                 "Импорт",
                 "Корзина (1)",
@@ -1053,10 +1064,10 @@ for (const width of [320, 375, 430, 768, 1024, 1440]) {
             { ...entries[0], totp_secret: null },
         ]);
         try {
-            const item = page.locator(".cm-entry-list").getByRole("listitem");
-            const open = item.locator(".cm-entry-row__open");
+            const item = page.locator('[data-qa="entry-list"]').getByRole("row");
+            const open = item;
             await visibleTouchAction(page, open);
-            const actions = item.locator(".cm-entry-row__actions button");
+            const actions = item.getByRole("button");
             const visible = await actions.evaluateAll((buttons) =>
                 buttons
                     .filter((button) => button.offsetParent !== null)
@@ -1066,7 +1077,7 @@ for (const width of [320, 375, 430, 768, 1024, 1440]) {
                         return { x, width, height };
                     }),
             );
-            if (width < 600) {
+            if (width < 1280) {
                 assert.deepEqual(visible, []);
             } else {
                 assert.ok(visible.length >= 4);
@@ -1092,8 +1103,8 @@ for (const width of [320, 375, 430, 768, 1024, 1440]) {
 test("mobile vault opens an accessible read view without exposing secrets", async () => {
     const { context, page, errors } = await vault(375);
     try {
-        const list = page.locator(".cm-entry-list");
-        await list.getByRole("button", { name: /^GitHub/ }).click();
+        const list = page.locator('[data-qa="entry-list"]');
+        await list.getByRole("row", { name: /^GitHub/ }).click();
         const detail = page.getByRole("dialog", {
             name: "GitHub",
             exact: true,
@@ -1112,7 +1123,7 @@ test("mobile vault opens an accessible read view without exposing secrets", asyn
             0,
         );
         await detail
-            .getByRole("button", { name: "Reveal password", exact: true })
+            .getByRole("button", { name: "Show password", exact: true })
             .click();
         await detail
             .getByText(entries[0].password_value, { exact: true })
@@ -1125,7 +1136,7 @@ test("mobile vault opens an accessible read view without exposing secrets", asyn
             entries[0].password_value,
         );
         await detail
-            .getByRole("button", { name: "Copy 2FA code", exact: true })
+            .getByRole("button", { name: /^Copy 2FA code/ })
             .click();
         assert.match(
             await page.evaluate(() => navigator.clipboard.readText()),
@@ -1135,13 +1146,13 @@ test("mobile vault opens an accessible read view without exposing secrets", asyn
             .getByRole("button", { name: "Back to entries", exact: true })
             .click();
 
-        await list.getByRole("button", { name: /^Read-only account/ }).click();
+        await list.getByRole("row", { name: /^Read-only account/ }).click();
         const readOnly = page.getByRole("dialog", {
             name: "Read-only account",
             exact: true,
         });
         await readOnly.waitFor();
-        for (const name of ["Edit", "Delete", "Manage sharing"]) {
+        for (const name of ["Edit", "Delete", "Manage access"]) {
             assert.equal(
                 await readOnly
                     .getByRole("button", { name, exact: true })
@@ -1156,7 +1167,7 @@ test("mobile vault opens an accessible read view without exposing secrets", asyn
             .getByRole("button", { name: "Back to entries", exact: true })
             .click();
 
-        await list.getByRole("button", { name: /^Recovery notes/ }).click();
+        await list.getByRole("row", { name: /^Recovery notes/ }).click();
         const note = page.getByRole("dialog", {
             name: "Recovery notes",
             exact: true,
@@ -1184,8 +1195,8 @@ test("mobile vault opens an accessible read view without exposing secrets", asyn
 test("desktop quick actions and details preserve ACL and confirmation boundaries", async () => {
     const { context, page, errors } = await vault(1440);
     try {
-        const list = page.locator(".cm-entry-list");
-        const github = list.getByRole("listitem").filter({ hasText: "GitHub" });
+        const list = page.locator('[data-qa="entry-list"]');
+        const github = list.getByRole("row").filter({ hasText: "GitHub" });
         await github
             .getByRole("button", { name: "Copy username", exact: true })
             .click();
@@ -1194,7 +1205,7 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
             entries[0].username,
         );
         await github
-            .getByRole("button", { name: "Reveal password", exact: true })
+            .getByRole("button", { name: "Show password", exact: true })
             .click();
         await github
             .getByText(entries[0].password_value, { exact: true })
@@ -1213,14 +1224,14 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
             "Open website",
             "Remove from favorites",
             "Edit",
-            "Manage sharing",
+            "Manage access",
             "Delete",
         ]) {
             await page.getByRole("menuitem", { name, exact: true }).waitFor();
         }
         await page.keyboard.press("Escape");
 
-        const trigger = github.locator(".cm-entry-row__open");
+        const trigger = github;
         await trigger.click();
         const detail = page.getByRole("region", { name: "Entry details" });
         await detail
@@ -1236,7 +1247,7 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
             .getByRole("button", { name: "Delete", exact: true })
             .click();
         const confirmation = page.getByRole("dialog", {
-            name: "Move to Trash",
+            name: "Move entry to trash?",
             exact: true,
         });
         await confirmation.waitFor();
@@ -1246,9 +1257,7 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
         await confirmation.waitFor({ state: "hidden" });
         await page.keyboard.press("Escape");
         assert.equal(await detail.count(), 0);
-        await page.waitForFunction(() =>
-            document.activeElement?.classList.contains("cm-entry-row__open"),
-        );
+        await page.waitForFunction((row) => document.activeElement === row, await trigger.elementHandle());
         assert.equal(
             await trigger.evaluate(
                 (button) => document.activeElement === button,
@@ -1257,15 +1266,14 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
         );
 
         const readOnlyTrigger = list
-            .getByRole("listitem")
-            .filter({ hasText: "Read-only account" })
-            .locator(".cm-entry-row__open");
+            .getByRole("row")
+            .filter({ hasText: "Read-only account" });
         await readOnlyTrigger.click();
         const readOnly = page.getByRole("region", { name: "Entry details" });
         await readOnly
             .getByRole("heading", { name: "Read-only account" })
             .waitFor();
-        for (const name of ["Edit", "Delete", "Manage sharing"]) {
+        for (const name of ["Edit", "Delete", "Manage access"]) {
             assert.equal(
                 await readOnly
                     .getByRole("button", { name, exact: true })
@@ -1294,12 +1302,13 @@ for (const [width, language, theme] of [
         const { context, page, errors } = await vault(width, language, theme);
         try {
             const ru = language === "ru";
-            const list = page.locator(".cm-entry-list");
+            const list = page.locator('[data-qa="entry-list"]');
             assert.equal(
-                await list.getByRole("listitem").count(),
+                await list.getByRole("row").count(),
                 entries.length,
             );
             await fits(page);
+            await axe(page);
 
             const expectedOrder = [
                 entries[1],
@@ -1308,15 +1317,15 @@ for (const [width, language, theme] of [
                 entries[0],
             ].map((entry) => entry.password_name);
             assert.deepEqual(
-                await list.locator(".cm-entry-row__title").allTextContents(),
+                await list.getByRole("row").evaluateAll((rows) => rows.map((row) => row.querySelector('[role="gridcell"]').textContent)),
                 expectedOrder,
             );
 
             const search = page.getByPlaceholder(
-                ru ? "Поиск по хранилищу…" : "Search vault…",
+                ru ? "Поиск записей…" : "Search entries…",
             );
             await search.fill("reader@example.test");
-            assert.equal(await list.getByRole("listitem").count(), 1);
+            assert.equal(await list.getByRole("row").count(), 1);
             await search.fill("");
 
             await page
@@ -1325,7 +1334,7 @@ for (const [width, language, theme] of [
                 })
                 .click();
             await page.getByRole("option", { name: /^(Shared|Общ)/ }).click();
-            assert.equal(await list.getByRole("listitem").count(), 1);
+            assert.equal(await list.getByRole("row").count(), 1);
             await page
                 .getByRole("combobox", {
                     name: ru ? /^Папка/ : /^Folder/,
@@ -1340,17 +1349,17 @@ for (const [width, language, theme] of [
 
             const longName = entries[3].password_name;
             await list
-                .getByRole("listitem")
+                .getByRole("row")
                 .filter({ hasText: longName })
-                .locator(".cm-entry-row__open")
                 .click();
             const detail =
-                width >= 1200
+                width >= 1280
                     ? page.getByRole("region", {
                           name: ru ? "Просмотр записи" : "Entry details",
                       })
                     : page.getByRole("dialog", { name: longName, exact: true });
             await detail.waitFor();
+            await axe(page);
             assert.equal(
                 await detail
                     .getByText(entries[3].password_value, { exact: true })
@@ -1359,7 +1368,7 @@ for (const [width, language, theme] of [
             );
             await detail
                 .getByRole("button", {
-                    name: ru ? "Показать пароль" : "Reveal password",
+                    name: ru ? "Показать пароль" : "Show password",
                     exact: true,
                 })
                 .click();
@@ -1370,7 +1379,7 @@ for (const [width, language, theme] of [
             await detail.waitFor({ state: "hidden" });
 
             const tools = page.getByRole("button", {
-                name: ru ? "Действия с хранилищем" : "Vault tools",
+                name: ru ? "Действия с хранилищем" : "Vault actions",
                 exact: true,
             });
             await tools.click();

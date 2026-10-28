@@ -12,7 +12,7 @@ import {
   StarFill,
   TrashBin,
 } from "@gravity-ui/icons";
-import { Button, Icon, Menu, MenuDivider, MenuItem, Tooltip } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Icon, Menu, MenuDivider, MenuItem, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import TotpCell from "./TotpCell";
@@ -23,7 +23,7 @@ const QuickAction = ({ label, icon, onClick, selected = false }) => (
     <Button
       type="button"
       view="flat-secondary"
-      size="l"
+      size="xl"
       aria-label={label}
       onClick={onClick}
       selected={selected}
@@ -51,7 +51,13 @@ const EntryListActions = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFa
   };
 
   return (
-    <div className="cm-entry-row__actions">
+    <Flex
+      direction={{ xs: "column", m: "row" }}
+      gap="spacing-3"
+      minWidth="0"
+      wrap="wrap"
+      alignItems={{ m: "center" }}
+    >
       {!isNote && entry.username && (
         <QuickAction
           label={t("vault.columns.copyUsername")}
@@ -73,7 +79,7 @@ const EntryListActions = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFa
           <Button
             type="button"
             view="flat-secondary"
-            size="l"
+            size="xl"
             aria-label={`${t("navigation.more")}: ${entry.password_name}`}
           >
             <Icon data={EllipsisVertical} />
@@ -114,8 +120,12 @@ const EntryListActions = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFa
           </MenuItem>
         )}
       </Menu>
-      {revealed && <p className="cm-entry-row__revealed">{entry.password_value}</p>}
-    </div>
+      {revealed && (
+        <Text as="p" color="secondary" wordBreak="break-word">
+          {entry.password_value}
+        </Text>
+      )}
+    </Flex>
   );
 };
 

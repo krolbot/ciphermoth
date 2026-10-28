@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileArrowDown, Paperclip, TrashBin } from "@gravity-ui/icons";
-import { Button, Icon, Tooltip } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Icon, Tooltip } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -33,7 +33,8 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
 
   const refresh = useCallback(async () => {
     try {
-      setAttachments(await fetchAttachments(passwordName));
+      const result = await fetchAttachments(passwordName);
+      setAttachments(Array.isArray(result) ? result : []);
     } catch (error) {
       enqueueSnackbar(error.message, { variant: "error" });
     }
@@ -101,22 +102,31 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
   };
 
   return (
-    <div className="cm-attachments">
+    <Flex direction="column" gap="spacing-3" minWidth="0">
       {attachments.length === 0 ? (
-        <p className="cm-attachments__empty">{t("attachments.empty")}</p>
+        <Text as="p" color="secondary" wordBreak="break-word">
+          {t("attachments.empty")}
+        </Text>
       ) : (
-        <ul className="cm-attachments__list">
+        <Flex direction="column" gap="spacing-2" minWidth="0">
           {attachments.map((attachment) => (
-            <li className="cm-attachments__row" key={attachment.id}>
-              <Icon data={Paperclip} size={16} className="cm-attachments__file-icon" />
-              <span className="cm-attachments__filename">{attachment.filename}</span>
-              <span className="cm-attachments__size">
+            <Flex
+              direction={{ xs: "column", m: "row" }}
+              gap="spacing-2"
+              minWidth="0"
+              paddingBlock="spacing-2"
+              justifyContent="space-between"
+              key={attachment.id}
+            >
+              <Icon data={Paperclip} size={16} />
+              <Text wordBreak="break-word">{attachment.filename}</Text>
+              <Text wordBreak="break-word">
                 {formatBytes(attachment.size_bytes, i18n.resolvedLanguage)}
-              </span>
+              </Text>
               <Tooltip content={t("common.actions.download")}>
                 <Button
                   type="button"
-                  size="s"
+                  size="xl"
                   view="flat-secondary"
                   onClick={() => onDownload(attachment)}
                   aria-label={t("common.actions.download")}
@@ -128,7 +138,7 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
                 <Tooltip content={t("attachments.removeFile")}>
                   <Button
                     type="button"
-                    size="s"
+                    size="xl"
                     view="flat-danger"
                     onClick={() => setPendingDelete(attachment)}
                     aria-label={t("attachments.removeFile")}
@@ -137,13 +147,19 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
                   </Button>
                 </Tooltip>
               )}
-            </li>
+            </Flex>
           ))}
-        </ul>
+        </Flex>
       )}
 
       {!readOnly && (
-        <div className="cm-attachments__upload">
+        <Flex
+          direction={{ xs: "column", m: "row" }}
+          gap="spacing-3"
+          minWidth="0"
+          wrap="wrap"
+          alignItems={{ m: "center" }}
+        >
           <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
           <Button
             type="button"
@@ -156,7 +172,7 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
             {t("attachments.attachFile")}
           </Button>
           <span>{t("attachments.limits")}</span>
-        </div>
+        </Flex>
       )}
 
       <ConfirmDialog
@@ -169,7 +185,7 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
       >
         {t("attachments.removeMessage", { filename: pendingDelete?.filename })}
       </ConfirmDialog>
-    </div>
+    </Flex>
   );
 };
 

@@ -131,9 +131,9 @@ export const writeErrorSite = (dir, configPath, message) => {
     join(dir, "index.html"),
     `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>CipherMoth cannot start</title></head>
+<head><meta charset="utf-8"><title>Nedra cannot start</title></head>
 <body>
-<h1>CipherMoth cannot start</h1>
+<h1>Nedra cannot start</h1>
 <p>The web UI is not served because ${escapeHtml(message)}.</p>
 <p>Set CIPHERMOTH_API_URL in your .env (VITE_API_URL in the frontend container) to the address
 browsers use to reach the API, such as https://vault.example.com/api or /api, then run
@@ -167,7 +167,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     configure({ env: process.env, distDir, serveConfig, output, log: console.log });
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
-    console.error(`CipherMoth cannot start: ${error.message}`);
+    console.error(`Nedra cannot start: ${error.message}`);
     writeErrorSite(errorDir, errorConfig, error.message);
     process.exit(CONFIG_ERROR_EXIT);
   }

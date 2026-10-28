@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ChevronDown,
   CircleQuestion,
   Copy,
   FileText,
@@ -14,6 +13,9 @@ import {
   TrashBin,
 } from "@gravity-ui/icons";
 import {
+  Flex,
+  Text,
+  Disclosure,
   Button,
   Dialog,
   Icon,
@@ -96,29 +98,28 @@ const sectionsForTarget = (target) => ({
   history: false,
 });
 
-const FormSection = ({ label, count, preview, open, onToggle, children }) => (
-  <section className={`cm-entry-section${open ? " is-open" : ""}`}>
-    <button
-      type="button"
-      className="cm-entry-section__trigger"
-      onClick={onToggle}
-      aria-expanded={open}
-    >
-      <span className="cm-entry-section__title">
-        <Icon data={ChevronDown} size={16} />
-        <strong>{label}</strong>
-        {count > 0 && <span>({count})</span>}
-      </span>
-      {!open && preview && <span className="cm-entry-section__preview">{preview}</span>}
-    </button>
-    {open && <div className="cm-entry-section__body">{children}</div>}
-  </section>
+const FormSection = ({ label, count, open, onToggle, children }) => (
+  <Disclosure
+    expanded={open}
+    onUpdate={onToggle}
+    summary={`${label}${count > 0 ? ` (${count})` : ""}`}
+  >
+    <Flex direction="column" gap="spacing-3" paddingBlock="spacing-3">
+      {children}
+    </Flex>
+  </Disclosure>
 );
 
 const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
   const { t } = useTranslation();
   return (
-    <div className="cm-custom-field">
+    <Flex
+      direction={{ xs: "column", m: "row" }}
+      gap="spacing-3"
+      minWidth="0"
+      wrap="wrap"
+      alignItems={{ m: "center" }}
+    >
       <TextInput
         label={t("entry.labels.label")}
         size="m"
@@ -138,7 +139,7 @@ const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
       <Tooltip content={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}>
         <Button
           type="button"
-          size="m"
+          size="xl"
           view="flat-secondary"
           onClick={onToggleHidden}
           aria-label={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}
@@ -149,7 +150,7 @@ const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
       <Tooltip content={t("entry.actions.removeField")}>
         <Button
           type="button"
-          size="m"
+          size="xl"
           view="flat-danger"
           onClick={onRemove}
           aria-label={t("entry.actions.removeField")}
@@ -157,7 +158,7 @@ const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
           <Icon data={TrashBin} />
         </Button>
       </Tooltip>
-    </div>
+    </Flex>
   );
 };
 
@@ -166,13 +167,23 @@ const HistoryRow = ({ entry, onCopy }) => {
   const [show, setShow] = useState(false);
   const when = new Date(entry.changed_at).toLocaleDateString(i18n.resolvedLanguage);
   return (
-    <div className="cm-entry-history__row">
-      <code>{show ? entry.value : "••••••••••••"}</code>
-      <time dateTime={entry.changed_at}>{when}</time>
+    <Flex
+      direction={{ xs: "column", m: "row" }}
+      gap="spacing-3"
+      minWidth="0"
+      wrap="wrap"
+      alignItems={{ m: "center" }}
+    >
+      <Text as="code" variant="code-1" whiteSpace="break-spaces" wordBreak="break-all">
+        {show ? entry.value : "••••••••••••"}
+      </Text>
+      <Text as="time" variant="caption-2" color="secondary" dateTime={entry.changed_at}>
+        {when}
+      </Text>
       <Tooltip content={t(show ? "passwordField.hide" : "passwordField.show")}>
         <Button
           type="button"
-          size="s"
+          size="xl"
           view="flat-secondary"
           onClick={() => setShow((value) => !value)}
           aria-label={t(show ? "passwordField.hide" : "passwordField.show")}
@@ -183,7 +194,7 @@ const HistoryRow = ({ entry, onCopy }) => {
       <Tooltip content={t("vault.columns.copyPassword")}>
         <Button
           type="button"
-          size="s"
+          size="xl"
           view="flat-secondary"
           onClick={() => onCopy?.(entry.value)}
           aria-label={t("vault.columns.copyPassword")}
@@ -191,7 +202,7 @@ const HistoryRow = ({ entry, onCopy }) => {
           <Icon data={Copy} />
         </Button>
       </Tooltip>
-    </div>
+    </Flex>
   );
 };
 
@@ -411,7 +422,7 @@ const PasswordFormDialog = ({
       <Button
         type="button"
         view="flat-secondary"
-        size="m"
+        size="xl"
         selected={form.favorite}
         onClick={() => setForm((previous) => ({ ...previous, favorite: !previous.favorite }))}
         aria-pressed={form.favorite}
@@ -425,12 +436,14 @@ const PasswordFormDialog = ({
   );
 
   const body = (
-    <div className="cm-entry-form">
-      <div className="cm-entry-form__favorite">{favoriteButton}</div>
+    <Flex direction="column" gap="spacing-5" minWidth="0">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
+        {favoriteButton}
+      </Flex>
       {!editTarget && !draftError && (
-        <p className="cm-entry-form__draft-status" role="status">
+        <Text as="p" color="secondary" wordBreak="break-word" role="status">
           {t("entry.draft.savedLocally")}
-        </p>
+        </Text>
       )}
       {!editTarget && (
         <SegmentedRadioGroup
@@ -440,21 +453,21 @@ const PasswordFormDialog = ({
           onUpdate={(value) => setForm((previous) => ({ ...previous, kind: value }))}
         >
           <SegmentedRadioGroup.Option value="login">
-            <span className="cm-entry-kind-option">
+            <Text wordBreak="break-word">
               <Icon data={Key} />
               {t("entry.kind.login")}
-            </span>
+            </Text>
           </SegmentedRadioGroup.Option>
           <SegmentedRadioGroup.Option value="note">
-            <span className="cm-entry-kind-option">
+            <Text wordBreak="break-word">
               <Icon data={FileText} />
               {t("entry.kind.note")}
-            </span>
+            </Text>
           </SegmentedRadioGroup.Option>
         </SegmentedRadioGroup>
       )}
 
-      <div className="cm-entry-form__primary">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         <TextInput
           label={t("common.fields.name")}
           size="l"
@@ -530,7 +543,7 @@ const PasswordFormDialog = ({
                 >
                   <Button
                     type="button"
-                    size="s"
+                    size="xl"
                     view={showGenerator ? "action" : "flat-secondary"}
                     onClick={toggleGenerator}
                     aria-label={t(
@@ -557,7 +570,7 @@ const PasswordFormDialog = ({
             <StrengthBar password={form.password_value} />
           </>
         )}
-      </div>
+      </Flex>
 
       <TextInput
         label={t("entry.labels.folderOptional")}
@@ -582,7 +595,7 @@ const PasswordFormDialog = ({
         ))}
       </datalist>
 
-      <div className="cm-entry-form__sections">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         {!isNote && (
           <FormSection
             label={t("entry.labels.twoFactor")}
@@ -601,7 +614,7 @@ const PasswordFormDialog = ({
               helperText={t("entry.help.twoFactor")}
               adornment={
                 <Tooltip content={t("entry.help.twoFactorTooltip")}>
-                  <Icon data={CircleQuestion} className="cm-entry-form__help-icon" />
+                  <Icon data={CircleQuestion} />
                 </Tooltip>
               }
             />
@@ -639,7 +652,13 @@ const PasswordFormDialog = ({
           open={sections.custom}
           onToggle={toggleSection("custom")}
         >
-          <div className="cm-custom-fields">
+          <Flex
+            direction={{ xs: "column", m: "row" }}
+            gap="spacing-3"
+            minWidth="0"
+            wrap="wrap"
+            alignItems={{ m: "center" }}
+          >
             {form.custom_fields.map((field, index) => (
               <CustomFieldRow
                 key={index}
@@ -653,7 +672,7 @@ const PasswordFormDialog = ({
               <Icon data={Plus} />
               {t("entry.actions.addField")}
             </Button>
-          </div>
+          </Flex>
         </FormSection>
 
         {!isNote && (
@@ -696,55 +715,61 @@ const PasswordFormDialog = ({
             open={sections.history}
             onToggle={toggleSection("history")}
           >
-            <div className="cm-entry-history">
+            <Flex direction="column" gap="spacing-3" minWidth="0">
               {history.map((entry, index) => (
                 <HistoryRow key={index} entry={entry} onCopy={onCopy} />
               ))}
-            </div>
+            </Flex>
           </FormSection>
         )}
-      </div>
-    </div>
+      </Flex>
+    </Flex>
   );
 
   const footer = (
-    <div className="cm-entry-form__footer">
-      <Button type="button" view="flat" onClick={onClose} disabled={submitting}>
-        {t("common.actions.cancel")}
-      </Button>
-      <Button
-        type="button"
-        view="action"
-        onClick={handleSubmit}
-        loading={submitting}
-        disabled={
+    <Dialog.Footer
+      onClickButtonCancel={onClose}
+      textButtonCancel={t("common.actions.cancel")}
+      onClickButtonApply={handleSubmit}
+      textButtonApply={submitLabel}
+      propsButtonCancel={{ disabled: submitting }}
+      propsButtonApply={{
+        view: "action",
+        loading: submitting,
+        disabled:
           submitting ||
           (unchanged && !attachmentsDirty) ||
           !form.password_name.trim() ||
-          !form.password_value.trim()
-        }
-      >
-        {submitLabel}
-      </Button>
-    </div>
+          !form.password_value.trim(),
+      }}
+    />
   );
 
   if (page) {
     return (
-      <section className="cm-entry-form-page" aria-label={t(titleKey)}>
-        <header className="cm-entry-form-page__header">
-          <h1>{t(titleKey)}</h1>
-        </header>
+      <Flex direction="column" gap="spacing-5" minWidth="0" as="section" aria-label={t(titleKey)}>
+        <Flex
+          direction={{ xs: "column", m: "row" }}
+          gap="spacing-5"
+          minWidth="0"
+          wrap="wrap"
+          alignItems={{ m: "center" }}
+          as="header"
+        >
+          <Text as="h1" variant="header-1">
+            {t(titleKey)}
+          </Text>
+        </Flex>
         {body}
         {footer}
-      </section>
+      </Flex>
     );
   }
 
   return (
     <Dialog
       aria-label={t(titleKey)}
-      className="cm-entry-form-dialog"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={!submitting}

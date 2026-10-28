@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Tooltip } from "@gravity-ui/uikit";
+import { Button, Text, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { generateTotp, totpRemaining } from "../../lib/totp";
@@ -33,7 +33,7 @@ const TotpCell = ({ secret, onCopy }) => {
     };
   }, [secret]);
 
-  if (invalid) return <span className="cm-totp__error">{t("totp.invalid")}</span>;
+  if (invalid) return <Text color="danger">{t("totp.invalid")}</Text>;
   if (!code) return null;
 
   return (
@@ -41,18 +41,17 @@ const TotpCell = ({ secret, onCopy }) => {
       <Button
         type="button"
         view="flat-secondary"
-        aria-label={t("totp.copy")}
+        size="xl"
+        aria-label={`${t("totp.copy")} ${code.slice(0, 3)} ${code.slice(3)} ${remaining}s`}
         onClick={() => onCopy?.(code)}
-        className="cm-totp"
       >
-        <span className="cm-totp__code">
-          {code.slice(0, 3)} {code.slice(3)}
-        </span>
-        <span
-          className={`cm-totp__remaining${remaining <= 5 ? " cm-totp__remaining--urgent" : ""}`}
-          aria-hidden="true"
-        >
-          {remaining}s
+        <span>
+          <Text variant="code-1">
+            {code.slice(0, 3)} {code.slice(3)}
+          </Text>
+        </span>{" "}
+        <span aria-hidden="true">
+          <Text color={remaining <= 5 ? "warning" : "secondary"}>{remaining}s</Text>
         </span>
       </Button>
     </Tooltip>

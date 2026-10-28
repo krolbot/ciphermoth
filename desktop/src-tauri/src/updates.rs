@@ -240,8 +240,8 @@ pub async fn update_install(
             }
             app.restart();
         }
-        let _ = rfd::AsyncMessageDialog::new().set_title("CipherMoth update")
-            .set_description("The update could not be installed. CipherMoth will reopen. Your vault has not been replaced.")
+        let _ = rfd::AsyncMessageDialog::new().set_title("Nedra update")
+            .set_description("The update could not be installed. Nedra will reopen. Your vault has not been replaced.")
             .set_level(rfd::MessageLevel::Error).show().await;
     }
     app.restart();

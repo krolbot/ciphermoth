@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Alert, Dialog, Progress } from "@gravity-ui/uikit";
+import { Flex, Text, Alert, Dialog, Progress } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import apiClient from "../api/client";
@@ -59,7 +59,7 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
   return (
     <Dialog
       aria-labelledby={titleId}
-      className="cm-secondary-dialog cm-secondary-dialog--password-change"
+
       contentOverflow="auto"
       disableEscapeKeyDown={required || busy}
       disableOutsideClick={required || busy}
@@ -76,12 +76,16 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
         id={titleId}
       />
       <Dialog.Body>
-        <div className="cm-secondary-form">
-          {required && <p className="cm-secondary-copy">{t("auth.passwordChangeRequired")}</p>}
+        <Flex direction="column" gap="spacing-5" minWidth="0">
+          {required && (
+            <Text as="p" color="secondary" wordBreak="break-word">
+              {t("auth.passwordChangeRequired")}
+            </Text>
+          )}
           {error && (
-            <div role="alert">
+            <Flex direction="column" gap="spacing-3" minWidth="0" role="alert">
               <Alert message={error} size="s" theme="danger" />
-            </div>
+            </Flex>
           )}
           <PasswordField
             label={t("auth.currentPassword")}
@@ -99,14 +103,17 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
             autoComplete="new-password"
           />
           {newPassword && strength && (
-            <div
+            <Flex
+              direction="column"
+              gap="spacing-3"
+              minWidth="0"
               aria-label={t(strength.labelKey)}
               aria-live="polite"
-              className="cm-secondary-strength"
+
               role="status"
             >
               <Progress size="s" theme={STRENGTH_THEME[strength.color]} value={strength.value} />
-            </div>
+            </Flex>
           )}
           <PasswordField
             label={t("auth.confirmNewPassword")}
@@ -114,7 +121,7 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
             onChange={(event) => setConfirm(event.target.value)}
             autoComplete="new-password"
           />
-        </div>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer
         loading={busy}

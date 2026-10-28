@@ -31,7 +31,7 @@ impl Files {
 pub async fn choose_backup(files: State<'_, Files>) -> Result<Option<Value>, String> {
     let generation = files.generation.load(Ordering::SeqCst);
     let picked = rfd::AsyncFileDialog::new()
-        .add_filter("CipherMoth backup", &["cmbackup", "zip"])
+        .add_filter("Nedra backup", &["cmbackup", "zip"])
         .pick_file()
         .await;
     let Some(file) = picked else { return Ok(None) };
@@ -89,8 +89,8 @@ pub async fn backup_export(
         return Err("Password is too long.".into());
     }
     let picked = rfd::AsyncFileDialog::new()
-        .set_file_name("ciphermoth-backup.cmbackup")
-        .add_filter("CipherMoth backup", &["cmbackup"])
+        .set_file_name("nedra-backup.cmbackup")
+        .add_filter("Nedra backup", &["cmbackup"])
         .save_file()
         .await;
     let Some(file) = picked else {

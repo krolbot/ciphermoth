@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Dialog, Loader, Progress } from "@gravity-ui/uikit";
+import { Flex, Text, Alert, Button, Dialog, Loader, Progress } from "@gravity-ui/uikit";
 import { useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -60,7 +60,7 @@ export default function DesktopUpdateDialog({ open, onClose }) {
   return (
     <Dialog
       aria-label={t("updateDialog.title")}
-      className="cm-secondary-dialog cm-update-dialog"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={!busy}
@@ -72,23 +72,27 @@ export default function DesktopUpdateDialog({ open, onClose }) {
     >
       <Dialog.Header caption={t("updateDialog.title")} />
       <Dialog.Body>
-        <div className="cm-update-dialog__content">
-          <p className="cm-update-dialog__version-copy">
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          <Text as="p" color="secondary" wordBreak="break-word">
             v{current} → v{latest}
-          </p>
-          {notes && <p className="cm-update-dialog__notes">{notes}</p>}
-          <p className="cm-secondary-copy">
+          </Text>
+          {notes && (
+            <Text as="p" color="secondary" wordBreak="break-word">
+              {notes}
+            </Text>
+          )}
+          <Text as="p" color="secondary" wordBreak="break-word">
             {canInstall
               ? t("desktopUpdate.installDescription")
               : t("desktopUpdate.debianDescription")}
-          </p>
+          </Text>
           {busy && (
-            <div className="cm-update-dialog__progress" role="status">
+            <Flex direction="column" gap="spacing-3" minWidth="0" role="status">
               {progress === null ? <Loader size="m" /> : <Progress value={progress} />}
               <span>
                 {t(installing ? "desktopUpdate.installing" : "desktopUpdate.downloading")}
               </span>
-            </div>
+            </Flex>
           )}
           {error && <Alert theme="info" view="outlined" message={error} />}
           {releaseUrl && (
@@ -96,24 +100,28 @@ export default function DesktopUpdateDialog({ open, onClose }) {
               {t("desktopUpdate.releaseNotes")}
             </Button>
           )}
-        </div>
+        </Flex>
       </Dialog.Body>
-      <div className="cm-secondary-dialog__footer">
-        {busy ? (
-          <Button type="button" view="outlined" onClick={cancel} disabled={installing}>
-            {t("desktopUpdate.cancelDownload")}
-          </Button>
-        ) : (
-          <Button type="button" view="flat" onClick={onClose}>
-            {t("common.actions.later")}
-          </Button>
+      <Dialog.Footer
+        renderButtons={() => (
+          <Flex gap="spacing-3" wrap="wrap">
+            {busy ? (
+              <Button type="button" view="outlined" onClick={cancel} disabled={installing}>
+                {t("desktopUpdate.cancelDownload")}
+              </Button>
+            ) : (
+              <Button type="button" view="flat" onClick={onClose}>
+                {t("common.actions.later")}
+              </Button>
+            )}
+            {canInstall && (
+              <Button type="button" view="action" onClick={install} disabled={busy} loading={busy}>
+                {t("desktopUpdate.downloadInstall")}
+              </Button>
+            )}
+          </Flex>
         )}
-        {canInstall && (
-          <Button type="button" view="action" onClick={install} disabled={busy} loading={busy}>
-            {t("desktopUpdate.downloadInstall")}
-          </Button>
-        )}
-      </div>
+      />
     </Dialog>
   );
 }

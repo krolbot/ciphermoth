@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { Alert, Dialog } from "@gravity-ui/uikit";
+import { Flex, Alert, Dialog } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 const ConfirmDialog = ({
@@ -20,7 +20,7 @@ const ConfirmDialog = ({
   return (
     <Dialog
       aria-labelledby={titleId}
-      className="cm-secondary-dialog cm-secondary-dialog--confirm"
+
       contentOverflow="auto"
       disableEscapeKeyDown={pending}
       disableOutsideClick={pending}
@@ -34,11 +34,13 @@ const ConfirmDialog = ({
     >
       <Dialog.Header caption={title} id={titleId} />
       <Dialog.Body>
-        <div className="cm-secondary-copy">{children}</div>
+        <Flex direction="column" gap="spacing-3" minWidth="0">
+          {children}
+        </Flex>
         {error && (
-          <div className="cm-confirm-error" role="alert">
+          <Flex direction="column" gap="spacing-3" minWidth="0" role="alert">
             <Alert message={error} theme="danger" view="outlined" />
-          </div>
+          </Flex>
         )}
       </Dialog.Body>
       <Dialog.Footer

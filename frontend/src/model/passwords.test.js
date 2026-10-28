@@ -80,7 +80,7 @@ describe("imports", () => {
     const file = new File(["x"], "backup.zip");
     await expect(
       actions.importPasswords({ file, masterPassword: "x", onConflict: "skip" })
-    ).rejects.toThrow("Import failed.");
+    ).rejects.toThrow("Could not import entries. Check the file and try again.");
   });
 });
 
@@ -192,13 +192,13 @@ describe("entry names in URLs", () => {
 
   it.each([".", ".."])("refuses %s, which a browser would route to another URL", async (name) => {
     const actions = build({});
-    await expect(actions.remove(name)).rejects.toThrow("rename it");
-    await expect(actions.purge(name)).rejects.toThrow("rename it");
-    await expect(actions.restore(name)).rejects.toThrow("rename it");
+    await expect(actions.remove(name)).rejects.toThrow("Rename the entry");
+    await expect(actions.purge(name)).rejects.toThrow("Rename the entry");
+    await expect(actions.restore(name)).rejects.toThrow("Rename the entry");
     await expect(actions.toggleFavorite({ passwordName: name, favorite: true })).rejects.toThrow(
-      "rename it"
+      "Rename the entry"
     );
-    await expect(actions.fetchAttachments(name)).rejects.toThrow("rename it");
+    await expect(actions.fetchAttachments(name)).rejects.toThrow("Rename the entry");
     expect(seen).toEqual([]);
   });
 });
@@ -225,7 +225,9 @@ describe("damaged rows", () => {
     apiClient.defaults.adapter = routes({ "GET /vault/damaged": [500, {}] }, []);
     await actions.getDamaged();
     expect(store.getState().passwords.damaged).toEqual({ entries: [7], attachments: [3] });
-    expect(store.getState().passwords.damageCheckError).toContain("damage check failed");
+    expect(store.getState().passwords.damageCheckError).toContain(
+      "Could not check the vault for damage"
+    );
     apiClient.defaults.adapter = routes(
       { "GET /vault/damaged": [200, { entries: [], attachments: [] }] },
       []

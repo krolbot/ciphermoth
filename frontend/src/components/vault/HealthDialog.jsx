@@ -1,6 +1,6 @@
 import { useId, useMemo } from "react";
 import { Check, ChevronRight, Clock, Copy, ShieldExclamation } from "@gravity-ui/icons";
-import { Button, Dialog, Icon, Progress } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Dialog, Icon, Progress } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { analyzeVault } from "../../lib/vaultHealth";
@@ -24,59 +24,66 @@ const ScoreGauge = ({ score }) => {
   const color = scoreColor(score);
 
   return (
-    <section className={`cm-health__score cm-health__score--${color}`}>
-      <div className="cm-health__score-value">
+    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         <output>{score}</output>
         <span>/ 100</span>
-      </div>
+      </Flex>
       <Progress size="s" theme={SCORE_THEME[color]} value={score} />
-      <strong className="cm-health__score-label">{t(scoreLabelKey(score))}</strong>
-    </section>
+      <Text as="strong">{t(scoreLabelKey(score))}</Text>
+    </Flex>
   );
 };
 
 const StatTile = ({ icon, label, count, color }) => (
-  <div
-    className={`cm-health__stat cm-health__stat--${color}${count ? "" : " cm-health__stat--empty"}`}
-  >
+  <Flex direction="column" gap="spacing-3" minWidth="0">
     <Icon data={icon} />
-    <strong>{count}</strong>
+    <Text as="strong" color={color === "error" ? "danger" : color}>
+      {count}
+    </Text>
     <span>{label}</span>
-  </div>
+  </Flex>
 );
 
 const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
   if (entries.length === 0) return null;
 
   return (
-    <section className={`cm-health__issue cm-health__issue--${color}`}>
-      <div className="cm-health__issue-heading">
+    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         <Icon data={icon} />
-        <strong>{title}</strong>
+        <Text as="strong" color={color === "error" ? "danger" : color}>
+          {title}
+        </Text>
         <span>({entries.length})</span>
-      </div>
-      <p className="cm-health__issue-hint">{hint}</p>
-      <div className="cm-health__issue-list">
+      </Flex>
+      <Text as="p" color="secondary" wordBreak="break-word">
+        {hint}
+      </Text>
+      <Flex direction="column" gap="spacing-3" minWidth="0">
         {entries.map((entry) => (
           <Button
-            className="cm-health__issue-row"
             key={entry.password_name}
             onClick={() => onSelect(entry)}
             type="button"
             view="flat-secondary"
             width="max"
           >
-            <span className="cm-health__issue-row-content">
+            <Text wordBreak="break-word">
               <span>
-                <strong>{entry.password_name}</strong>
-                {entry.username && <small>{entry.username}</small>}
+                <Text as="strong">{entry.password_name}</Text>
+                {entry.username && (
+                  <Text as="small" variant="caption-2" color="secondary">
+                    {entry.username}
+                  </Text>
+                )}
               </span>
               <Icon data={ChevronRight} />
-            </span>
+            </Text>
           </Button>
         ))}
-      </div>
-    </section>
+      </Flex>
+    </Flex>
   );
 };
 
@@ -90,7 +97,7 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
   return (
     <Dialog
       aria-labelledby={titleId}
-      className="cm-secondary-dialog cm-secondary-dialog--health"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={false}
@@ -102,9 +109,15 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
     >
       <Dialog.Header caption={t("health.title")} id={titleId} />
       <Dialog.Body hasBorders>
-        <div className="cm-health">
+        <Flex direction="column" gap="spacing-3" minWidth="0">
           <ScoreGauge score={report.score} />
-          <div className="cm-health__stats">
+          <Flex
+            direction={{ xs: "column", m: "row" }}
+            gap="spacing-3"
+            minWidth="0"
+            wrap="wrap"
+            alignItems={{ m: "center" }}
+          >
             <StatTile
               color="error"
               count={report.weak.length}
@@ -123,15 +136,17 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
               icon={Clock}
               label={t("health.old")}
             />
-          </div>
-          <p className="cm-health__local-only">{t("health.localOnly")}</p>
+          </Flex>
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {t("health.localOnly")}
+          </Text>
           {allClear ? (
-            <div className="cm-health__all-clear">
+            <Flex direction="column" gap="spacing-3" minWidth="0">
               <Icon data={Check} />
               <span>{t("health.allClear")}</span>
-            </div>
+            </Flex>
           ) : (
-            <div className="cm-health__issues">
+            <Flex direction="column" gap="spacing-3" minWidth="0">
               <IssueGroup
                 color="error"
                 entries={report.weak}
@@ -156,9 +171,9 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
                 onSelect={onSelect}
                 title={t("health.old")}
               />
-            </div>
+            </Flex>
           )}
-        </div>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer onClickButtonApply={onClose} textButtonApply={t("common.actions.done")} />
     </Dialog>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Loader } from "@gravity-ui/uikit";
+import { Flex, Alert, Button, Loader } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSnackbar } from "../hooks/useNotify";
@@ -101,16 +101,30 @@ const EntryCreatePage = () => {
 
   if (initialDraft === undefined) {
     return (
-      <div className="cm-entry-create-loader">
+      <Flex
+        direction="column"
+        gap="spacing-3"
+        minWidth="0"
+        alignItems="center"
+        justifyContent="center"
+        paddingBlock="spacing-10"
+      >
         <Loader size="l" />
-      </div>
+      </Flex>
     );
   }
 
   if (draftError) {
     return (
-      <div className="cm-entry-create-loader">
-        <div role="alert">
+      <Flex
+        direction="column"
+        gap="spacing-3"
+        minWidth="0"
+        alignItems="center"
+        justifyContent="center"
+        paddingBlock="spacing-10"
+      >
+        <Flex direction="column" gap="spacing-3" minWidth="0" role="alert">
           <Alert
             theme="danger"
             view="outlined"
@@ -147,8 +161,8 @@ const EntryCreatePage = () => {
             }
             actionsLayout="horizontal"
           />
-        </div>
-      </div>
+        </Flex>
+      </Flex>
     );
   }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Select, TextInput } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Dialog, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -115,7 +115,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
     <>
       <Dialog
         aria-label={t("groups.title")}
-        className="cm-secondary-dialog cm-access-dialog"
+
         contentOverflow="auto"
         fullWidth
         hasCloseButton={!busy}
@@ -127,10 +127,24 @@ const GroupManagementDialog = ({ open, onClose }) => {
       >
         <Dialog.Header caption={t("groups.title")} />
         <Dialog.Body>
-          <div className="cm-access-dialog__content">
-            <section className="cm-access-panel">
-              <h3>{t("groups.create")}</h3>
-              <div className="cm-access-inline-form">
+          <Flex direction="column" gap="spacing-5" minWidth="0">
+            <Flex
+              direction="column"
+              gap="spacing-3"
+              minWidth="0"
+              as="section"
+              paddingBlock="spacing-3"
+            >
+              <Text as="h3" variant="subheader-2">
+                {t("groups.create")}
+              </Text>
+              <Flex
+                direction={{ xs: "column", m: "row" }}
+                gap="spacing-3"
+                minWidth="0"
+                wrap="wrap"
+                alignItems={{ m: "center" }}
+              >
                 <TextInput
                   size="m"
                   label={t("groups.name")}
@@ -145,11 +159,13 @@ const GroupManagementDialog = ({ open, onClose }) => {
                 >
                   {t("common.actions.create")}
                 </Button>
-              </div>
-            </section>
+              </Flex>
+            </Flex>
 
             {groups.length === 0 ? (
-              <p className="cm-secondary-copy">{t("groups.empty")}</p>
+              <Text as="p" color="secondary" wordBreak="break-word">
+                {t("groups.empty")}
+              </Text>
             ) : (
               <>
                 <Select
@@ -163,8 +179,20 @@ const GroupManagementDialog = ({ open, onClose }) => {
                   onUpdate={([value = ""]) => setGroupId(value)}
                 />
 
-                <section className="cm-access-panel">
-                  <div className="cm-access-inline-form cm-access-inline-form--danger">
+                <Flex
+                  direction="column"
+                  gap="spacing-3"
+                  minWidth="0"
+                  as="section"
+                  paddingBlock="spacing-3"
+                >
+                  <Flex
+                    direction={{ xs: "column", m: "row" }}
+                    gap="spacing-3"
+                    minWidth="0"
+                    wrap="wrap"
+                    alignItems={{ m: "center" }}
+                  >
                     <TextInput
                       size="m"
                       label={t("groups.rename")}
@@ -193,20 +221,33 @@ const GroupManagementDialog = ({ open, onClose }) => {
                     >
                       {t("common.actions.delete")}
                     </Button>
-                  </div>
-                </section>
+                  </Flex>
+                </Flex>
 
-                <section className="cm-access-section">
-                  <h3>{t("groups.members")}</h3>
+                <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                  <Text as="h3" variant="subheader-2">
+                    {t("groups.members")}
+                  </Text>
                   {members.length === 0 ? (
-                    <p className="cm-secondary-copy">{t("groups.noMembers")}</p>
+                    <Text as="p" color="secondary" wordBreak="break-word">
+                      {t("groups.noMembers")}
+                    </Text>
                   ) : (
-                    <ul className="cm-access-list">
+                    <Flex direction="column" gap="spacing-2" minWidth="0">
                       {members.map((member) => (
-                        <li key={member.user_id}>
+                        <Flex
+                          direction={{ xs: "column", m: "row" }}
+                          gap="spacing-2"
+                          minWidth="0"
+                          paddingBlock="spacing-2"
+                          justifyContent="space-between"
+                          key={member.user_id}
+                        >
                           <span>
-                            <strong>{member.username}</strong>
-                            <small>{t(`users.roles.${member.role}`)}</small>
+                            <Text as="strong">{member.username}</Text>
+                            <Text as="small" variant="caption-2" color="secondary">
+                              {t(`users.roles.${member.role}`)}
+                            </Text>
                           </span>
                           <Button
                             type="button"
@@ -225,11 +266,17 @@ const GroupManagementDialog = ({ open, onClose }) => {
                           >
                             {t("common.actions.remove")}
                           </Button>
-                        </li>
+                        </Flex>
                       ))}
-                    </ul>
+                    </Flex>
                   )}
-                  <div className="cm-access-inline-form">
+                  <Flex
+                    direction={{ xs: "column", m: "row" }}
+                    gap="spacing-3"
+                    minWidth="0"
+                    wrap="wrap"
+                    alignItems={{ m: "center" }}
+                  >
                     <Select
                       size="m"
                       aria-label={t("groups.addMember")}
@@ -250,17 +297,28 @@ const GroupManagementDialog = ({ open, onClose }) => {
                     >
                       {t("common.actions.add")}
                     </Button>
-                  </div>
-                </section>
+                  </Flex>
+                </Flex>
 
-                <section className="cm-access-section">
-                  <h3>{t("folderAccess.audit")}</h3>
+                <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+                  <Text as="h3" variant="subheader-2">
+                    {t("folderAccess.audit")}
+                  </Text>
                   {audit.length === 0 ? (
-                    <p className="cm-secondary-copy">{t("folderAccess.noAudit")}</p>
+                    <Text as="p" color="secondary" wordBreak="break-word">
+                      {t("folderAccess.noAudit")}
+                    </Text>
                   ) : (
-                    <ol className="cm-audit-list">
+                    <Flex direction="column" gap="spacing-2" minWidth="0">
                       {audit.slice(0, 20).map((event) => (
-                        <li key={event.id}>
+                        <Flex
+                          direction={{ xs: "column", m: "row" }}
+                          gap="spacing-2"
+                          minWidth="0"
+                          paddingBlock="spacing-2"
+                          justifyContent="space-between"
+                          key={event.id}
+                        >
                           <span>
                             {t(`folderAccess.actions.${event.action}`, {
                               defaultValue: event.action,
@@ -268,15 +326,22 @@ const GroupManagementDialog = ({ open, onClose }) => {
                               target: event.target_username || "",
                             })}
                           </span>
-                          <time dateTime={event.created}>{eventDate(event.created)}</time>
-                        </li>
+                          <Text
+                            as="time"
+                            variant="caption-2"
+                            color="secondary"
+                            dateTime={event.created}
+                          >
+                            {eventDate(event.created)}
+                          </Text>
+                        </Flex>
                       ))}
-                    </ol>
+                    </Flex>
                   )}
-                </section>
+                </Flex>
               </>
             )}
-          </div>
+          </Flex>
         </Dialog.Body>
         <Dialog.Footer
           onClickButtonApply={onClose}

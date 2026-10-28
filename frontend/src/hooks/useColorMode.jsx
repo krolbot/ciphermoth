@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Provider as GravityProvider } from "@gravity-ui/uikit";
+import { LayoutProvider, Provider as GravityProvider, useLayoutContext } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 const STORAGE_KEY = "ciphermoth-theme";
-const MOBILE_QUERY = "(max-width: 899px)";
+
 const ModeContext = createContext(null);
 
 const initialMode = () => {
@@ -11,21 +11,20 @@ const initialMode = () => {
   return saved === "light" || saved === "dark" ? saved : "dark";
 };
 
-const initialMobile = () => window.matchMedia?.(MOBILE_QUERY).matches ?? false;
+const ResponsiveGravity = ({ children, ...props }) => {
+  const { isMediaActive } = useLayoutContext();
+  return (
+    <GravityProvider {...props} mobile={!isMediaActive("m")} rootClassName="nedra-theme">
+      {children}
+    </GravityProvider>
+  );
+};
 
 export const ColorModeProvider = ({ children }) => {
   const { i18n } = useTranslation();
   const [mode, setMode] = useState(initialMode);
-  const [mobile, setMobile] = useState(initialMobile);
-  const language = (i18n.resolvedLanguage ?? i18n.language)?.startsWith("ru") ? "ru" : "en";
 
-  useEffect(() => {
-    const query = window.matchMedia?.(MOBILE_QUERY);
-    if (!query) return undefined;
-    const update = ({ matches }) => setMobile(matches);
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
+  const language = (i18n.resolvedLanguage ?? i18n.language)?.startsWith("ru") ? "ru" : "en";
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, mode);
@@ -38,8 +37,6 @@ export const ColorModeProvider = ({ children }) => {
       mode,
       setMode,
       toggle: () => {
-        document.documentElement.classList.add("cm-theming");
-        window.setTimeout(() => document.documentElement.classList.remove("cm-theming"), 460);
         setMode((current) => (current === "dark" ? "light" : "dark"));
       },
     }),
@@ -48,14 +45,16 @@ export const ColorModeProvider = ({ children }) => {
 
   return (
     <ModeContext.Provider value={value}>
-      <GravityProvider
-        theme={mode}
-        lang={language}
-        mobile={mobile}
-        defaultProps={{ TooltipDelayGroup: { skipDelay: 300 } }}
-      >
-        {children}
-      </GravityProvider>
+      <LayoutProvider>
+        <ResponsiveGravity
+          theme={mode}
+          lang={language}
+
+          defaultProps={{ TooltipDelayGroup: { skipDelay: 300 } }}
+        >
+          {children}
+        </ResponsiveGravity>
+      </LayoutProvider>
     </ModeContext.Provider>
   );
 };

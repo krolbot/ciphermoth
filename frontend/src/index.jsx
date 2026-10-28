@@ -3,9 +3,7 @@ import { StoreProvider } from "easy-peasy";
 import { ToasterProvider } from "@gravity-ui/uikit";
 import { toaster } from "@gravity-ui/uikit/toaster-singleton";
 import "@gravity-ui/uikit/styles/styles.css";
-import "./styles/ciphermoth.css";
-import "./styles/ciphermoth-secondary.css";
-import "./styles/access.css";
+import "./styles/nedra-theme.css";
 import "./i18n";
 
 import App from "./App";

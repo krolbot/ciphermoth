@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Dialog } from "@gravity-ui/uikit";
+import { Flex, Text, Dialog } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import PasswordField from "../PasswordField";
@@ -38,7 +38,7 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
   return (
     <Dialog
       aria-labelledby={titleId}
-      className="cm-secondary-dialog cm-secondary-dialog--backup"
+
       contentOverflow="auto"
       disableEscapeKeyDown={loading}
       disableOutsideClick={loading}
@@ -52,12 +52,14 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
     >
       <Dialog.Header caption={t("backup.title")} id={titleId} />
       <Dialog.Body>
-        <div className="cm-secondary-form">
-          <p className="cm-secondary-copy">{t("backup.descriptionFull")}</p>
-          <p className="cm-secondary-copy">
+        <Flex direction="column" gap="spacing-5" minWidth="0">
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {t("backup.descriptionFull")}
+          </Text>
+          <Text as="p" color="secondary" wordBreak="break-word">
             {t("backup.restoreAdvice")}{" "}
             {t(IS_DESKTOP ? "backup.desktopAdvice" : "backup.webAdvice")}
-          </p>
+          </Text>
           <PasswordField
             autoComplete="current-password"
             autoFocus
@@ -74,7 +76,7 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
             validationState={error ? "invalid" : undefined}
             value={password}
           />
-        </div>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer
         loading={loading}

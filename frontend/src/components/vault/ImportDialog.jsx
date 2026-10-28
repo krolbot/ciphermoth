@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import { FileArrowUp } from "@gravity-ui/icons";
-import { Alert, Button, Dialog, Icon, RadioGroup, SegmentedRadioGroup } from "@gravity-ui/uikit";
+import {
+  Flex,
+  Text,
+  Alert,
+  Button,
+  Dialog,
+  Icon,
+  RadioGroup,
+  SegmentedRadioGroup,
+} from "@gravity-ui/uikit";
 import { Trans, useTranslation } from "react-i18next";
 
 import { IS_DESKTOP, chooseBackup } from "../../platform";
@@ -10,22 +19,40 @@ const ReportedRows = ({ rows = [], count, titleKey, warning = false }) => {
   const { t } = useTranslation();
   const hidden = count - rows.length;
   return (
-    <div
-      className={warning ? "cm-import-result__reported is-warning" : "cm-import-result__reported"}
-    >
-      <p>
-        <strong>{count}</strong> {t(titleKey, { count })}
-      </p>
-      <ul>
+    <Flex direction="column" gap="spacing-3" minWidth="0">
+      <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="strong" color={warning ? "warning" : "primary"}>
+          {count}
+        </Text>{" "}
+        {t(titleKey, { count })}
+      </Text>
+      <Flex direction="column" gap="spacing-2" minWidth="0">
         {rows.map((row) => (
-          <li key={row.where}>
+          <Flex
+            direction={{ xs: "column", m: "row" }}
+            gap="spacing-2"
+            minWidth="0"
+            paddingBlock="spacing-2"
+            justifyContent="space-between"
+            key={row.where}
+          >
             {row.where}
             {row.name ? ` (${row.name})` : ""}: {row.reason}
-          </li>
+          </Flex>
         ))}
-        {hidden > 0 && <li>{t("importDialog.andMore", { count: hidden })}</li>}
-      </ul>
-    </div>
+        {hidden > 0 && (
+          <Flex
+            direction={{ xs: "column", m: "row" }}
+            gap="spacing-2"
+            minWidth="0"
+            paddingBlock="spacing-2"
+            justifyContent="space-between"
+          >
+            {t("importDialog.andMore", { count: hidden })}
+          </Flex>
+        )}
+      </Flex>
+    </Flex>
   );
 };
 
@@ -43,40 +70,48 @@ const ImportResult = ({ result }) => {
   const { t } = useTranslation();
   const extras = restoredExtras(result, t);
   if (result.total === 0 && !result.ignored && extras.length === 0) {
-    return <p className="cm-secondary-copy">{t("importDialog.noPasswords")}</p>;
+    return (
+      <Text as="p" color="secondary" wordBreak="break-word">
+        {t("importDialog.noPasswords")}
+      </Text>
+    );
   }
   return (
-    <div className="cm-import-result">
+    <Flex direction="column" gap="spacing-3" minWidth="0">
       {result.imported > 0 && (
-        <p>
+        <Text as="p" color="secondary" wordBreak="break-word">
           <Trans
             i18nKey="importDialog.imported"
             count={result.imported}
             values={{ count: result.imported }}
-            components={{ strong: <strong /> }}
+            components={{ strong: <Text as="strong" /> }}
           />
-        </p>
+        </Text>
       )}
       {result.overwritten > 0 && (
-        <p>
+        <Text as="p" color="secondary" wordBreak="break-word">
           <Trans
             i18nKey="importDialog.overwritten"
             count={result.overwritten}
             values={{ count: result.overwritten }}
-            components={{ strong: <strong /> }}
+            components={{ strong: <Text as="strong" /> }}
           />
-        </p>
+        </Text>
       )}
-      {extras.length > 0 && <p>{t("importDialog.alsoRestored", { items: extras.join(", ") })}</p>}
+      {extras.length > 0 && (
+        <Text as="p" color="secondary" wordBreak="break-word">
+          {t("importDialog.alsoRestored", { items: extras.join(", ") })}
+        </Text>
+      )}
       {result.skipped > 0 && (
-        <p className="cm-secondary-copy">
+        <Text as="p" color="secondary" wordBreak="break-word">
           <Trans
             i18nKey="importDialog.skipped"
             count={result.skipped}
             values={{ count: result.skipped }}
-            components={{ strong: <strong /> }}
+            components={{ strong: <Text as="strong" /> }}
           />
-        </p>
+        </Text>
       )}
       {result.renamed > 0 && (
         <ReportedRows
@@ -93,7 +128,7 @@ const ImportResult = ({ result }) => {
           warning
         />
       )}
-    </div>
+    </Flex>
   );
 };
 
@@ -162,7 +197,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
   return (
     <Dialog
       aria-label={t(result ? "importDialog.completeTitle" : "importDialog.title")}
-      className="cm-secondary-dialog cm-import-dialog"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={!loading}
@@ -177,7 +212,7 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
         {result ? (
           <ImportResult result={result} />
         ) : (
-          <div className="cm-import-form">
+          <Flex direction="column" gap="spacing-3" minWidth="0">
             <SegmentedRadioGroup name="import-mode" width="max" value={mode} onUpdate={changeMode}>
               <SegmentedRadioGroup.Option value="ciphermoth">
                 {t("importDialog.backupMode")}
@@ -187,9 +222,9 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               </SegmentedRadioGroup.Option>
             </SegmentedRadioGroup>
 
-            <p className="cm-secondary-copy">
+            <Text as="p" color="secondary" wordBreak="break-word">
               {isCsv ? t("importDialog.csvDescription") : t("importDialog.backupDescription")}
-            </p>
+            </Text>
 
             <Button
               type="button"
@@ -200,11 +235,11 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               onClick={IS_DESKTOP && !isCsv ? chooseFile : undefined}
             >
               <Icon data={FileArrowUp} />
-              <span className="cm-import-form__filename">
+              <Text wordBreak="break-word">
                 {file
                   ? file.name
                   : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
-              </span>
+              </Text>
               {(!IS_DESKTOP || isCsv) && (
                 <input
                   type="file"
@@ -239,8 +274,8 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
 
             {isCsv && error && <Alert theme="danger" view="outlined" message={error} />}
 
-            <fieldset className="cm-import-form__conflict">
-              <legend>{t("importDialog.existingLabel")}</legend>
+            <Flex direction="column" gap="spacing-3" minWidth="0" as="fieldset">
+              <Text as="legend">{t("importDialog.existingLabel")}</Text>
               <RadioGroup
                 direction="vertical"
                 value={onConflict}
@@ -250,8 +285,8 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
                   { value: "overwrite", content: t("importDialog.overwrite") },
                 ]}
               />
-            </fieldset>
-          </div>
+            </Flex>
+          </Flex>
         )}
       </Dialog.Body>
       <Dialog.Footer

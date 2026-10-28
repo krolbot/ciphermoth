@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Dialog, Select, TextInput } from "@gravity-ui/uikit";
+import { Flex, Text, Alert, Button, Dialog, Select, TextInput } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -79,7 +79,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
   return (
     <Dialog
       aria-label={t("sharing.manage")}
-      className="cm-secondary-dialog cm-share-dialog"
+
       contentOverflow="auto"
       fullWidth
       hasCloseButton={!busy}
@@ -91,22 +91,37 @@ const ShareDialog = ({ entry, open, onClose }) => {
     >
       <Dialog.Header caption={t("sharing.manage")} />
       <Dialog.Body>
-        <div className="cm-share-dialog__content">
-          <p className="cm-share-dialog__entry">{entry?.password_name}</p>
+        <Flex direction="column" gap="spacing-5" minWidth="0">
+          <Text as="p" color="secondary" wordBreak="break-word">
+            {entry?.password_name}
+          </Text>
           {error && <Alert theme="danger" view="outlined" message={error} />}
 
-          <section className="cm-share-dialog__section">
-            <h3>{t("sharing.currentAccess")}</h3>
+          <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+            <Text as="h3" variant="subheader-2">
+              {t("sharing.currentAccess")}
+            </Text>
             {shares.length === 0 ? (
-              <p className="cm-secondary-copy">{t("sharing.ownerOnly")}</p>
+              <Text as="p" color="secondary" wordBreak="break-word">
+                {t("sharing.ownerOnly")}
+              </Text>
             ) : (
-              <ul className="cm-share-dialog__list">
+              <Flex direction="column" gap="spacing-2" minWidth="0">
                 {shares.map((share) => (
-                  <li className="cm-share-dialog__row" key={share.user_id}>
-                    <span className="cm-share-dialog__identity">
-                      <strong>{share.username}</strong>
-                      <small>{t(`users.roles.${share.role}`)}</small>
-                    </span>
+                  <Flex
+                    direction={{ xs: "column", m: "row" }}
+                    gap="spacing-2"
+                    minWidth="0"
+                    paddingBlock="spacing-2"
+                    justifyContent="space-between"
+                    key={share.user_id}
+                  >
+                    <Text wordBreak="break-word">
+                      <Text as="strong">{share.username}</Text>
+                      <Text as="small" variant="caption-2" color="secondary">
+                        {t(`users.roles.${share.role}`)}
+                      </Text>
+                    </Text>
                     <Select
                       size="m"
                       aria-label={t("sharing.permission")}
@@ -134,15 +149,23 @@ const ShareDialog = ({ entry, open, onClose }) => {
                     >
                       {t("sharing.revoke")}
                     </Button>
-                  </li>
+                  </Flex>
                 ))}
-              </ul>
+              </Flex>
             )}
-          </section>
+          </Flex>
 
-          <section className="cm-share-dialog__section">
-            <h3>{t("sharing.grantAccess")}</h3>
-            <div className="cm-share-dialog__grant">
+          <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
+            <Text as="h3" variant="subheader-2">
+              {t("sharing.grantAccess")}
+            </Text>
+            <Flex
+              direction={{ xs: "column", m: "row" }}
+              gap="spacing-3"
+              minWidth="0"
+              wrap="wrap"
+              alignItems={{ m: "center" }}
+            >
               <Select
                 size="m"
                 aria-label={t("sharing.user")}
@@ -184,9 +207,9 @@ const ShareDialog = ({ entry, open, onClose }) => {
               >
                 {t("sharing.grant")}
               </Button>
-            </div>
-          </section>
-        </div>
+            </Flex>
+          </Flex>
+        </Flex>
       </Dialog.Body>
       <Dialog.Footer
         onClickButtonApply={onClose}
