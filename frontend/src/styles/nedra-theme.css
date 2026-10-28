@@ -23,7 +23,7 @@ body.nedra-theme {
 
 /* A type selector also beats the stock root's single-class specificity. */
 body.nedra-theme,
-html[data-theme="light"] body.nedra-theme {
+html[data-theme="light"] body {
   --g-color-base-brand: #b5f602;
   --g-color-base-brand-hover: #a3e602;
   --g-color-base-selection: rgba(181, 246, 2, 0.18);
@@ -32,6 +32,8 @@ html[data-theme="light"] body.nedra-theme {
   --g-color-text-brand-heavy: #334700;
   --g-color-text-brand-contrast: #1b2407;
   --g-color-text-secondary: #5f6368;
+  --g-color-text-misc: #59636e;
+  --g-color-text-misc-heavy: #4f5963;
   --g-color-text-danger: #c40030;
   --g-color-text-warning: #8a5a00;
   --g-color-text-link: #456000;
@@ -42,7 +44,7 @@ html[data-theme="light"] body.nedra-theme {
   --g-color-line-focus: #5c7d00;
 }
 
-html[data-theme="dark"] body.nedra-theme {
+html[data-theme="dark"] body {
   --g-color-base-brand: #b5f602;
   --g-color-base-brand-hover: #a3e602;
   --g-color-base-selection: rgba(181, 246, 2, 0.14);
