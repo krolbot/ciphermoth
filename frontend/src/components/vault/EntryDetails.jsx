@@ -95,7 +95,15 @@ const EntryValue = ({
   );
 };
 
-const EntryDetails = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFavorite }) => {
+const EntryDetails = ({
+  entry,
+  onCopy,
+  onEdit,
+  onDelete,
+  onShare,
+  onToggleFavorite,
+  showTitle = false,
+}) => {
   const { t, i18n } = useTranslation();
   const isNote = entry.kind === "note";
   const writable = entry.access === "owner" || entry.access === "write";
@@ -107,38 +115,45 @@ const EntryDetails = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFavori
   };
   return (
     <Flex direction="column" gap="spacing-5" minWidth="0">
-      <Flex gap="spacing-2" wrap="wrap" alignItems="center">
-        <Label>{t(isNote ? "entry.kind.note" : "entry.kind.login")}</Label>
-        {entry.folder && <Text wordBreak="break-word">{entry.folder}</Text>}
-        {entry.access !== "owner" && (
-          <Label>
-            {t(entry.access === "read" ? "sharing.readOnlyAccess" : "sharing.readWrite")}
-          </Label>
+      <Flex direction="column" gap="spacing-3" minWidth="0" as="header" qa="entry-details-header">
+        {showTitle && (
+          <Text as="h2" variant="header-1" wordBreak="break-word">
+            {entry.password_name}
+          </Text>
         )}
-      </Flex>
-      <Flex gap="spacing-2" wrap="wrap" alignItems="center">
-        {writable && (
-          <>
-            <IconAction
-              label={t(
-                entry.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
-              )}
-              icon={entry.favorite ? StarFill : Star}
-              selected={entry.favorite}
-              onClick={() => onToggleFavorite(entry)}
-            />
-            <Button size="xl" view="outlined" onClick={() => onEdit(entry)}>
-              <Icon data={Pencil} />
-              {t("common.actions.edit")}
+        <Flex gap="spacing-2" wrap="wrap" alignItems="center">
+          <Label>{t(isNote ? "entry.kind.note" : "entry.kind.login")}</Label>
+          {entry.folder && <Text wordBreak="break-word">{entry.folder}</Text>}
+          {entry.access !== "owner" && (
+            <Label>
+              {t(entry.access === "read" ? "sharing.readOnlyAccess" : "sharing.readWrite")}
+            </Label>
+          )}
+        </Flex>
+        <Flex gap="spacing-2" wrap="wrap" alignItems="center">
+          {writable && (
+            <>
+              <IconAction
+                label={t(
+                  entry.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
+                )}
+                icon={entry.favorite ? StarFill : Star}
+                selected={entry.favorite}
+                onClick={() => onToggleFavorite(entry)}
+              />
+              <Button size="xl" view="outlined" onClick={() => onEdit(entry)}>
+                <Icon data={Pencil} />
+                {t("common.actions.edit")}
+              </Button>
+            </>
+          )}
+          {entry.access === "owner" && (
+            <Button size="xl" view="outlined" onClick={() => onShare(entry)}>
+              <Icon data={PersonPlus} />
+              {t("sharing.manage")}
             </Button>
-          </>
-        )}
-        {entry.access === "owner" && (
-          <Button size="xl" view="outlined" onClick={() => onShare(entry)}>
-            <Icon data={PersonPlus} />
-            {t("sharing.manage")}
-          </Button>
-        )}
+          )}
+        </Flex>
       </Flex>
       <Divider />
       {!isNote && entry.username && (

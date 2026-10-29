@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   ArrowRightFromSquare,
   ArrowRotateRight,
+  ArrowUpFromLine,
   Bars,
   CloudArrowUpIn,
+  FolderOpen,
   Gear,
   HeartPulse,
   Key,
@@ -68,7 +70,7 @@ const Brand = ({ version, onClick }) => {
 const TopMenu = () => {
   const { t } = useTranslation();
   const location = useLocation();
-  const navigate = useNavigate();
+
   const { isMediaActive } = useLayoutContext();
   const desktop = isMediaActive("l");
   const currentUser = getCurrentUser();
@@ -129,40 +131,37 @@ const TopMenu = () => {
 
   const navItems = [
     { id: "/passwords", label: t("vault.title"), icon: Lock },
+    { id: "/passwords?tool=folders", label: t("folderAccess.manageShort"), icon: FolderOpen },
     { id: "/passwords?tool=backup", label: t("vault.backup"), icon: CloudArrowUpIn },
+    { id: "/passwords?tool=import", label: t("vault.import"), icon: ArrowUpFromLine },
     { id: "/passwords?tool=health", label: t("vault.health"), icon: HeartPulse },
     { id: "/passwords?tool=trash", label: t("vault.trash"), icon: TrashBin },
     ...(admin ? [{ id: "/users", label: t("navigation.accounts"), icon: Persons }] : []),
   ];
   const navigation = (
     <Box as="nav" aria-label={t("navigation.workspace")}>
-      <List
-        aria-label={t("navigation.workspace")}
-        size="xl"
-        items={navItems}
-        selectionMode="single"
-        selectedIds={[`${location.pathname}${location.search}`]}
-        getItemTextValue={(item) => item.label}
-        onItemAction={(id, item, event) => {
-          if ("key" in event) {
-            event.preventDefault();
-            navigate(id);
-          }
-          closeMobileNav();
-        }}
-        renderItem={(ctx, { getItemProps, getItemViewProps }) => (
-          <List.ItemView
-            component={Link}
-            to={ctx.id}
-            {...getItemProps()}
-            {...getItemViewProps()}
-            aria-current={`${location.pathname}${location.search}` === ctx.id ? "page" : undefined}
-            startContent={<Icon data={ctx.item.icon} />}
-          >
-            {ctx.item.label}
-          </List.ItemView>
-        )}
-      />
+      <Flex direction="column" qa="navigation-items">
+        {navItems.map((item) => {
+          const selected = `${location.pathname}${location.search}` === item.id;
+          return (
+            <Box key={item.id} paddingBlockEnd="spacing-1">
+              <List.ItemView
+                component={Link}
+                to={item.id}
+                size="xl"
+                selected={selected}
+                selectionStyle="highlight"
+                aria-current={selected ? "page" : undefined}
+                data-navigation-id={item.id}
+                startContent={<Icon data={item.icon} />}
+                onClick={closeMobileNav}
+              >
+                {item.label}
+              </List.ItemView>
+            </Box>
+          );
+        })}
+      </Flex>
     </Box>
   );
   const utilityItems = [
@@ -221,11 +220,11 @@ const TopMenu = () => {
         </Flex>
         <EnvBadge />
       </Flex>
-      <Flex gap="spacing-2" alignItems="center" qa="navigation-preferences">
-        <Flex flexGrow={1} minWidth="0">
+      <Flex direction="column" gap="spacing-2" qa="navigation-preferences">
+        <Flex minWidth="0">
           <LanguageSwitcher width="max" />
         </Flex>
-        <Flex flexGrow={1} minWidth="0">
+        <Flex minWidth="0">
           <ThemeToggle showLabel width="max" />
         </Flex>
       </Flex>

@@ -3,12 +3,10 @@ import {
   Flex,
   Text,
   Button,
-  Col,
   Dialog,
   Divider,
   Grid,
   Label,
-  Row,
   Select,
   TextInput,
 } from "@gravity-ui/uikit";
@@ -19,6 +17,7 @@ import { useSnackbar } from "../../hooks/useNotify";
 import { isInvalidExpiry, toLocalExpiry, toUtcExpiry } from "../../lib/accessExpiry";
 import { getCurrentUser } from "../../utils";
 import ConfirmDialog from "../ConfirmDialog";
+import ExpiryField from "./ExpiryField";
 
 const eventDate = (value, language) => {
   const iso = /[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`;
@@ -57,33 +56,24 @@ const GrantRow = ({ grant, busy, onSave, onRevoke }) => {
         </Flex>
       </Flex>
       <Grid columns={{ xs: "minmax(0, 1fr)", l: "repeat(2, minmax(0, 1fr))" }} gap="spacing-4">
-        <Select
-          size="xl"
-          width="max"
-          label={t("sharing.permission")}
-          aria-label={t("sharing.permission")}
-          value={[permission]}
-          disabled={busy}
-          options={permissionOptions(t)}
-          onUpdate={([value = "read"]) => setPermission(value)}
-        />
         <Flex direction="column" gap="spacing-2" minWidth="0">
-          <TextInput
+          <Text>{t("sharing.permission")}</Text>
+          <Select
             size="xl"
-            label={t("folderAccess.expiresAt")}
-            type="datetime-local"
-            note={t("folderAccess.expiresHint")}
-            value={expiresAt}
+            width="max"
+            aria-label={t("sharing.permission")}
+            value={[permission]}
             disabled={busy}
-            onUpdate={setExpiresAt}
-            validationState={expiryInvalid ? "invalid" : undefined}
-            errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
-            controlProps={{
-              "aria-label": t("folderAccess.expiresAt"),
-              min: toLocalExpiry(new Date().toISOString()),
-            }}
+            options={permissionOptions(t)}
+            onUpdate={([value = "read"]) => setPermission(value)}
           />
         </Flex>
+        <ExpiryField
+          value={expiresAt}
+          onUpdate={setExpiresAt}
+          disabled={busy}
+          invalid={expiryInvalid}
+        />
       </Grid>
       <Flex gap="spacing-2" wrap="wrap">
         <Button
@@ -269,13 +259,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
         <Dialog.Header caption={t("folderAccess.title")} />
         <Dialog.Body>
           <Flex direction="column" gap="spacing-5" minWidth="0">
-            <Flex
-              direction="column"
-              gap="spacing-3"
-              minWidth="0"
-              as="section"
-              paddingBlock="spacing-3"
-            >
+            <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
               <Text as="h3" variant="subheader-2">
                 {t("folderAccess.createFolder")}
               </Text>
@@ -304,18 +288,21 @@ const FolderAccessDialog = ({ open, onClose }) => {
               </Flex>
             </Flex>
 
+            <Divider />
             {folders.length === 0 ? (
               <Text as="p" color="secondary" wordBreak="break-word">
                 {t("folderAccess.empty")}
               </Text>
             ) : (
-              <Row gap="spacing-6">
-                <Col size={{ xs: 12, m: 5 }} minWidth="0">
+              <Flex direction="column" gap="spacing-6" minWidth="0">
+                <Flex direction="column" gap="spacing-4" minWidth="0">
                   <Flex direction="column" gap="spacing-4">
+                    <Text as="h3" variant="subheader-2">
+                      {t("common.fields.folder")}
+                    </Text>
                     <Select
                       size="xl"
                       width="max"
-                      label={t("common.fields.folder")}
                       aria-label={t("common.fields.folder")}
                       value={folderId ? [folderId] : []}
                       options={folders.map((folder) => ({
@@ -358,15 +345,21 @@ const FolderAccessDialog = ({ open, onClose }) => {
                       </Flex>
                       {ownsSelected && (
                         <Flex direction="column" gap="spacing-2" minWidth="0">
-                          <TextInput
-                            size="xl"
-                            label={t("folderAccess.rename")}
-                            placeholder={t("folderAccess.rename")}
-                            controlProps={{ "aria-label": t("folderAccess.rename") }}
-                            value={renameName}
-                            onUpdate={setRenameName}
-                          />
-                          <Flex gap="spacing-2" wrap="wrap">
+                          <Text>{t("folderAccess.rename")}</Text>
+                          <Flex
+                            direction={{ xs: "column", s: "row" }}
+                            gap="spacing-2"
+                            minWidth="0"
+                            alignItems={{ s: "center" }}
+                          >
+                            <TextInput
+                              size="xl"
+                              width="max"
+                              placeholder={t("folderAccess.rename")}
+                              controlProps={{ "aria-label": t("folderAccess.rename") }}
+                              value={renameName}
+                              onUpdate={setRenameName}
+                            />
                             <Button
                               type="button"
                               size="xl"
@@ -402,8 +395,9 @@ const FolderAccessDialog = ({ open, onClose }) => {
                       )}
                     </Flex>
                   </Flex>
-                </Col>
-                <Col size={{ xs: 12, m: 7 }} minWidth="0">
+                </Flex>
+                <Divider />
+                <Flex direction="column" minWidth="0">
                   <Flex direction="column" gap="spacing-5">
                     {selected?.can_manage && (
                       <>
@@ -456,65 +450,58 @@ const FolderAccessDialog = ({ open, onClose }) => {
                             columns={{ xs: "minmax(0, 1fr)", l: "repeat(2, minmax(0, 1fr))" }}
                             gap="spacing-4"
                           >
-                            <Select
-                              size="xl"
-                              aria-label={t("folderAccess.targetType")}
-                              label={t("folderAccess.targetType")}
-                              width="max"
-                              value={[targetType]}
-                              disabled={busy}
-                              options={[
-                                { value: "user", content: t("folderAccess.targetTypes.user") },
-                                { value: "group", content: t("folderAccess.targetTypes.group") },
-                              ]}
-                              onUpdate={([value = "user"]) => {
-                                setTargetType(value);
-                                setTargetId("");
-                              }}
-                            />
-                            <Select
-                              size="xl"
-                              aria-label={t("folderAccess.target")}
-                              label={t("folderAccess.target")}
-                              width="max"
-                              placeholder={t("folderAccess.target")}
-                              value={targetId ? [targetId] : []}
-                              disabled={busy || grantTargets.length === 0}
-                              options={grantTargets.map((target) => ({
-                                value: String(target.id),
-                                content: target.name ?? target.username,
-                              }))}
-                              onUpdate={([value = ""]) => setTargetId(value)}
-                            />
-                            <Select
-                              size="xl"
-                              aria-label={t("sharing.permission")}
-                              label={t("sharing.permission")}
-                              width="max"
-                              value={[permission]}
-                              disabled={busy}
-                              options={permissionOptions(t)}
-                              onUpdate={([value = "read"]) => setPermission(value)}
-                            />
-                            <Flex direction="column" gap="spacing-2" minWidth="0" width="100%">
-                              <TextInput
+                            <Flex direction="column" gap="spacing-2" minWidth="0">
+                              <Text>{t("folderAccess.targetType")}</Text>
+                              <Select
                                 size="xl"
-                                label={t("folderAccess.expiresAt")}
-                                type="datetime-local"
-                                note={t("folderAccess.expiresHint")}
-                                value={expiresAt}
+                                aria-label={t("folderAccess.targetType")}
+                                width="max"
+                                value={[targetType]}
                                 disabled={busy}
-                                onUpdate={setExpiresAt}
-                                validationState={expiryInvalid ? "invalid" : undefined}
-                                errorMessage={
-                                  expiryInvalid ? t("folderAccess.expiresValidation") : undefined
-                                }
-                                controlProps={{
-                                  "aria-label": t("folderAccess.expiresAt"),
-                                  min: toLocalExpiry(new Date().toISOString()),
+                                options={[
+                                  { value: "user", content: t("folderAccess.targetTypes.user") },
+                                  { value: "group", content: t("folderAccess.targetTypes.group") },
+                                ]}
+                                onUpdate={([value = "user"]) => {
+                                  setTargetType(value);
+                                  setTargetId("");
                                 }}
                               />
                             </Flex>
+                            <Flex direction="column" gap="spacing-2" minWidth="0">
+                              <Text>{t("folderAccess.target")}</Text>
+                              <Select
+                                size="xl"
+                                aria-label={t("folderAccess.target")}
+                                width="max"
+                                placeholder={t("folderAccess.target")}
+                                value={targetId ? [targetId] : []}
+                                disabled={busy || grantTargets.length === 0}
+                                options={grantTargets.map((target) => ({
+                                  value: String(target.id),
+                                  content: target.name ?? target.username,
+                                }))}
+                                onUpdate={([value = ""]) => setTargetId(value)}
+                              />
+                            </Flex>
+                            <Flex direction="column" gap="spacing-2" minWidth="0">
+                              <Text>{t("sharing.permission")}</Text>
+                              <Select
+                                size="xl"
+                                aria-label={t("sharing.permission")}
+                                width="max"
+                                value={[permission]}
+                                disabled={busy}
+                                options={permissionOptions(t)}
+                                onUpdate={([value = "read"]) => setPermission(value)}
+                              />
+                            </Flex>
+                            <ExpiryField
+                              value={expiresAt}
+                              onUpdate={setExpiresAt}
+                              disabled={busy}
+                              invalid={expiryInvalid}
+                            />
                           </Grid>
                           <Flex>
                             <Button
@@ -549,14 +536,14 @@ const FolderAccessDialog = ({ open, onClose }) => {
                                   justifyContent="space-between"
                                   key={event.id}
                                 >
-                                  <span>
+                                  <Text wordBreak="break-word">
                                     {t(`folderAccess.actions.${event.action}`, {
                                       defaultValue: event.action,
                                       actor: event.actor_username || t("folderAccess.systemActor"),
                                       target:
                                         event.target_username || event.target_group_name || "",
                                     })}
-                                  </span>
+                                  </Text>
                                   <Text
                                     as="time"
                                     variant="caption-2"
@@ -573,8 +560,8 @@ const FolderAccessDialog = ({ open, onClose }) => {
                       </>
                     )}
                   </Flex>
-                </Col>
-              </Row>
+                </Flex>
+              </Flex>
             )}
           </Flex>
         </Dialog.Body>

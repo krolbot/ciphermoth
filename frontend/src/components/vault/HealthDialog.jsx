@@ -1,6 +1,6 @@
 import { useId, useMemo } from "react";
 import { Check, ChevronRight, Clock, Copy, ShieldExclamation } from "@gravity-ui/icons";
-import { Flex, Text, Dialog, Divider, Grid, Icon, List, Progress } from "@gravity-ui/uikit";
+import { Dialog, Divider, Flex, Icon, List, Progress, Text } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import { analyzeVault } from "../../lib/vaultHealth";
@@ -51,18 +51,18 @@ const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
   if (entries.length === 0) return null;
 
   return (
-    <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-      <Flex gap="spacing-2" alignItems="center" minWidth="0">
+    <Flex direction="column" gap="spacing-3" minWidth="0" as="section" qa="health-issue-group">
+      <Flex gap="spacing-2" alignItems="baseline" minWidth="0" wrap="wrap">
         <Icon data={icon} />
         <Text as="strong" color={color === "error" ? "danger" : color}>
           {title}
         </Text>
-        <span>({entries.length})</span>
+        <Text color="secondary">({entries.length})</Text>
       </Flex>
       <Text as="p" color="secondary" wordBreak="break-word">
         {hint}
       </Text>
-      <Flex direction="column" gap="spacing-3" minWidth="0">
+      <Flex direction="column" gap="spacing-1" minWidth="0">
         {entries.map((entry) => (
           <List.ItemView
             key={entry.password_name}
@@ -70,10 +70,10 @@ const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
             component="button"
             type="button"
             size="xl"
-            description={entry.username}
+            description={<Text ellipsis>{entry.username}</Text>}
             endContent={<Icon data={ChevronRight} />}
           >
-            {entry.password_name}
+            <Text ellipsis>{entry.password_name}</Text>
           </List.ItemView>
         ))}
       </Flex>
@@ -103,7 +103,7 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
     >
       <Dialog.Header caption={t("health.title")} id={titleId} />
       <Dialog.Body hasBorders>
-        <Flex direction="column" gap="spacing-5" minWidth="0">
+        <Flex direction="column" gap="spacing-5" minHeight="0" minWidth="0">
           <ScoreGauge score={report.score} />
           <Flex
             direction={{ xs: "column", s: "row" }}
@@ -142,7 +142,7 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
           ) : (
             <>
               <Divider />
-              <Grid columns="repeat(auto-fit, minmax(min(100%, 240px), 1fr))" gap="spacing-5">
+              <Flex direction="column" gap="spacing-5" minWidth="0">
                 <IssueGroup
                   color="error"
                   entries={report.weak}
@@ -167,7 +167,7 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
                   onSelect={onSelect}
                   title={t("health.old")}
                 />
-              </Grid>
+              </Flex>
             </>
           )}
         </Flex>

@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Ellipsis,
-  FolderOpen,
-  HeartPulse,
-  Magnifier,
-  Plus,
-  TrashBin,
-} from "@gravity-ui/icons";
+import { Plus } from "@gravity-ui/icons";
 import {
   Flex,
   Row,
@@ -18,8 +9,6 @@ import {
   Button,
   Icon,
   Loader,
-  Menu,
-  MenuItem,
   Select,
   TextInput,
   useLayoutContext,
@@ -58,6 +47,7 @@ const PasswordsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isMediaActive } = useLayoutContext();
   const mobile = !isMediaActive("s");
+  const desktopShell = isMediaActive("l");
   const { enqueueSnackbar } = useSnackbar();
   const copy = useClipboard();
 
@@ -87,11 +77,6 @@ const PasswordsPage = () => {
   const [editTarget, setEditTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [backupOpen, setBackupOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
-  const [healthOpen, setHealthOpen] = useState(false);
-  const [trashOpen, setTrashOpen] = useState(false);
-  const [foldersOpen, setFoldersOpen] = useState(false);
   const [removeDamagedOpen, setRemoveDamagedOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
@@ -108,15 +93,7 @@ const PasswordsPage = () => {
     next.delete("tool");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
-
-  useEffect(() => {
-    const tool = searchParams.get("tool");
-    if (tool === "backup") setBackupOpen(true);
-    if (tool === "health") setHealthOpen(true);
-    if (tool === "trash") setTrashOpen(true);
-    if (tool === "folders") setFoldersOpen(true);
-    if (tool === "import") setImportOpen(true);
-  }, [searchParams]);
+  const activeTool = searchParams.get("tool");
 
   useEffect(() => {
     let active = true;
@@ -339,42 +316,18 @@ const PasswordsPage = () => {
 
   const subtitle = useMemo(() => buildSubtitle(loading, passwords, t), [loading, passwords, t]);
   const isEmpty = !loading && passwords.length === 0;
-  const backupUnavailable = passwords.length === 0 && trash.length === 0 && damagedCount === 0;
-  const tools = [
-    {
-      icon: HeartPulse,
-      label: t("vault.health"),
-      action: () => setHealthOpen(true),
-      disabled: passwords.length === 0,
-    },
-    {
-      icon: FolderOpen,
-      label: t("folderAccess.manageShort"),
-      action: () => setFoldersOpen(true),
-      disabled: false,
-    },
-    {
-      icon: ArrowDownToLine,
-      label: t("vault.backup"),
-      action: () => setBackupOpen(true),
-      disabled: backupUnavailable,
-    },
-    {
-      icon: ArrowUpFromLine,
-      label: t("vault.import"),
-      action: () => setImportOpen(true),
-      disabled: false,
-    },
-    {
-      icon: TrashBin,
-      label: trash.length ? t("vault.trashCount", { count: trash.length }) : t("vault.trash"),
-      action: () => setTrashOpen(true),
-      disabled: false,
-    },
-  ];
 
   return (
-    <Flex direction="column" gap="spacing-5" minWidth="0" as="section">
+    <Flex
+      direction="column"
+      gap="spacing-5"
+      minWidth="0"
+      minHeight="0"
+      height={desktopShell ? "calc(100dvh - var(--g-spacing-6) - var(--g-spacing-6))" : undefined}
+      overflow={desktopShell ? "hidden" : undefined}
+      as="section"
+      qa="vault-page"
+    >
       <Flex
         direction={{ xs: "column", xl: "row" }}
         gap="spacing-3"
@@ -401,26 +354,6 @@ const PasswordsPage = () => {
             <Icon data={Plus} />
             {t("common.actions.add")}
           </Button>
-          <Menu
-            placement="bottom-end"
-            trigger={
-              <Button type="button" view="outlined" size="xl" aria-label={t("vault.browser.tools")}>
-                <Icon data={Ellipsis} />
-                {t("vault.browser.tools")}
-              </Button>
-            }
-          >
-            {tools.map(({ icon, label, action, disabled }) => (
-              <MenuItem
-                key={label}
-                icon={<Icon data={icon} />}
-                disabled={disabled}
-                onClick={action}
-              >
-                {label}
-              </MenuItem>
-            ))}
-          </Menu>
         </Flex>
       </Flex>
 
@@ -502,7 +435,7 @@ const PasswordsPage = () => {
               value={search}
               onUpdate={setSearch}
               hasClear
-              startContent={<Icon data={Magnifier} />}
+              qa="vault-search"
               controlProps={{ "aria-label": t("vault.searchPlaceholder") }}
             />
           </Col>
@@ -512,7 +445,6 @@ const PasswordsPage = () => {
                 size="xl"
                 width="max"
                 aria-label={t("common.fields.folder")}
-                label={`${t("common.fields.folder")}:`}
                 value={[activeFolder]}
                 onUpdate={([value = ""]) => setFolderFilter(value)}
                 options={[
@@ -530,7 +462,6 @@ const PasswordsPage = () => {
               size="xl"
               width="max"
               aria-label={t("vault.browser.sort")}
-              label={`${t("vault.browser.sort")}:`}
               value={[sortOrder]}
               onUpdate={([value = "created-desc"]) => setSortOrder(value)}
               options={[
@@ -593,39 +524,23 @@ const PasswordsPage = () => {
         entry={shareTarget}
         onClose={() => setShareTarget(null)}
       />
-      <FolderAccessDialog
-        open={foldersOpen}
-        onClose={() => {
-          setFoldersOpen(false);
-          clearToolRoute();
-        }}
-      />
+      <FolderAccessDialog open={activeTool === "folders"} onClose={clearToolRoute} />
       <BackupDialog
-        open={backupOpen}
-        onClose={() => {
-          setBackupOpen(false);
-          clearToolRoute();
-        }}
+        open={activeTool === "backup"}
+        onClose={clearToolRoute}
         onBackup={handleBackup}
       />
       <ImportDialog
-        open={importOpen}
-        onClose={() => {
-          setImportOpen(false);
-          clearToolRoute();
-        }}
+        open={activeTool === "import"}
+        onClose={clearToolRoute}
         onImport={importPasswords}
         onImportCsv={importCsv}
       />
       <HealthDialog
-        open={healthOpen}
+        open={activeTool === "health"}
         passwords={passwords}
-        onClose={() => {
-          setHealthOpen(false);
-          clearToolRoute();
-        }}
+        onClose={clearToolRoute}
         onSelect={(row) => {
-          setHealthOpen(false);
           clearToolRoute();
           if (row.access === "read") {
             setFolderFilter("");
@@ -661,12 +576,9 @@ const PasswordsPage = () => {
         {t("vault.damage.removeMessage", { count: damagedCount })}
       </ConfirmDialog>
       <TrashDialog
-        open={trashOpen}
+        open={activeTool === "trash"}
         trash={trash}
-        onClose={() => {
-          setTrashOpen(false);
-          clearToolRoute();
-        }}
+        onClose={clearToolRoute}
         onRestore={handleRestore}
         onPurge={handlePurge}
       />

@@ -615,6 +615,7 @@ en.folderAccess = {
   target: "Account or group",
   targetTypes: { user: "User", group: "Group" },
   expiresAt: "Expires (optional)",
+  chooseExpiry: "Choose expiration date and time",
   expiresHint:
     "Leave blank for access without an expiration date. Time uses this device's time zone.",
   expiresValidation: "Choose a time in the future or leave the field empty.",

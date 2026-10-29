@@ -426,6 +426,7 @@ const PasswordFormDialog = ({
         selected={form.favorite}
         onClick={() => setForm((previous) => ({ ...previous, favorite: !previous.favorite }))}
         aria-pressed={form.favorite}
+        qa="entry-favorite-toggle"
         aria-label={t(
           form.favorite ? "vault.columns.removeFavorite" : "vault.columns.markFavorite"
         )}
@@ -442,8 +443,8 @@ const PasswordFormDialog = ({
           {t("entry.draft.savedLocally")}
         </Text>
       )}
-      <Flex alignItems="center" gap="spacing-2" minWidth="0">
-        {!editTarget && (
+      {!editTarget && (
+        <Flex alignItems="center" gap="spacing-2" minWidth="0">
           <SegmentedRadioGroup
             size="l"
             name="entry-kind"
@@ -463,9 +464,8 @@ const PasswordFormDialog = ({
               </Text>
             </SegmentedRadioGroup.Option>
           </SegmentedRadioGroup>
-        )}
-        {favoriteButton}
-      </Flex>
+        </Flex>
+      )}
 
       <Row gap="spacing-6" alignItems="start">
         <Col size={{ xs: 12, m: 7 }} minWidth="0">
@@ -770,10 +770,17 @@ const PasswordFormDialog = ({
   if (page) {
     return (
       <Flex direction="column" gap="spacing-5" minWidth="0" as="section" aria-label={t(titleKey)}>
-        <Flex alignItems="center" gap="spacing-3" minWidth="0" as="header">
+        <Flex
+          alignItems="center"
+          justifyContent="space-between"
+          gap="spacing-3"
+          minWidth="0"
+          as="header"
+        >
           <Text as="h1" variant="header-1">
             {t(titleKey)}
           </Text>
+          {favoriteButton}
         </Flex>
         {body}
         {footer}
@@ -794,7 +801,14 @@ const PasswordFormDialog = ({
         if (!nextOpen && !submitting) onClose();
       }}
     >
-      <Dialog.Header caption={t(titleKey)} />
+      <Dialog.Header
+        caption={t(titleKey)}
+        insertAfter={
+          <Flex flexGrow={1} justifyContent="flex-end" minWidth="44px">
+            {favoriteButton}
+          </Flex>
+        }
+      />
       <Dialog.Body>{body}</Dialog.Body>
       {footer}
     </Dialog>

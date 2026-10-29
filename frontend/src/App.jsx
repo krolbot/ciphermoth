@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter as Router, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useStoreActions } from "easy-peasy";
-import { Box, Container, Flex, ToasterComponent } from "@gravity-ui/uikit";
+import { Box, Container, Flex, ToasterComponent, useLayoutContext } from "@gravity-ui/uikit";
 
 import DesktopGate from "./platform/DesktopGate";
 import apiClient from "./api/client";
@@ -16,6 +16,10 @@ const AppContent = () => {
   useAutoLogout();
 
   const authed = isAuth();
+  const location = useLocation();
+  const { isMediaActive } = useLayoutContext();
+  const desktopShell = isMediaActive("l");
+  const vaultRoute = location.pathname === "/passwords";
   const [currentUser, setUser] = useState(getCurrentUser);
   const passwordChangeRequired = Boolean(currentUser?.must_change_password);
   const getSettings = useStoreActions((actions) => actions.ciphermothModels.settings.get);
@@ -44,9 +48,20 @@ const AppContent = () => {
   if (!authed) return appRoutes;
 
   return (
-    <Flex minHeight="100dvh" direction={{ xs: "column", l: "row" }}>
+    <Flex
+      minHeight="100dvh"
+      height={desktopShell ? "100dvh" : undefined}
+      overflow={desktopShell ? "hidden" : undefined}
+      direction={{ xs: "column", l: "row" }}
+    >
       <TopMenu />
-      <Box as="main" flexGrow={1} minWidth="0">
+      <Box
+        as="main"
+        flexGrow={1}
+        minWidth="0"
+        height={desktopShell ? "100%" : undefined}
+        overflow={desktopShell ? (vaultRoute ? "hidden" : "auto") : undefined}
+      >
         <Container paddingBlock="spacing-6" gutters={{ xs: "spacing-3", m: "spacing-6" }}>
           {!passwordChangeRequired && appRoutes}
         </Container>

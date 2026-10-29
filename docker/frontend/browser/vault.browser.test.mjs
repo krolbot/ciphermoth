@@ -991,23 +991,46 @@ for (const width of [375, 1440]) {
                 )
                     grants.push(request.postDataJSON());
             });
-            await page
-                .getByRole("button", { name: "Vault actions", exact: true })
-                .click();
-            await page
-                .getByRole("menuitem", {
-                    name: "Folders",
-                    exact: true,
-                })
-                .click();
+            const mobileNavigation = await page
+                .locator('[data-qa="mobile-header"]')
+                .count();
+            if (mobileNavigation) {
+                await page
+                    .getByRole("button", { name: "More", exact: true })
+                    .click();
+            }
+            await page.locator('a[href="/passwords?tool=folders"]').click();
+            if (mobileNavigation) {
+                await page
+                    .getByRole("dialog", { name: "Workspace", exact: true })
+                    .waitFor({ state: "hidden" });
+            }
             const dialog = page.getByRole("dialog", {
                 name: "Folder access",
                 exact: true,
             });
             await dialog.waitFor();
+            await settleAnimations(page);
             await dialog
                 .getByText("synthetic created the folder.", { exact: true })
                 .waitFor();
+            const [renameBox, grantsBox] = await Promise.all([
+                dialog
+                    .getByLabel("Rename folder", { exact: true })
+                    .boundingBox(),
+                dialog
+                    .getByRole("heading", {
+                        name: "Access grants",
+                        exact: true,
+                    })
+                    .boundingBox(),
+            ]);
+            assert.ok(
+                renameBox &&
+                    grantsBox &&
+                    grantsBox.y >= renameBox.y + renameBox.height,
+                JSON.stringify({ renameBox, grantsBox }),
+            );
             await dialog.getByLabel("Grant to", { exact: true }).click();
             await page
                 .getByRole("option", { name: "Group", exact: true })
@@ -1023,6 +1046,25 @@ for (const width of [375, 1440]) {
                     .getByLabel("Expires (optional)", { exact: true })
                     .getAttribute("min"),
                 /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,
+            );
+            const expiry = dialog.getByLabel("Expires (optional)", {
+                exact: true,
+            });
+            assert.equal(await expiry.getAttribute("type"), "datetime-local");
+            await expiry.evaluate((input) => {
+                input.showPicker = () => {
+                    input.dataset.pickerOpened = "true";
+                };
+            });
+            const chooseExpiry = dialog.getByRole("button", {
+                name: "Choose expiration date and time",
+                exact: true,
+            });
+            await visibleTouchAction(page, chooseExpiry);
+            await chooseExpiry.click();
+            assert.equal(
+                await expiry.getAttribute("data-picker-opened"),
+                "true",
             );
             await dialog
                 .getByRole("button", { name: "Grant access", exact: true })
@@ -1065,29 +1107,241 @@ for (const width of [375, 1440]) {
     });
 }
 
-for (const width of [375, 899, 900, 1024, 1440]) {
-    test(`vault tools stay reachable through one responsive menu at ${width}px`, async () => {
+for (const width of [375, 1440]) {
+    test(`sidebar navigation keeps native spacing and one active item at ${width}px`, async () => {
         const { context, page, errors } = await vault(width, "ru");
         try {
-            const tools = page.getByRole("button", {
-                name: "Действия с хранилищем",
+            if (await page.locator('[data-qa="mobile-header"]').count()) {
+                await page
+                    .getByRole("button", { name: "Ещё", exact: true })
+                    .click();
+            }
+            const items = page.locator(
+                '[data-qa="navigation-items"] [data-navigation-id]',
+            );
+            const boxes = await items.evaluateAll((nodes) =>
+                nodes.map((node) => {
+                    const rect = node.getBoundingClientRect();
+                    return { top: rect.top, bottom: rect.bottom };
+                }),
+            );
+            assert.ok(boxes.length >= 6, JSON.stringify(boxes));
+            for (let index = 1; index < boxes.length; index += 1) {
+                assert.ok(
+                    boxes[index].top - boxes[index - 1].bottom >= 4,
+                    JSON.stringify(boxes),
+                );
+            }
+            const current = page.locator(
+                '[data-qa="navigation-items"] [aria-current="page"]',
+            );
+            assert.equal(await current.count(), 1);
+            assert.equal(
+                await current.getAttribute("data-navigation-id"),
+                "/passwords",
+            );
+            await page
+                .locator('a[data-navigation-id="/passwords?tool=backup"]')
+                .click();
+            const backupDialog = page.getByRole("dialog", {
+                name: "Создать резервную копию",
                 exact: true,
             });
-            await visibleTouchAction(page, tools);
-            for (const name of [
-                "Проверка паролей",
-                "Резервная копия",
-                "Импорт",
-                "Корзина (1)",
+            await backupDialog.waitFor();
+            assert.equal(await current.count(), 1);
+            assert.equal(
+                await current.getAttribute("data-navigation-id"),
+                "/passwords?tool=backup",
+            );
+            await page.goBack();
+            await backupDialog.waitFor({ state: "hidden" });
+            assert.equal(new URL(page.url()).searchParams.has("tool"), false);
+            await page.goForward();
+            await backupDialog.waitFor();
+            await page.goto(`${origin}/passwords?tool=health`);
+            await backupDialog.waitFor({ state: "hidden" });
+            await page
+                .getByRole("dialog", {
+                    name: "Проверка паролей",
+                    exact: true,
+                })
+                .waitFor();
+            assert.equal(
+                await page.locator('[role="dialog"]:visible').count(),
+                1,
+            );
+            assert.deepEqual(errors, []);
+        } finally {
+            await context.close();
+        }
+    });
+}
+
+for (const width of [375, 899, 900, 1024, 1440]) {
+    test(`vault tools stay reachable without duplicate page actions at ${width}px`, async () => {
+        const { context, page, errors } = await vault(width, "ru");
+        try {
+            assert.equal(
+                await page
+                    .getByRole("button", {
+                        name: "Действия с хранилищем",
+                        exact: true,
+                    })
+                    .count(),
+                0,
+            );
+            for (const [name, tool] of [
+                ["Папки", "folders"],
+                ["Проверка паролей", "health"],
+                ["Резервная копия", "backup"],
+                ["Импорт", "import"],
+                ["Корзина", "trash"],
             ]) {
-                await tools.click();
-                await page.getByRole("menuitem", { name, exact: true }).click();
-                const dialog = page.getByRole("dialog");
+                if (await page.locator('[data-qa="mobile-header"]').count()) {
+                    await page
+                        .getByRole("button", { name: "Ещё", exact: true })
+                        .click();
+                }
+                const action = page.locator(
+                    `a[href="/passwords?tool=${tool}"]`,
+                );
+                assert.equal(await action.textContent(), name);
+                await visibleTouchAction(page, action);
+                assert.equal(
+                    await page
+                        .getByText(name, { exact: true })
+                        .evaluate(
+                            (node) => node.scrollWidth <= node.clientWidth,
+                        ),
+                    true,
+                );
+                await action.click();
+                const dialog = page.locator(
+                    '[role="dialog"]:not([aria-label="Рабочая область"])',
+                );
                 await dialog.waitFor();
                 await fits(page);
                 await page.keyboard.press("Escape");
                 await dialog.waitFor({ state: "hidden" });
             }
+            assert.deepEqual(errors, []);
+        } finally {
+            await context.close();
+        }
+    });
+}
+
+for (const width of [375, 1440]) {
+    test(`password health keeps one readable scroll flow at ${width}px`, async () => {
+        const records = [
+            entries[0],
+            ...Array.from({ length: 10 }, (_, index) => ({
+                ...entries[0],
+                id: 200 + index,
+                password_name:
+                    index === 9
+                        ? "Very long weak credential name ".repeat(8)
+                        : `Weak credential ${index + 1}`,
+                username:
+                    index === 9
+                        ? "very-long-username-".repeat(12)
+                        : `weak-${index + 1}@example.test`,
+                password_value: `x${index}`,
+                updated: "2026-10-28T12:00:00Z",
+            })),
+        ];
+        const { context, page, errors } = await vault(
+            width,
+            "ru",
+            "dark",
+            records,
+        );
+        try {
+            await page.goto(`${origin}/passwords?tool=health`);
+            const dialog = page.getByRole("dialog", {
+                name: "Проверка паролей",
+                exact: true,
+            });
+            await dialog.waitFor();
+            const groups = dialog.locator('[data-qa="health-issue-group"]');
+            assert.equal(await groups.count(), 1);
+            const rows = groups.getByRole("button");
+            assert.equal(await rows.count(), 10);
+            const geometry = await dialog.evaluate((node) => {
+                const body = node.querySelector(".g-dialog-body");
+                const footer = node.querySelector(".g-dialog-footer");
+                const group = node.querySelector(
+                    '[data-qa="health-issue-group"]',
+                );
+                const rect = (element) => {
+                    const bounds = element.getBoundingClientRect();
+                    return {
+                        top: bounds.top,
+                        right: bounds.right,
+                        bottom: bounds.bottom,
+                        left: bounds.left,
+                    };
+                };
+                return {
+                    dialog: rect(node),
+                    body: rect(body),
+                    footer: rect(footer),
+                    group: rect(group),
+                    bodyScrollable: body.scrollHeight > body.clientHeight,
+                    bodyOverflow: body.scrollWidth > body.clientWidth,
+                };
+            });
+            assert.equal(
+                geometry.bodyOverflow,
+                false,
+                JSON.stringify(geometry),
+            );
+            assert.ok(
+                geometry.group.left >= geometry.body.left,
+                JSON.stringify(geometry),
+            );
+            assert.ok(
+                geometry.group.right <= geometry.body.right,
+                JSON.stringify(geometry),
+            );
+            assert.ok(
+                geometry.footer.top >= geometry.body.bottom - 1,
+                JSON.stringify(geometry),
+            );
+            assert.ok(
+                geometry.footer.bottom <= geometry.dialog.bottom + 1,
+                JSON.stringify(geometry),
+            );
+            assert.equal(
+                geometry.bodyScrollable,
+                true,
+                JSON.stringify(geometry),
+            );
+            if (process.env.CIPHERMOTH_SCREENSHOT_DIR) {
+                await mkdir(process.env.CIPHERMOTH_SCREENSHOT_DIR, {
+                    recursive: true,
+                });
+                await page.screenshot({
+                    path: resolve(
+                        process.env.CIPHERMOTH_SCREENSHOT_DIR,
+                        `health-${width}-top.png`,
+                    ),
+                });
+            }
+            await rows.last().scrollIntoViewIfNeeded();
+            await rows.last().waitFor({ state: "visible" });
+            await page
+                .getByRole("button", { name: "Готово", exact: true })
+                .waitFor({ state: "visible" });
+            if (process.env.CIPHERMOTH_SCREENSHOT_DIR) {
+                await page.screenshot({
+                    path: resolve(
+                        process.env.CIPHERMOTH_SCREENSHOT_DIR,
+                        `health-${width}-bottom.png`,
+                    ),
+                });
+            }
+            await fits(page);
             assert.deepEqual(errors, []);
         } finally {
             await context.close();
@@ -1138,6 +1392,59 @@ for (const width of [320, 375, 430, 768, 1024, 1440]) {
         }
     });
 }
+
+test("desktop vault keeps the screen fixed and scrolls the entry list", async () => {
+    const records = [
+        entries[0],
+        ...Array.from({ length: 39 }, (_, index) => ({
+            ...entries[0],
+            id: 100 + index,
+            password_name: `Scrollable entry ${index + 1}`,
+        })),
+    ];
+    const { context, page, errors } = await vault(1440, "ru", "dark", records);
+    try {
+        const region = page.locator('[data-qa="entry-scroll-region"]');
+        const title = page.locator('[data-qa="vault-page"] h1');
+        const before = await region.evaluate((node) => ({
+            clientHeight: node.clientHeight,
+            scrollHeight: node.scrollHeight,
+            windowScrollY: window.scrollY,
+            documentScrollHeight: document.documentElement.scrollHeight,
+            viewportHeight: innerHeight,
+        }));
+        assert.ok(
+            before.scrollHeight > before.clientHeight,
+            JSON.stringify(before),
+        );
+        assert.ok(
+            before.documentScrollHeight <= before.viewportHeight + 1,
+            JSON.stringify(before),
+        );
+        await viewportScreenshot(page, "desktop-vault-scroll-top.png");
+        const titleTop = await title.evaluate(
+            (node) => node.getBoundingClientRect().top,
+        );
+        await region.evaluate((node) => {
+            node.scrollTop = node.scrollHeight;
+        });
+        await page.waitForTimeout(100);
+        const after = await region.evaluate((node) => ({
+            scrollTop: node.scrollTop,
+            windowScrollY: window.scrollY,
+        }));
+        assert.ok(after.scrollTop > 0, JSON.stringify(after));
+        assert.equal(after.windowScrollY, 0);
+        assert.equal(
+            await title.evaluate((node) => node.getBoundingClientRect().top),
+            titleTop,
+        );
+        await viewportScreenshot(page, "desktop-vault-scroll-bottom.png");
+        assert.deepEqual(errors, []);
+    } finally {
+        await context.close();
+    }
+});
 
 test("mobile vault opens an accessible read view without exposing secrets", async () => {
     const { context, page, errors } = await vault(375);
@@ -1264,9 +1571,20 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
             "Manage access",
             "Delete",
         ]) {
-            await page.getByRole("menuitem", { name, exact: true }).waitFor();
+            const item = page.getByRole("menuitem", { name, exact: true });
+            await item.waitFor();
+            await item.hover();
+            assert.match(
+                await github.getAttribute("class"),
+                /g-list-item-view_hovered_yes/,
+            );
         }
+        await viewportScreenshot(page, "entry-menu-hover-1440.png");
         await page.keyboard.press("Escape");
+        assert.doesNotMatch(
+            (await github.getAttribute("class")) ?? "",
+            /g-list-item-view_hovered_yes/,
+        );
 
         const trigger = github;
         await trigger.click({ position: { x: 24, y: 24 } });
@@ -1274,6 +1592,27 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
         await detail
             .getByRole("heading", { name: "GitHub", exact: true })
             .waitFor();
+        const back = detail.getByRole("button", {
+            name: "Back to entries",
+            exact: true,
+        });
+        await visibleTouchAction(page, back);
+        assert.ok((await back.locator("svg").count()) >= 1);
+        const headerGeometry = await detail.evaluate((region) => {
+            const backBox = region
+                .querySelector('[data-qa="entry-details-back"]')
+                .getBoundingClientRect();
+            const headerBox = region
+                .querySelector('[data-qa="entry-details-header"]')
+                .getBoundingClientRect();
+            return {
+                backBottom: backBox.bottom,
+                headerTop: headerBox.top,
+                gap: headerBox.top - backBox.bottom,
+            };
+        });
+        assert.ok(headerGeometry.headerTop >= headerGeometry.backBottom);
+        assert.ok(headerGeometry.gap <= 24, JSON.stringify(headerGeometry));
         assert.equal(
             await detail
                 .getByText(entries[0].password_value, { exact: true })
@@ -1328,6 +1667,49 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
     }
 });
 
+test("entry editor keeps favorite beside the dialog close action", async () => {
+    const { context, page, errors } = await vault(1440, "en", "dark");
+    try {
+        await page
+            .locator('[data-qa="entry-list"]')
+            .getByRole("row")
+            .filter({ hasText: "GitHub" })
+            .click({ position: { x: 24, y: 24 } });
+        const details = page.getByRole("region", { name: "Entry details" });
+        await details
+            .getByRole("button", { name: "Edit", exact: true })
+            .click();
+        const dialog = page.getByRole("dialog", {
+            name: "Edit login",
+            exact: true,
+        });
+        await dialog.waitFor();
+        await settleAnimations(page);
+        const favorite = dialog.locator('[data-qa="entry-favorite-toggle"]');
+        const close = dialog.locator("button[aria-label]").first();
+        await visibleTouchAction(page, favorite);
+        assert.equal(await favorite.count(), 1);
+        const geometry = await Promise.all(
+            [favorite, close].map((control) => control.boundingBox()),
+        );
+        assert.ok(geometry.every(Boolean), JSON.stringify(geometry));
+        const [favoriteBox, closeBox] = geometry;
+        assert.ok(favoriteBox.x < closeBox.x, JSON.stringify(geometry));
+        assert.ok(
+            Math.abs(favoriteBox.y - closeBox.y) <= 1,
+            JSON.stringify(geometry),
+        );
+        assert.ok(
+            closeBox.x - (favoriteBox.x + favoriteBox.width) <= 12,
+            JSON.stringify(geometry),
+        );
+        await viewportScreenshot(page, "entry-editor-header.png");
+        assert.deepEqual(errors, []);
+    } finally {
+        await context.close();
+    }
+});
+
 for (const [width, language, theme] of [
     [320, "en", "dark"],
     [375, "ru", "light"],
@@ -1342,6 +1724,7 @@ for (const [width, language, theme] of [
         const { context, page, errors } = await vault(width, language, theme);
         try {
             const ru = language === "ru";
+            const t = ru ? ruText : enText;
             const list = page.locator('[data-qa="entry-list"]');
             assert.equal(await list.getByRole("row").count(), entries.length);
             await fits(page);
@@ -1368,6 +1751,26 @@ for (const [width, language, theme] of [
 
             const search = page.getByPlaceholder(
                 ru ? "Поиск записей…" : "Search entries…",
+            );
+            assert.equal(
+                await page.locator('[data-qa="vault-search"] svg').count(),
+                0,
+            );
+            const sort = page.getByRole("combobox", {
+                name: t.vault.browser.sort,
+                exact: true,
+            });
+            assert.equal(
+                (await sort.textContent()).trim(),
+                t.vault.browser.dateAdded,
+            );
+            const folder = page.getByRole("combobox", {
+                name: t.common.fields.folder,
+                exact: true,
+            });
+            assert.equal(
+                (await folder.textContent()).trim(),
+                t.vault.allFolders,
             );
             await search.fill("reader@example.test");
             assert.equal(await list.getByRole("row").count(), 1);
@@ -1420,14 +1823,15 @@ for (const [width, language, theme] of [
             await page.keyboard.press("Escape");
             await detail.waitFor({ state: "hidden" });
 
-            const tools = page.getByRole("button", {
-                name: ru ? "Действия с хранилищем" : "Vault actions",
-                exact: true,
-            });
-            await tools.click();
-            await page
-                .getByRole("menuitem", { name: /^(Корзина|Trash)/ })
-                .click();
+            if (await page.locator('[data-qa="mobile-header"]').count()) {
+                await page
+                    .getByRole("button", {
+                        name: t.navigation.more,
+                        exact: true,
+                    })
+                    .click();
+            }
+            await page.locator('a[href="/passwords?tool=trash"]').click();
             const trash = page.getByRole("dialog", {
                 name: ru ? "Корзина" : "Trash",
                 exact: true,
@@ -1633,6 +2037,16 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                                                         button.getBoundingClientRect()
                                                             .width,
                                                 ),
+                                                buttonRects: buttons.map(
+                                                    (button) => {
+                                                        const rect =
+                                                            button.getBoundingClientRect();
+                                                        return {
+                                                            top: rect.top,
+                                                            bottom: rect.bottom,
+                                                        };
+                                                    },
+                                                ),
                                                 intrinsicWidths,
                                                 logoutWidth:
                                                     logout.getBoundingClientRect()
@@ -1672,14 +2086,18 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                                 JSON.stringify(geometry.preferences),
                             );
                             assert.ok(
-                                Math.abs(
-                                    geometry.preferences.buttonWidths.reduce(
-                                        (sum, value) => sum + value,
-                                        0,
-                                    ) +
-                                        8 -
-                                        geometry.preferences.width,
-                                ) <= 1,
+                                geometry.preferences.buttonWidths.every(
+                                    (buttonWidth) =>
+                                        Math.abs(
+                                            buttonWidth -
+                                                geometry.preferences.width,
+                                        ) <= 1,
+                                ),
+                                JSON.stringify(geometry.preferences),
+                            );
+                            assert.ok(
+                                geometry.preferences.buttonRects[0].bottom <=
+                                    geometry.preferences.buttonRects[1].top,
                                 JSON.stringify(geometry.preferences),
                             );
                             assert.ok(
@@ -1873,6 +2291,78 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                         );
                     }
                     metrics.push({ state: "user-cards", cards });
+                }
+                if (width >= 768) {
+                    const cards = await page
+                        .locator('[data-qa="user-card"]')
+                        .evaluateAll((nodes) =>
+                            nodes.map((card) => {
+                                const bounds = (node) => {
+                                    const rect = node.getBoundingClientRect();
+                                    return {
+                                        left: rect.left,
+                                        right: rect.right,
+                                        width: rect.width,
+                                    };
+                                };
+                                const controls = card.querySelector(
+                                    '[data-qa="user-controls"]',
+                                );
+                                const role = card.querySelector(
+                                    '[data-qa="user-role-control"]',
+                                );
+                                const actions = card.querySelector(
+                                    '[data-qa="user-actions"]',
+                                );
+                                const roleText =
+                                    role.querySelector('[role="combobox"]');
+                                return {
+                                    card: {
+                                        ...bounds(card),
+                                        clientWidth: card.clientWidth,
+                                        scrollWidth: card.scrollWidth,
+                                    },
+                                    controls: bounds(controls),
+                                    role: bounds(role),
+                                    actions: bounds(actions),
+                                    roleText: {
+                                        clientWidth: roleText.clientWidth,
+                                        scrollWidth: roleText.scrollWidth,
+                                    },
+                                };
+                            }),
+                        );
+                    assert.equal(cards.length, 3);
+                    for (const card of cards) {
+                        assert.ok(
+                            card.card.scrollWidth <= card.card.clientWidth,
+                            JSON.stringify(card),
+                        );
+                        assert.ok(
+                            card.roleText.scrollWidth <=
+                                card.roleText.clientWidth,
+                            JSON.stringify(card),
+                        );
+                    }
+                    for (const key of ["left", "right", "width"]) {
+                        assert.ok(
+                            Math.max(...cards.map((card) => card.role[key])) -
+                                Math.min(
+                                    ...cards.map((card) => card.role[key]),
+                                ) <=
+                                1,
+                            JSON.stringify(cards),
+                        );
+                    }
+                    assert.ok(
+                        Math.max(...cards.map((card) => card.actions.right)) -
+                            Math.min(
+                                ...cards.map((card) => card.actions.right),
+                            ) <=
+                            1,
+                        JSON.stringify(cards),
+                    );
+                    metrics.push({ state: "user-cards-wide", cards });
                 }
                 await capture("users");
                 await button(t.groups.title).click();

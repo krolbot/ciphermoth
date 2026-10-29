@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Flex, Text, Button, Col, Dialog, Label, Row, Select, TextInput } from "@gravity-ui/uikit";
+import { Flex, Text, Button, Col, Dialog, Label, Row, Select } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
 import { useSnackbar } from "../../hooks/useNotify";
 import { isInvalidExpiry, toLocalExpiry, toUtcExpiry } from "../../lib/accessExpiry";
+import ExpiryField from "./ExpiryField";
 
 const AccessRow = ({ item, busy, onSave, onRevoke }) => {
   const { t } = useTranslation();
@@ -83,23 +84,12 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
             />
           </Col>
           <Col size={{ xs: 12, s: 7 }} minWidth="0">
-            <Flex as="label" direction="column" gap="spacing-2" minWidth="0" width="100%">
-              <Text>{t("folderAccess.expiresAt")}</Text>
-              <TextInput
-                size="xl"
-                type="datetime-local"
-                note={t("folderAccess.expiresHint")}
-                value={expiresAt}
-                disabled={busy}
-                onUpdate={setExpiresAt}
-                validationState={expiryInvalid ? "invalid" : undefined}
-                errorMessage={expiryInvalid ? t("folderAccess.expiresValidation") : undefined}
-                controlProps={{
-                  "aria-label": t("folderAccess.expiresAt"),
-                  min: toLocalExpiry(new Date().toISOString()),
-                }}
-              />
-            </Flex>
+            <ExpiryField
+              value={expiresAt}
+              onUpdate={setExpiresAt}
+              disabled={busy}
+              invalid={expiryInvalid}
+            />
           </Col>
           <Col size={12}>
             <Flex gap="spacing-2" wrap="wrap">

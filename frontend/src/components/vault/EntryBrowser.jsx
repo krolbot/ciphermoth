@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FileText, Key, Paperclip, StarFill } from "@gravity-ui/icons";
+import { ArrowLeft, FileText, Key, Paperclip, StarFill } from "@gravity-ui/icons";
 import {
   Box,
   Button,
@@ -28,8 +28,10 @@ const EntryBrowser = ({
 }) => {
   const { t } = useTranslation();
   const { isMediaActive } = useLayoutContext();
+  const fixedViewport = isMediaActive("l");
   const desktop = isMediaActive("xl");
   const [selectedId, setSelectedId] = useState(null);
+  const [menuEntryId, setMenuEntryId] = useState(null);
   const listRef = useRef(null);
   const closeRef = useRef(null);
   const selectedTrigger = useRef(null);
@@ -60,6 +62,7 @@ const EntryBrowser = ({
     <EntryDetails
       key={selected.id}
       entry={selected}
+      showTitle={desktop}
       onCopy={onCopy}
       {...actions}
       onEdit={(entry) => {
@@ -89,7 +92,10 @@ const EntryBrowser = ({
   return (
     <Flex
       gap="spacing-6"
-      alignItems="flex-start"
+      alignItems={fixedViewport ? "stretch" : "flex-start"}
+      flexGrow={fixedViewport ? 1 : undefined}
+      minHeight={fixedViewport ? "0" : undefined}
+      overflow={fixedViewport ? "hidden" : undefined}
       onKeyDown={(event) => {
         if (desktop && selected && event.key === "Escape" && !event.defaultPrevented) {
           event.stopPropagation();
@@ -101,8 +107,12 @@ const EntryBrowser = ({
         minWidth="0"
         flexGrow={1}
         flexBasis="0"
+        height={fixedViewport ? "100%" : undefined}
+        minHeight={fixedViewport ? "0" : undefined}
+        overflow={fixedViewport ? "auto" : undefined}
         as="section"
         aria-label={t("vault.browser.entries")}
+        qa="entry-scroll-region"
       >
         {entries.length !== totalCount && (
           <Flex alignItems="center" gap="spacing-2" paddingBlockEnd="spacing-3">
@@ -132,6 +142,7 @@ const EntryBrowser = ({
               <List.ItemView
                 {...getItemProps({ "data-entry-id": ctx.item.id })}
                 {...getItemViewProps()}
+                hovered={menuEntryId === ctx.item.id ? true : undefined}
                 startContent={<Icon data={ctx.item.kind === "note" ? FileText : Key} />}
                 description={
                   <Flex gap="spacing-2" wrap="wrap" alignItems="center">
@@ -158,7 +169,12 @@ const EntryBrowser = ({
                 endContent={
                   desktop && !selected ? (
                     <Box {...getCellProps()} onClick={(event) => event.stopPropagation()}>
-                      <EntryListActions entry={ctx.item} onCopy={onCopy} {...actions} />
+                      <EntryListActions
+                        entry={ctx.item}
+                        onCopy={onCopy}
+                        {...actions}
+                        onMenuOpenChange={(open) => setMenuEntryId(open ? ctx.item.id : null)}
+                      />
                     </Box>
                   ) : undefined
                 }
@@ -180,15 +196,21 @@ const EntryBrowser = ({
           gap="spacing-4"
           flexBasis="50%"
           minWidth="0"
+          minHeight="0"
+          overflow="auto"
         >
           <Flex>
-            <Button size="xl" ref={closeRef} view="flat-secondary" onClick={closeDetails}>
+            <Button
+              size="xl"
+              ref={closeRef}
+              view="outlined"
+              onClick={closeDetails}
+              qa="entry-details-back"
+            >
+              <Icon data={ArrowLeft} />
               {t("vault.browser.back")}
             </Button>
           </Flex>
-          <Text as="h2" variant="header-1" wordBreak="break-word">
-            {selected.password_name}
-          </Text>
           {details}
         </Flex>
       )}

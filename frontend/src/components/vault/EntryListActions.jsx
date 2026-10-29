@@ -33,7 +33,15 @@ const QuickAction = ({ label, icon, onClick, selected = false }) => (
   </Tooltip>
 );
 
-const EntryListActions = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFavorite }) => {
+const EntryListActions = ({
+  entry,
+  onCopy,
+  onEdit,
+  onDelete,
+  onShare,
+  onToggleFavorite,
+  onMenuOpenChange,
+}) => {
   const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
   const isNote = entry.kind === "note";
@@ -75,6 +83,7 @@ const EntryListActions = ({ entry, onCopy, onEdit, onDelete, onShare, onToggleFa
       {!isNote && entry.totp_secret && <TotpCell secret={entry.totp_secret} onCopy={onCopy} />}
       <Menu
         placement="bottom-end"
+        onOpenChange={onMenuOpenChange}
         trigger={
           <Button
             type="button"
