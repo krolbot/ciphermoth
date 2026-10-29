@@ -666,22 +666,20 @@ test("existing vault generator stays singular; backup, restore and TOTP never ge
         await page.keyboard.press("Escape");
         await detail.waitFor({ state: "hidden" });
 
-        const tools = page.getByRole("button", {
-            name: t.vault.browser.tools,
-            exact: true,
-        });
-        for (const [menu, label] of [
-            [t.vault.backup, t.auth.masterPassword],
-            [t.vault.import, t.importDialog.backupPassword],
+        for (const [tool, label] of [
+            ["backup", t.auth.masterPassword],
+            ["import", t.importDialog.backupPassword],
         ]) {
-            await tools.click();
             await page
-                .getByRole("menuitem", { name: menu, exact: true })
+                .getByRole("button", { name: t.navigation.more, exact: true })
                 .click();
-            const dialog = page.getByRole("dialog");
-            await dialog
-                .getByRole("textbox", { name: label, exact: true })
-                .waitFor();
+            await page.locator(`a[href="/passwords?tool=${tool}"]`).click();
+            const field = page.getByRole("textbox", {
+                name: label,
+                exact: true,
+            });
+            await field.waitFor();
+            const dialog = page.getByRole("dialog").filter({ has: field });
             assert.equal(
                 await dialog
                     .getByRole("button", {
