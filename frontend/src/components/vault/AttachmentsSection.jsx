@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FileArrowDown, Paperclip, TrashBin } from "@gravity-ui/icons";
-import { Flex, Text, Button, Icon, Tooltip } from "@gravity-ui/uikit";
+import { Button, Flex, Icon, Text, Tooltip, useFileInput } from "@gravity-ui/uikit";
 import { useStoreActions } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -29,7 +29,6 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
   const [attachments, setAttachments] = useState([]);
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const inputRef = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -68,11 +67,11 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
     }
   };
 
-  const onPick = (event) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
-    if (files.length) handleFiles(files);
-  };
+  const { controlProps: fileInputProps, triggerProps: fileTriggerProps } = useFileInput({
+    onUpdate: (files) => {
+      if (files.length) handleFiles(files);
+    },
+  });
 
   const onDownload = async (attachment) => {
     try {
@@ -104,7 +103,7 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0">
       {attachments.length === 0 ? (
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           {t("attachments.empty")}
         </Text>
       ) : (
@@ -164,18 +163,12 @@ const AttachmentsSection = ({ passwordName, onChanged, readOnly = false }) => {
           wrap="wrap"
           alignItems={{ m: "center" }}
         >
-          <input ref={inputRef} type="file" multiple hidden onChange={onPick} />
-          <Button
-            type="button"
-            size="m"
-            view="outlined"
-            onClick={() => inputRef.current?.click()}
-            loading={busy}
-          >
+          <input {...fileInputProps} multiple />
+          <Button {...fileTriggerProps} type="button" size="m" view="outlined" loading={busy}>
             <Icon data={Paperclip} />
             {t("attachments.attachFile")}
           </Button>
-          <span>{t("attachments.limits")}</span>
+          <Text color="secondary">{t("attachments.limits")}</Text>
         </Flex>
       )}
 

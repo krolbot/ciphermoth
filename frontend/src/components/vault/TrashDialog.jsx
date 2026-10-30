@@ -59,7 +59,7 @@ const TrashDialog = ({ open, trash, onClose, onRestore, onPurge }) => {
       <Dialog.Header caption={t("vault.trash")} id={titleId} />
       <Dialog.Body hasBorders>
         {trash.length === 0 ? (
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {t("trashDialog.empty")}
           </Text>
         ) : (

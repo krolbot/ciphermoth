@@ -30,10 +30,10 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
         as="header"
       >
         <Flex direction="column" gap="spacing-1" minWidth="0" flexGrow={1}>
-          <Text as="h3" variant="subheader-2">
+          <Text as="div" role="heading" aria-level={3} variant="subheader-2">
             {item.folder.name}
           </Text>
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {t("folderAccess.ownerLabel", { owner: item.folder.owner_username })}
           </Text>
         </Flex>
@@ -63,7 +63,7 @@ const AccessRow = ({ item, busy, onSave, onRevoke }) => {
       </Flex>
 
       {owned ? (
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           {t("folderAccess.ownerCannotChange")}
         </Text>
       ) : (
@@ -167,11 +167,11 @@ const UserFolderAccessDialog = ({ open, user, onClose }) => {
       <Dialog.Header caption={t("folderAccess.userTitle", { username: user?.username })} />
       <Dialog.Body>
         <Flex direction="column" gap="spacing-5" minWidth="0">
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {t("folderAccess.userDescription")}
           </Text>
           {items.length === 0 ? (
-            <Text as="p" color="secondary" wordBreak="break-word">
+            <Text as="div" color="secondary" wordBreak="break-word">
               {t("folderAccess.empty")}
             </Text>
           ) : (

@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   CircleQuestion,
   Copy,
+  Eye,
+  EyeSlash,
   FileText,
   Key,
-  Lock,
-  LockOpen,
   MagicWand,
   Plus,
   Star,
@@ -22,6 +22,7 @@ import {
   Dialog,
   Icon,
   SegmentedRadioGroup,
+  Select,
   TextArea,
   TextInput,
   Tooltip,
@@ -143,7 +144,7 @@ const CustomFieldRow = ({ field, onChange, onToggleHidden, onRemove }) => {
             onClick={onToggleHidden}
             aria-label={t(field.hidden ? "entry.actions.valueHidden" : "entry.actions.hideValue")}
           >
-            <Icon data={field.hidden ? Lock : LockOpen} />
+            <Icon data={field.hidden ? EyeSlash : Eye} />
           </Button>
         </Tooltip>
         <Tooltip content={t("entry.actions.removeField")}>
@@ -188,7 +189,7 @@ const HistoryRow = ({ entry, onCopy }) => {
           onClick={() => setShow((value) => !value)}
           aria-label={t(show ? "passwordField.hide" : "passwordField.show")}
         >
-          <Icon data={show ? Lock : LockOpen} />
+          <Icon data={show ? EyeSlash : Eye} />
         </Button>
       </Tooltip>
       <Tooltip content={t("vault.columns.copyPassword")}>
@@ -274,6 +275,21 @@ const PasswordFormDialog = ({
   }, [editTarget, dirty]);
 
   const isNote = form.kind === "note";
+  const selectedFolder = folderOptions.find(
+    (folder) => folder.id === form.folder_id || (!form.folder_id && folder.name === form.folder)
+  );
+  const folderSelectValue = selectedFolder
+    ? String(selectedFolder.id)
+    : form.folder
+      ? `legacy:${form.folder}`
+      : "";
+  const folderSelectOptions = folderOptions.map((folder) => ({
+    value: String(folder.id),
+    content: folder.name,
+  }));
+  if (form.folder && !selectedFolder) {
+    folderSelectOptions.push({ value: folderSelectValue, content: form.folder });
+  }
   const toggleSection = (key) => () =>
     setSections((previous) => ({ ...previous, [key]: !previous[key] }));
   const setValue = (field) => (value) => {
@@ -439,7 +455,7 @@ const PasswordFormDialog = ({
   const body = (
     <Flex direction="column" gap="spacing-5" minWidth="0">
       {!editTarget && !draftError && (
-        <Text as="p" color="secondary" wordBreak="break-word" role="status">
+        <Text as="div" color="secondary" wordBreak="break-word" role="status">
           {t("entry.draft.savedLocally")}
         </Text>
       )}
@@ -590,33 +606,29 @@ const PasswordFormDialog = ({
             )}
           </Flex>
 
-          <Flex as="label" direction="column" gap="spacing-2" minWidth="0">
+          <Flex direction="column" gap="spacing-2" minWidth="0">
             <Text>{t("entry.labels.folderOptional")}</Text>
-            <TextInput
+            <Select
               size="xl"
-              value={form.folder}
-              onUpdate={(value) => {
-                const match = folderOptions.find((folder) => folder.name === value);
+              width="max"
+              value={folderSelectValue ? [folderSelectValue] : []}
+              options={folderSelectOptions}
+              filterable={folderSelectOptions.length > 8}
+              hasClear
+              disabled={Boolean(editTarget && editTarget.access !== "owner")}
+              placeholder={t("entry.placeholders.folder")}
+              aria-label={t("entry.labels.folderOptional")}
+              onUpdate={([value = ""]) => {
+                const match = folderOptions.find((folder) => String(folder.id) === value);
                 setForm((previous) => ({
                   ...previous,
-                  folder: value,
+                  folder: match?.name ?? (value.startsWith("legacy:") ? previous.folder : ""),
                   folder_id: match?.id ?? null,
                 }));
                 closeSnackbar("entry-form-error");
               }}
-              disabled={Boolean(editTarget && editTarget.access !== "owner")}
-              placeholder={t("entry.placeholders.folder")}
-              controlProps={{
-                list: "cm-entry-folder-options",
-                "aria-label": t("entry.labels.folderOptional"),
-              }}
             />
           </Flex>
-          <datalist id="cm-entry-folder-options">
-            {folderOptions.map((folder) => (
-              <option key={folder.id} value={folder.name} />
-            ))}
-          </datalist>
         </Col>
         <Col size={{ xs: 12, m: 5 }} minWidth="0">
           <Flex direction="column" gap="spacing-3" minWidth="0">
@@ -777,7 +789,7 @@ const PasswordFormDialog = ({
           minWidth="0"
           as="header"
         >
-          <Text as="h1" variant="header-1">
+          <Text as="div" role="heading" aria-level={1} variant="header-1">
             {t(titleKey)}
           </Text>
           {favoriteButton}

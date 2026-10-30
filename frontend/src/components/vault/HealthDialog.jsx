@@ -59,7 +59,7 @@ const IssueGroup = ({ icon, title, hint, color, entries, onSelect }) => {
         </Text>
         <Text color="secondary">({entries.length})</Text>
       </Flex>
-      <Text as="p" color="secondary" wordBreak="break-word">
+      <Text as="div" color="secondary" wordBreak="break-word">
         {hint}
       </Text>
       <Flex direction="column" gap="spacing-1" minWidth="0">
@@ -131,13 +131,13 @@ const HealthDialog = ({ open, onClose, passwords, onSelect }) => {
               label={t("health.old")}
             />
           </Flex>
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {t("health.localOnly")}
           </Text>
           {allClear ? (
             <Flex gap="spacing-3" alignItems="center" minWidth="0">
               <Icon data={Check} />
-              <span>{t("health.allClear")}</span>
+              <Text>{t("health.allClear")}</Text>
             </Flex>
           ) : (
             <>

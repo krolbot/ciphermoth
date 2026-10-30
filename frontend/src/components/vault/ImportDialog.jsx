@@ -11,6 +11,7 @@ import {
   RadioGroup,
   Row,
   SegmentedRadioGroup,
+  useFileInput,
 } from "@gravity-ui/uikit";
 import { Trans, useTranslation } from "react-i18next";
 
@@ -22,7 +23,7 @@ const ReportedRows = ({ rows = [], count, titleKey, warning = false }) => {
   const hidden = count - rows.length;
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0">
-      <Text as="p" color="secondary" wordBreak="break-word">
+      <Text as="div" color="secondary" wordBreak="break-word">
         <Text as="strong" color={warning ? "warning" : "primary"}>
           {count}
         </Text>{" "}
@@ -73,7 +74,7 @@ const ImportResult = ({ result }) => {
   const extras = restoredExtras(result, t);
   if (result.total === 0 && !result.ignored && extras.length === 0) {
     return (
-      <Text as="p" color="secondary" wordBreak="break-word">
+      <Text as="div" color="secondary" wordBreak="break-word">
         {t("importDialog.noPasswords")}
       </Text>
     );
@@ -81,7 +82,7 @@ const ImportResult = ({ result }) => {
   return (
     <Flex direction="column" gap="spacing-3" minWidth="0">
       {result.imported > 0 && (
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           <Trans
             i18nKey="importDialog.imported"
             count={result.imported}
@@ -91,7 +92,7 @@ const ImportResult = ({ result }) => {
         </Text>
       )}
       {result.overwritten > 0 && (
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           <Trans
             i18nKey="importDialog.overwritten"
             count={result.overwritten}
@@ -101,12 +102,12 @@ const ImportResult = ({ result }) => {
         </Text>
       )}
       {extras.length > 0 && (
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           {t("importDialog.alsoRestored", { items: extras.join(", ") })}
         </Text>
       )}
       {result.skipped > 0 && (
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           <Trans
             i18nKey="importDialog.skipped"
             count={result.skipped}
@@ -156,6 +157,12 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
   }, [open]);
 
   const isCsv = mode === "csv";
+  const { controlProps: fileInputProps, triggerProps: fileTriggerProps } = useFileInput({
+    onUpdate: ([selectedFile]) => {
+      setFile(selectedFile ?? null);
+      setError("");
+    },
+  });
 
   const changeMode = (next) => {
     setMode(next);
@@ -230,20 +237,22 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
               </SegmentedRadioGroup.Option>
             </SegmentedRadioGroup>
 
-            <Text as="p" color="secondary" wordBreak="break-word">
+            <Text as="div" color="secondary" wordBreak="break-word">
               {isCsv ? t("importDialog.csvDescription") : t("importDialog.backupDescription")}
             </Text>
 
             <Row gap="spacing-6">
               <Col size={{ xs: 12, m: 7 }} minWidth="0">
                 <Flex direction="column" gap="spacing-4">
+                  {(!IS_DESKTOP || isCsv) && (
+                    <input {...fileInputProps} accept={isCsv ? ".csv" : ".cmbackup,.zip"} />
+                  )}
                   <Button
                     type="button"
-                    component={IS_DESKTOP && !isCsv ? "button" : "label"}
                     view="outlined"
                     size="xl"
                     width="max"
-                    onClick={IS_DESKTOP && !isCsv ? chooseFile : undefined}
+                    onClick={IS_DESKTOP && !isCsv ? chooseFile : fileTriggerProps.onClick}
                   >
                     <Icon data={FileArrowUp} />
                     <Text ellipsis>
@@ -251,17 +260,6 @@ const ImportDialog = ({ open, onClose, onImport, onImportCsv }) => {
                         ? file.name
                         : t(isCsv ? "importDialog.chooseCsv" : "importDialog.chooseBackup")}
                     </Text>
-                    {(!IS_DESKTOP || isCsv) && (
-                      <input
-                        type="file"
-                        hidden
-                        accept={isCsv ? ".csv" : ".cmbackup,.zip"}
-                        onChange={(event) => {
-                          setFile(event.target.files[0] ?? null);
-                          setError("");
-                        }}
-                      />
-                    )}
                   </Button>
 
                   {!isCsv && (

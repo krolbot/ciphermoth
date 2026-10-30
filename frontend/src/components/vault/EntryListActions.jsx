@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   ArrowUpRightFromSquare,
   Copy,
@@ -12,7 +11,7 @@ import {
   StarFill,
   TrashBin,
 } from "@gravity-ui/icons";
-import { Flex, Text, Button, Icon, Menu, MenuDivider, MenuItem, Tooltip } from "@gravity-ui/uikit";
+import { Flex, Button, Icon, Menu, MenuDivider, MenuItem, Tooltip } from "@gravity-ui/uikit";
 import { useTranslation } from "react-i18next";
 
 import TotpCell from "./TotpCell";
@@ -25,6 +24,7 @@ const QuickAction = ({ label, icon, onClick, selected = false }) => (
       view="flat-secondary"
       size="xl"
       aria-label={label}
+
       onClick={onClick}
       selected={selected}
     >
@@ -41,9 +41,10 @@ const EntryListActions = ({
   onShare,
   onToggleFavorite,
   onMenuOpenChange,
+  revealed,
+  onRevealChange,
 }) => {
   const { t } = useTranslation();
-  const [revealed, setRevealed] = useState(false);
   const isNote = entry.kind === "note";
   const writable = entry.access === "owner" || entry.access === "write";
   const valueLabel = t(isNote ? "entry.labels.note" : "common.fields.password");
@@ -77,7 +78,7 @@ const EntryListActions = ({
         label={revealLabel}
         icon={revealed ? EyeSlash : Eye}
         selected={revealed}
-        onClick={() => setRevealed((value) => !value)}
+        onClick={() => onRevealChange(!revealed)}
       />
       <QuickAction label={copyLabel} icon={Copy} onClick={() => onCopy(entry.password_value)} />
       {!isNote && entry.totp_secret && <TotpCell secret={entry.totp_secret} onCopy={onCopy} />}
@@ -129,11 +130,6 @@ const EntryListActions = ({
           </MenuItem>
         )}
       </Menu>
-      {revealed && (
-        <Text as="p" color="secondary" wordBreak="break-word">
-          {entry.password_value}
-        </Text>
-      )}
     </Flex>
   );
 };

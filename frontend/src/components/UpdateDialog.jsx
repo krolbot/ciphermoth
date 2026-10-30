@@ -1,4 +1,5 @@
-import { Flex, Text, Dialog, Label } from "@gravity-ui/uikit";
+import { ArrowRight } from "@gravity-ui/icons";
+import { Dialog, Flex, Icon, Label, Link, Text } from "@gravity-ui/uikit";
 import { useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
@@ -35,23 +36,23 @@ const UpdateDialog = ({ open, onClose }) => {
             aria-label={t("updateDialog.title")}
           >
             <Label size="s">{current ? `v${stripV(current)}` : "-"}</Label>
-            <span aria-hidden="true">→</span>
+            <Icon data={ArrowRight} size={16} />
             <Label size="s" theme="success">
               {latest ?? "-"}
             </Label>
           </Flex>
 
           {releaseUrl && (
-            <a href={releaseUrl} target="_blank" rel="noopener noreferrer">
+            <Link href={releaseUrl} target="_blank" rel="noopener noreferrer">
               {t("updateDialog.releaseNotes")}
-            </a>
+            </Link>
           )}
 
           <Flex direction="column" gap="spacing-3" minWidth="0">
-            <Text as="p" color="secondary" wordBreak="break-word">
+            <Text as="div" color="secondary" wordBreak="break-word">
               {t("updateDialog.manualBackupDescription")}
             </Text>
-            <Text as="pre" variant="code-1" whiteSpace="break-spaces" wordBreak="break-all">
+            <Text as="div" variant="code-1" whiteSpace="break-spaces" wordBreak="break-all">
               {MANUAL_UPDATE_COMMAND}
             </Text>
           </Flex>

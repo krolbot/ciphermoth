@@ -821,9 +821,14 @@ for (const [width, authenticated] of [
             await protocol.send("Emulation.setSafeAreaInsetsOverride", {
                 insets: { top: 0, left: 0, bottom: 34, right: 20 },
             });
-            const toggle = page.getByRole("button", {
-                name: new RegExp(`${t.theme.switchToLight}$`),
-            });
+            const toggle = authenticated
+                ? page
+                      .locator('[data-qa="navigation-preferences"]')
+                      .getByRole("button")
+                      .filter({ hasText: t.theme.label })
+                : page.getByRole("button", {
+                      name: new RegExp(`${t.theme.switchToLight}$`),
+                  });
             await toggle.waitFor();
             const toggleHandle = await toggle.elementHandle();
             assert.ok(toggleHandle);
@@ -863,11 +868,25 @@ for (const [width, authenticated] of [
                     before.y + before.height <= before.viewportHeight,
             );
             await toggle.click();
-            await page
-                .getByRole("button", {
-                    name: new RegExp(`${t.theme.switchToDark}$`),
-                })
-                .waitFor();
+            if (authenticated) {
+                await page
+                    .getByRole("menuitemcheckbox", {
+                        name: t.theme.light,
+                        exact: true,
+                    })
+                    .click();
+                await page
+                    .locator('[data-qa="navigation-preferences"]')
+                    .getByRole("button")
+                    .filter({ hasText: t.theme.light })
+                    .waitFor();
+            } else {
+                await page
+                    .getByRole("button", {
+                        name: new RegExp(`${t.theme.switchToDark}$`),
+                    })
+                    .waitFor();
+            }
             assert.equal(
                 await page.evaluate(() =>
                     localStorage.getItem("ciphermoth-theme"),

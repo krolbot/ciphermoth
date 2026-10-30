@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "@gravity-ui/icons";
 import {
+  Box,
   Flex,
   Row,
   Col,
@@ -337,9 +338,9 @@ const PasswordsPage = () => {
         justifyContent="space-between"
       >
         <Flex alignItems="baseline" gap="spacing-3" wrap="wrap" minWidth="0">
-          <Text as="h1" variant="header-1" style={{ margin: 0 }}>
-            {t("vault.title")}
-          </Text>
+          <Box as="h1" margin="0">
+            <Text variant="header-1">{t("vault.title")}</Text>
+          </Box>
           <Text color="secondary" wordBreak="break-word" role="status">
             {subtitle}
           </Text>

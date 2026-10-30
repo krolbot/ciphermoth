@@ -73,15 +73,15 @@ export default function DesktopUpdateDialog({ open, onClose }) {
       <Dialog.Header caption={t("updateDialog.title")} />
       <Dialog.Body>
         <Flex direction="column" gap="spacing-3" minWidth="0">
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             v{current} → v{latest}
           </Text>
           {notes && (
-            <Text as="p" color="secondary" wordBreak="break-word">
+            <Text as="div" color="secondary" wordBreak="break-word">
               {notes}
             </Text>
           )}
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {canInstall
               ? t("desktopUpdate.installDescription")
               : t("desktopUpdate.debianDescription")}
@@ -89,9 +89,9 @@ export default function DesktopUpdateDialog({ open, onClose }) {
           {busy && (
             <Flex direction="column" gap="spacing-3" minWidth="0" role="status">
               {progress === null ? <Loader size="m" /> : <Progress value={progress} />}
-              <span>
+              <Text color="secondary">
                 {t(installing ? "desktopUpdate.installing" : "desktopUpdate.downloading")}
-              </span>
+              </Text>
             </Flex>
           )}
           {error && <Alert theme="info" view="outlined" message={error} />}

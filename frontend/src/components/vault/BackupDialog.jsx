@@ -53,7 +53,7 @@ const BackupDialog = ({ open, onClose, onBackup }) => {
       <Dialog.Header caption={t("backup.title")} id={titleId} />
       <Dialog.Body>
         <Flex direction="column" gap="spacing-5" minWidth="0">
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {t("backup.descriptionFull")}
           </Text>
           <PasswordField

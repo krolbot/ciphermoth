@@ -3,19 +3,24 @@ import { Link, useLocation } from "react-router-dom";
 import {
   ArrowRightFromSquare,
   ArrowRotateRight,
+  ArrowDownToLine,
   ArrowUpFromLine,
   Bars,
-  CloudArrowUpIn,
+  ChevronDown,
   FolderOpen,
   Gear,
+  Globe,
   HeartPulse,
   Key,
   Lock,
+  Moon,
   Persons,
+  Sun,
   TrashBin,
   Xmark,
 } from "@gravity-ui/icons";
 import {
+  Avatar,
   Box,
   Button,
   Divider,
@@ -23,6 +28,8 @@ import {
   Flex,
   Icon,
   List,
+  Menu,
+  MenuItem,
   Text,
   useLayoutContext,
 } from "@gravity-ui/uikit";
@@ -30,31 +37,23 @@ import { useStoreActions, useStoreState } from "easy-peasy";
 import { useTranslation } from "react-i18next";
 
 import { endSession } from "../api/session";
+import { useColorMode } from "../hooks/useColorMode";
 import { getCurrentUser } from "../utils";
 
 import EnvBadge from "./EnvBadge";
-import LanguageSwitcher from "./LanguageSwitcher";
 import BrandMark from "./BrandMark";
 import PasswordChangeDialog from "./PasswordChangeDialog";
 import SettingsModal from "./SettingsModal";
-import ThemeToggle from "./ThemeToggle";
 import UpdateDialog from "./UpdateDialog";
 
 const Brand = ({ version, onClick }) => {
   const { i18n } = useTranslation();
   const name = i18n.resolvedLanguage?.startsWith("ru") ? "Недра" : "Nedra";
   return (
-    <Flex
-      as={Link}
-      to="/passwords"
-      onClick={onClick}
-      alignItems="center"
-      gap="spacing-2"
-      minHeight="44px"
-      minWidth="0"
-      style={{ color: "var(--g-color-text-primary)", textDecoration: "none" }}
-    >
-      <BrandMark data-qa="brand-mark" />
+    <Button component={Link} to="/passwords" onClick={onClick} view="flat" size="xl">
+      <Button.Icon>
+        {({ size }) => <BrandMark width={size} height={size} data-qa="brand-mark" />}
+      </Button.Icon>
       <Text variant="subheader-2" qa="brand-title">
         {name}
       </Text>
@@ -63,18 +62,22 @@ const Brand = ({ version, onClick }) => {
           v{String(version).replace(/^v/, "")}
         </Text>
       )}
-    </Flex>
+    </Button>
   );
 };
 
 const TopMenu = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
+  const { mode, setMode } = useColorMode();
 
   const { isMediaActive } = useLayoutContext();
   const desktop = isMediaActive("l");
   const currentUser = getCurrentUser();
   const admin = currentUser?.role === "admin";
+  const language = (i18n.resolvedLanguage ?? i18n.language)?.startsWith("ru") ? "ru" : "en";
+  const languageLabel = t(language === "ru" ? "language.russian" : "language.english");
+  const themeLabel = t(`theme.${mode}`);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -132,7 +135,7 @@ const TopMenu = () => {
   const navItems = [
     { id: "/passwords", label: t("vault.title"), icon: Lock },
     { id: "/passwords?tool=folders", label: t("folderAccess.manageShort"), icon: FolderOpen },
-    { id: "/passwords?tool=backup", label: t("vault.backup"), icon: CloudArrowUpIn },
+    { id: "/passwords?tool=backup", label: t("vault.backup"), icon: ArrowDownToLine },
     { id: "/passwords?tool=import", label: t("vault.import"), icon: ArrowUpFromLine },
     { id: "/passwords?tool=health", label: t("vault.health"), icon: HeartPulse },
     { id: "/passwords?tool=trash", label: t("vault.trash"), icon: TrashBin },
@@ -200,38 +203,99 @@ const TopMenu = () => {
     <Flex
       as="footer"
       direction="column"
-      gap="spacing-3"
-      padding="spacing-4"
+      gap="spacing-2"
+      padding="spacing-3"
       flexShrink={0}
       qa="navigation-footer"
-      style={{
-        borderTop: "1px solid var(--g-color-line-generic)",
-        paddingBottom: "max(var(--g-spacing-4), env(safe-area-inset-bottom))",
-      }}
     >
-      <Flex alignItems="center" justifyContent="space-between" gap="spacing-2" minWidth="0">
+      <Flex alignItems="center" gap="spacing-3" minWidth="0" qa="navigation-account">
+        <Avatar text={currentUser?.username ?? "?"} size="m" aria-label={currentUser?.username} />
         <Flex direction="column" gap="spacing-1" minWidth="0">
           <Text variant="subheader-1" ellipsis>
             {currentUser?.username}
           </Text>
-          <Text color="secondary" variant="caption-2" ellipsis>
-            {t(`users.roles.${currentUser?.role}`)}
-          </Text>
-        </Flex>
-        <EnvBadge />
-      </Flex>
-      <Flex direction="column" gap="spacing-2" qa="navigation-preferences">
-        <Flex minWidth="0">
-          <LanguageSwitcher width="max" />
-        </Flex>
-        <Flex minWidth="0">
-          <ThemeToggle showLabel width="max" />
+          <Flex alignItems="center" gap="spacing-1" wrap>
+            <Text color="secondary" variant="caption-2" ellipsis>
+              {t(`users.roles.${currentUser?.role}`)}
+            </Text>
+            <EnvBadge />
+          </Flex>
         </Flex>
       </Flex>
-      <Button view="flat-secondary" size="xl" width="max" onClick={logOut}>
-        <Icon data={ArrowRightFromSquare} />
+      <Flex direction="column" qa="navigation-preferences">
+        <Menu
+          placement="top-end"
+          trigger={(triggerProps, triggerRef) => (
+            <List.ItemView
+              {...triggerProps}
+              ref={triggerRef}
+              component="button"
+              type="button"
+              role="button"
+              size="xl"
+              startContent={<Icon data={Globe} />}
+              endContent={
+                <Flex alignItems="center" gap="spacing-1">
+                  <Text color="secondary" variant="body-1">
+                    {languageLabel}
+                  </Text>
+                  <Icon data={ChevronDown} size={14} />
+                </Flex>
+              }
+            >
+              {t("language.label")}
+            </List.ItemView>
+          )}
+        >
+          <MenuItem selected={language === "ru"} onClick={() => i18n.changeLanguage("ru")}>
+            {t("language.russian")}
+          </MenuItem>
+          <MenuItem selected={language === "en"} onClick={() => i18n.changeLanguage("en")}>
+            {t("language.english")}
+          </MenuItem>
+        </Menu>
+        <Menu
+          placement="top-end"
+          trigger={(triggerProps, triggerRef) => (
+            <List.ItemView
+              {...triggerProps}
+              ref={triggerRef}
+              component="button"
+              type="button"
+              role="button"
+              size="xl"
+              startContent={<Icon data={mode === "dark" ? Moon : Sun} />}
+              endContent={
+                <Flex alignItems="center" gap="spacing-1">
+                  <Text color="secondary" variant="body-1">
+                    {themeLabel}
+                  </Text>
+                  <Icon data={ChevronDown} size={14} />
+                </Flex>
+              }
+            >
+              {t("theme.label")}
+            </List.ItemView>
+          )}
+        >
+          <MenuItem selected={mode === "light"} onClick={() => setMode("light")}>
+            {t("theme.light")}
+          </MenuItem>
+          <MenuItem selected={mode === "dark"} onClick={() => setMode("dark")}>
+            {t("theme.dark")}
+          </MenuItem>
+        </Menu>
+      </Flex>
+      <Divider />
+      <List.ItemView
+        component="button"
+        type="button"
+        size="xl"
+        onClick={logOut}
+        startContent={<Icon data={ArrowRightFromSquare} />}
+      >
         {t("auth.logOut")}
-      </Button>
+      </List.ItemView>
     </Flex>
   );
   const shell = (mobile) => (
@@ -278,6 +342,7 @@ const TopMenu = () => {
         <Divider />
         {utilities}
       </Flex>
+      <Divider />
       {profile}
     </Flex>
   );
@@ -285,7 +350,7 @@ const TopMenu = () => {
   return (
     <>
       {desktop ? (
-        <Box
+        <Flex
           as="aside"
           width="288px"
           flexShrink={0}
@@ -293,32 +358,34 @@ const TopMenu = () => {
           top="0"
           height="100dvh"
           backgroundColor="generic"
-          style={{ borderRight: "1px solid var(--g-color-line-generic)" }}
         >
-          {shell(false)}
-        </Box>
+          <Box flexGrow={1} minWidth="0">
+            {shell(false)}
+          </Box>
+          <Divider orientation="vertical" />
+        </Flex>
       ) : (
-        <Flex
-          as="header"
-          alignItems="center"
-          gap="spacing-3"
-          paddingInline="spacing-3"
-          paddingBlock="spacing-2"
-          qa="mobile-header"
-          style={{ borderBottom: "1px solid var(--g-color-line-generic)" }}
-        >
-          <Button
-            ref={mobileMenuButton}
-            qa="burger"
-            type="button"
-            view="flat-secondary"
-            size="xl"
-            aria-label={t("navigation.more")}
-            onClick={() => setMobileNavOpen(true)}
+        <Flex as="header" direction="column" qa="mobile-header">
+          <Flex
+            alignItems="center"
+            gap="spacing-3"
+            paddingInline="spacing-3"
+            paddingBlock="spacing-2"
           >
-            <Icon data={Bars} />
-          </Button>
-          <Brand />
+            <Button
+              ref={mobileMenuButton}
+              qa="burger"
+              type="button"
+              view="flat-secondary"
+              size="xl"
+              aria-label={t("navigation.more")}
+              onClick={() => setMobileNavOpen(true)}
+            >
+              <Icon data={Bars} />
+            </Button>
+            <Brand />
+          </Flex>
+          <Divider />
         </Flex>
       )}
 

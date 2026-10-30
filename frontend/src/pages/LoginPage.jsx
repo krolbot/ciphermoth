@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   Alert,
+  Box,
   Button,
   Card,
   Checkbox,
@@ -21,8 +22,6 @@ import PasswordField from "../components/PasswordField";
 import ThemeToggle from "../components/ThemeToggle";
 import { getMasterPasswordStrength } from "../lib/passwordStrength";
 import { LOGOUT_NOTICE } from "../utils";
-
-const STRENGTH_THEME = { error: "danger", warning: "warning", success: "success" };
 
 const LoginPage = () => {
   const { t, i18n } = useTranslation();
@@ -120,9 +119,9 @@ const LoginPage = () => {
               <LanguageSwitcher />
             </Flex>
           </Flex>
-          <Text as="h1" variant="header-1" style={{ margin: 0 }}>
-            {t(initialized ? "auth.unlock" : "auth.setupTitle")}
-          </Text>
+          <Box as="h1" margin="0">
+            <Text variant="header-1">{t(initialized ? "auth.unlock" : "auth.setupTitle")}</Text>
+          </Box>
           <Text color="secondary">{t(initialized ? "auth.tagline" : "auth.setupDescription")}</Text>
           {notice && <Alert theme="info" message={notice} />}
           {error && <Alert theme="danger" message={error} />}
@@ -162,7 +161,7 @@ const LoginPage = () => {
           />
           {!initialized && value && strength && (
             <Flex direction="column" gap="spacing-2" aria-live="polite">
-              <Progress value={strength.value} theme={STRENGTH_THEME[strength.color]} size="s" />
+              <Progress value={strength.value} theme={strength.theme} size="s" />
               <Text color="secondary">{t(strength.labelKey)}</Text>
             </Flex>
           )}

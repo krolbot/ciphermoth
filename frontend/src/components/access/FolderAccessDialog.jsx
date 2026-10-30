@@ -260,7 +260,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
         <Dialog.Body>
           <Flex direction="column" gap="spacing-5" minWidth="0">
             <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-              <Text as="h3" variant="subheader-2">
+              <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                 {t("folderAccess.createFolder")}
               </Text>
               <Flex
@@ -290,14 +290,14 @@ const FolderAccessDialog = ({ open, onClose }) => {
 
             <Divider />
             {folders.length === 0 ? (
-              <Text as="p" color="secondary" wordBreak="break-word">
+              <Text as="div" color="secondary" wordBreak="break-word">
                 {t("folderAccess.empty")}
               </Text>
             ) : (
               <Flex direction="column" gap="spacing-6" minWidth="0">
                 <Flex direction="column" gap="spacing-4" minWidth="0">
                   <Flex direction="column" gap="spacing-4">
-                    <Text as="h3" variant="subheader-2">
+                    <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                       {t("common.fields.folder")}
                     </Text>
                     <Select
@@ -328,10 +328,10 @@ const FolderAccessDialog = ({ open, onClose }) => {
                         as="header"
                       >
                         <Flex direction="column" gap="spacing-3" minWidth="0">
-                          <Text as="h3" variant="subheader-2">
+                          <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                             {selected?.name}
                           </Text>
-                          <Text as="p" color="secondary" wordBreak="break-word">
+                          <Text as="div" color="secondary" wordBreak="break-word">
                             {t("folderAccess.ownerLabel", { owner: selected?.owner_username })}
                           </Text>
                         </Flex>
@@ -402,11 +402,11 @@ const FolderAccessDialog = ({ open, onClose }) => {
                     {selected?.can_manage && (
                       <>
                         <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                          <Text as="h3" variant="subheader-2">
+                          <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                             {t("folderAccess.grants")}
                           </Text>
                           {grants.length === 0 ? (
-                            <Text as="p" color="secondary" wordBreak="break-word">
+                            <Text as="div" color="secondary" wordBreak="break-word">
                               {t("folderAccess.noGrants")}
                             </Text>
                           ) : (
@@ -443,7 +443,7 @@ const FolderAccessDialog = ({ open, onClose }) => {
                           as="section"
                           paddingBlock="spacing-3"
                         >
-                          <Text as="h3" variant="subheader-2">
+                          <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                             {t("sharing.grantAccess")}
                           </Text>
                           <Grid
@@ -518,11 +518,11 @@ const FolderAccessDialog = ({ open, onClose }) => {
 
                         <Divider />
                         <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                          <Text as="h3" variant="subheader-2">
+                          <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                             {t("folderAccess.audit")}
                           </Text>
                           {audit.length === 0 ? (
-                            <Text as="p" color="secondary" wordBreak="break-word">
+                            <Text as="div" color="secondary" wordBreak="break-word">
                               {t("folderAccess.noAudit")}
                             </Text>
                           ) : (

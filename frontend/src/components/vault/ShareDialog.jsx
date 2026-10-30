@@ -92,7 +92,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
       <Dialog.Header caption={t("sharing.manage")} />
       <Dialog.Body>
         <Flex direction="column" gap="spacing-5" minWidth="0">
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {entry?.password_name}
           </Text>
           {error && <Alert theme="danger" view="outlined" message={error} />}
@@ -100,11 +100,11 @@ const ShareDialog = ({ entry, open, onClose }) => {
           <Row gap="spacing-6">
             <Col size={{ xs: 12, m: 6 }} minWidth="0">
               <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                <Text as="h3" variant="subheader-2">
+                <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                   {t("sharing.currentAccess")}
                 </Text>
                 {shares.length === 0 ? (
-                  <Text as="p" color="secondary" wordBreak="break-word">
+                  <Text as="div" color="secondary" wordBreak="break-word">
                     {t("sharing.ownerOnly")}
                   </Text>
                 ) : (
@@ -164,7 +164,7 @@ const ShareDialog = ({ entry, open, onClose }) => {
             </Col>
             <Col size={{ xs: 12, m: 6 }} minWidth="0">
               <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                <Text as="h3" variant="subheader-2">
+                <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                   {t("sharing.grantAccess")}
                 </Text>
                 <Flex direction="column" gap="spacing-3" minWidth="0">

@@ -8,8 +8,6 @@ import { getMasterPasswordStrength } from "../lib/passwordStrength";
 import { setCurrentUser, setSessionToken } from "../utils";
 import PasswordField from "./PasswordField";
 
-const STRENGTH_THEME = { error: "danger", warning: "warning", success: "success" };
-
 const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) => {
   const { t } = useTranslation();
   const titleId = useId();
@@ -78,7 +76,7 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
       <Dialog.Body>
         <Flex direction="column" gap="spacing-5" minWidth="0">
           {required && (
-            <Text as="p" color="secondary" wordBreak="break-word">
+            <Text as="div" color="secondary" wordBreak="break-word">
               {t("auth.passwordChangeRequired")}
             </Text>
           )}
@@ -112,7 +110,7 @@ const PasswordChangeDialog = ({ open, onClose, required = false, onChanged }) =>
 
               role="status"
             >
-              <Progress size="s" theme={STRENGTH_THEME[strength.color]} value={strength.value} />
+              <Progress size="s" theme={strength.theme} value={strength.value} />
             </Flex>
           )}
           <PasswordField

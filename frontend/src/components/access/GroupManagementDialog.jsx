@@ -145,7 +145,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
               as="section"
               paddingBlock="spacing-3"
             >
-              <Text as="h3" variant="subheader-2">
+              <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                 {t("groups.create")}
               </Text>
               <Flex
@@ -174,7 +174,7 @@ const GroupManagementDialog = ({ open, onClose }) => {
             </Flex>
 
             {groups.length === 0 ? (
-              <Text as="p" color="secondary" wordBreak="break-word">
+              <Text as="div" color="secondary" wordBreak="break-word">
                 {t("groups.empty")}
               </Text>
             ) : (
@@ -246,11 +246,11 @@ const GroupManagementDialog = ({ open, onClose }) => {
                 <Col size={{ xs: 12, m: 7 }} minWidth="0">
                   <Flex direction="column" gap="spacing-5">
                     <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                      <Text as="h3" variant="subheader-2">
+                      <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                         {t("groups.members")}
                       </Text>
                       {members.length === 0 ? (
-                        <Text as="p" color="secondary" wordBreak="break-word">
+                        <Text as="div" color="secondary" wordBreak="break-word">
                           {t("groups.noMembers")}
                         </Text>
                       ) : (
@@ -333,11 +333,11 @@ const GroupManagementDialog = ({ open, onClose }) => {
 
                     <Divider />
                     <Flex direction="column" gap="spacing-3" minWidth="0" as="section">
-                      <Text as="h3" variant="subheader-2">
+                      <Text as="div" role="heading" aria-level={3} variant="subheader-2">
                         {t("folderAccess.audit")}
                       </Text>
                       {audit.length === 0 ? (
-                        <Text as="p" color="secondary" wordBreak="break-word">
+                        <Text as="div" color="secondary" wordBreak="break-word">
                           {t("folderAccess.noAudit")}
                         </Text>
                       ) : (
@@ -351,13 +351,13 @@ const GroupManagementDialog = ({ open, onClose }) => {
                               justifyContent="space-between"
                               key={event.id}
                             >
-                              <span>
+                              <Text wordBreak="break-word">
                                 {t(`folderAccess.actions.${event.action}`, {
                                   defaultValue: event.action,
                                   actor: event.actor_username || t("folderAccess.systemActor"),
                                   target: event.target_username || "",
                                 })}
-                              </span>
+                              </Text>
                               <Text
                                 as="time"
                                 variant="caption-2"

@@ -10,11 +10,11 @@ const charClasses = (password) => ({
 });
 
 const STRENGTH_LEVELS = [
-  { labelKey: "strength.veryWeak", color: "#d15b5b", recommend: true },
-  { labelKey: "strength.weak", color: "#d15b5b", recommend: true },
-  { labelKey: "strength.fair", color: "#e0982f", recommend: true },
-  { labelKey: "strength.strong", color: "#1f8a5b", recommend: false },
-  { labelKey: "strength.veryStrong", color: "#1f8a5b", recommend: false },
+  { labelKey: "strength.veryWeak", recommend: true },
+  { labelKey: "strength.weak", recommend: true },
+  { labelKey: "strength.fair", recommend: true },
+  { labelKey: "strength.strong", recommend: false },
+  { labelKey: "strength.veryStrong", recommend: false },
 ];
 
 // 5-level scale used across the vault (strength bar + row icons).
@@ -38,18 +38,18 @@ export const getPasswordStrength = (password) => {
   return { level, ...STRENGTH_LEVELS[level] };
 };
 
-// 4-level scale for the master password. `value` (0-100) drives the LinearProgress
-// and the create-vault threshold; `color` is an MUI severity name.
+// 4-level scale for the master password. `value` drives Gravity Progress and
+// the create-vault threshold; `theme` is a native Gravity severity.
 export const getMasterPasswordStrength = (password) => {
   if (!password) return null;
 
   const classes = charClasses(password);
   const variety = Object.values(classes).filter(Boolean).length;
 
-  if (password.length < 8) return { labelKey: "strength.tooShort", value: 20, color: "error" };
+  if (password.length < 8) return { labelKey: "strength.tooShort", value: 20, theme: "danger" };
   if (password.length < 12 || variety < 2)
-    return { labelKey: "strength.weak", value: 40, color: "error" };
+    return { labelKey: "strength.weak", value: 40, theme: "danger" };
   if (password.length < 16 || variety < 3)
-    return { labelKey: "strength.fair", value: 70, color: "warning" };
-  return { labelKey: "strength.strong", value: 100, color: "success" };
+    return { labelKey: "strength.fair", value: 70, theme: "warning" };
+  return { labelKey: "strength.strong", value: 100, theme: "success" };
 };

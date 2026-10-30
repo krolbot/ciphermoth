@@ -728,20 +728,17 @@ for (const width of [375, 1440]) {
                 await page.getByRole("dialog").count(),
                 width >= 1080 ? 1 : 0,
             );
-            assert.equal(
-                await editor
-                    .getByLabel("Folder (optional)", { exact: true })
-                    .inputValue(),
+            const folder = editor.getByRole("combobox", {
+                name: "Folder (optional)",
+                exact: true,
+            });
+            assert.equal((await folder.textContent()).trim(), "Work");
+            await folder.click();
+            assert.deepEqual(await page.getByRole("option").allTextContents(), [
                 "Work",
-            );
-            assert.deepEqual(
-                await editor
-                    .getByLabel("Folder (optional)", { exact: true })
-                    .evaluate((input) =>
-                        [...input.list.options].map((option) => option.value),
-                    ),
-                ["Work", "Personal"],
-            );
+                "Personal",
+            ]);
+            await page.keyboard.press("Escape");
             await screenshot(page, `entry-create-${width}.png`);
 
             const createButton = editor.getByRole("button", {
@@ -777,17 +774,18 @@ for (const width of [375, 1440]) {
             await page.getByRole("option", { name: /^Shared/ }).click();
             await openAdd(page, width);
             const editor = entryEditor(page, width);
-            const folder = editor.getByLabel("Folder (optional)", {
+            const folder = editor.getByRole("combobox", {
+                name: "Folder (optional)",
                 exact: true,
             });
             await folder.waitFor();
-            assert.equal(await folder.inputValue(), "");
-            assert.deepEqual(
-                await folder.evaluate((input) =>
-                    [...input.list.options].map((option) => option.value),
-                ),
-                ["Work", "Personal"],
-            );
+            assert.equal((await folder.textContent()).trim(), "Work, Personal");
+            await folder.click();
+            assert.deepEqual(await page.getByRole("option").allTextContents(), [
+                "Work",
+                "Personal",
+            ]);
+            await page.keyboard.press("Escape");
             await editor
                 .getByRole("button", { name: "Cancel", exact: true })
                 .click();
@@ -1051,21 +1049,6 @@ for (const width of [375, 1440]) {
                 exact: true,
             });
             assert.equal(await expiry.getAttribute("type"), "datetime-local");
-            await expiry.evaluate((input) => {
-                input.showPicker = () => {
-                    input.dataset.pickerOpened = "true";
-                };
-            });
-            const chooseExpiry = dialog.getByRole("button", {
-                name: "Choose expiration date and time",
-                exact: true,
-            });
-            await visibleTouchAction(page, chooseExpiry);
-            await chooseExpiry.click();
-            assert.equal(
-                await expiry.getAttribute("data-picker-opened"),
-                "true",
-            );
             await dialog
                 .getByRole("button", { name: "Grant access", exact: true })
                 .click();
@@ -1554,6 +1537,37 @@ test("desktop quick actions and details preserve ACL and confirmation boundaries
         await github
             .getByText(entries[0].password_value, { exact: true })
             .waitFor();
+        assert.equal(
+            await github
+                .locator('[data-qa="entry-revealed-separator"]')
+                .count(),
+            1,
+        );
+        const revealedGeometry = await github.evaluate((row) => {
+            const metadata = row
+                .querySelector('[data-qa="entry-metadata"]')
+                .getBoundingClientRect();
+            const revealed = row
+                .querySelector('[data-qa="entry-revealed-value"]')
+                .getBoundingClientRect();
+            return {
+                metadataBottom: metadata.bottom,
+                metadataLeft: metadata.left,
+                revealedTop: revealed.top,
+                revealedLeft: revealed.left,
+            };
+        });
+        assert.ok(
+            revealedGeometry.revealedTop >= revealedGeometry.metadataBottom,
+            JSON.stringify(revealedGeometry),
+        );
+        assert.ok(
+            Math.abs(
+                revealedGeometry.revealedLeft - revealedGeometry.metadataLeft,
+            ) <= 1,
+            JSON.stringify(revealedGeometry),
+        );
+        await viewportScreenshot(page, "entry-row-revealed-1440.png");
         await github
             .getByRole("button", { name: "Copy password", exact: true })
             .click();
@@ -1847,6 +1861,74 @@ for (const [width, language, theme] of [
         }
     });
 }
+
+test("profile footer shows and applies current language and theme", async () => {
+    const { context, page, errors } = await vault(375, "ru", "dark", entries, {
+        role: "admin",
+    });
+    try {
+        await page
+            .getByRole("button", { name: ruText.navigation.more, exact: true })
+            .click();
+        await settleAnimations(page);
+        const footer = page.locator('[data-qa="navigation-footer"]');
+        assert.equal(
+            await footer.locator('[data-qa="navigation-account"]').count(),
+            1,
+        );
+        await footer
+            .getByRole("button", {
+                name: new RegExp(
+                    `^${ruText.language.label}\\s+${ruText.language.russian}$`,
+                ),
+            })
+            .click();
+        await page
+            .getByRole("menuitemcheckbox", {
+                name: ruText.language.english,
+                exact: true,
+            })
+            .click();
+        await footer
+            .getByRole("button", {
+                name: new RegExp(
+                    `^${enText.language.label}\\s+${enText.language.english}$`,
+                ),
+            })
+            .waitFor();
+
+        await footer
+            .getByRole("button", {
+                name: new RegExp(
+                    `^${enText.theme.label}\\s+${enText.theme.dark}$`,
+                ),
+            })
+            .click();
+        await page
+            .getByRole("menuitemcheckbox", {
+                name: enText.theme.light,
+                exact: true,
+            })
+            .click();
+        await footer
+            .getByRole("button", {
+                name: new RegExp(
+                    `^${enText.theme.label}\\s+${enText.theme.light}$`,
+                ),
+            })
+            .waitFor();
+        assert.deepEqual(
+            await page.evaluate(() => ({
+                mode: document.documentElement.dataset.theme,
+                saved: localStorage.getItem("ciphermoth-theme"),
+            })),
+            { mode: "light", saved: "light" },
+        );
+        assert.deepEqual(errors, []);
+    } finally {
+        await context.close();
+    }
+});
 
 // Opt-in visual matrix uses exactly the synthetic API/session fixture above.
 // No backend, native runtime, real unlock, or external service is involved.
@@ -2145,6 +2227,38 @@ if (process.env.CIPHERMOTH_LAYOUT_MATRIX) {
                     }
                 }
                 const list = page.locator('[data-qa="entry-list"]');
+                const longRow = list
+                    .getByRole("row")
+                    .filter({ hasText: entries[3].password_name });
+                await longRow.scrollIntoViewIfNeeded();
+                const wrappedValues = await longRow.evaluate((row) => {
+                    const measure = (qa) => {
+                        const node = row.querySelector(`[data-qa="${qa}"]`);
+                        const bounds = node.getBoundingClientRect();
+                        return {
+                            height: bounds.height,
+                            lineHeight: Number.parseFloat(
+                                getComputedStyle(node).lineHeight,
+                            ),
+                            scrollWidth: node.scrollWidth,
+                            clientWidth: node.clientWidth,
+                        };
+                    };
+                    return {
+                        name: measure("entry-name"),
+                        primaryValue: measure("entry-primary-value"),
+                    };
+                });
+                for (const value of Object.values(wrappedValues)) {
+                    assert.ok(
+                        value.height >= value.lineHeight * 2 - 1,
+                        JSON.stringify(wrappedValues),
+                    );
+                    assert.ok(
+                        value.scrollWidth <= value.clientWidth + 1,
+                        JSON.stringify(wrappedValues),
+                    );
+                }
                 for (const [name, state] of [
                     ["GitHub", "details"],
                     ["Read-only account", "readonly"],

@@ -117,10 +117,10 @@ const UsersPage = () => {
         justifyContent="space-between"
       >
         <Flex direction="column" gap="spacing-3" minWidth="0">
-          <Text as="h1" variant="header-1">
+          <Text as="div" role="heading" aria-level={1} variant="header-1">
             {t("users.title")}
           </Text>
-          <Text as="p" color="secondary" wordBreak="break-word">
+          <Text as="div" color="secondary" wordBreak="break-word">
             {t("users.subtitle")}
           </Text>
         </Flex>
@@ -175,6 +175,7 @@ const UsersPage = () => {
                     direction="column"
                     gap="spacing-4"
                     minWidth="0"
+                    padding="spacing-4"
                     as="article"
                     data-user-id={user.id}
                   >
@@ -310,7 +311,7 @@ const UsersPage = () => {
         </Col>
         <Col size={{ xs: 12, xl: 5 }}>
           <Flex direction="column" gap="spacing-4" minWidth="0" as="section">
-            <Text as="h2" variant="subheader-3">
+            <Text as="div" role="heading" aria-level={2} variant="subheader-3">
               {t("users.createAccount")}
             </Text>
             <Flex direction="column" gap="spacing-3" minWidth="0" as="form" onSubmit={add}>
@@ -395,7 +396,7 @@ const UsersPage = () => {
         <Dialog.Header caption={t("users.resetPasswordFor", { username: resetTarget?.username })} />
         <Dialog.Body>
           <Flex direction="column" gap="spacing-5" minWidth="0">
-            <Text as="p" color="secondary" wordBreak="break-word">
+            <Text as="div" color="secondary" wordBreak="break-word">
               {t("users.resetPasswordDescription")}
             </Text>
             <PasswordField

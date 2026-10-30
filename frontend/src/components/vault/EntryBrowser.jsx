@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Dialog,
+  Divider,
   Flex,
   Icon,
   Label,
@@ -32,6 +33,7 @@ const EntryBrowser = ({
   const desktop = isMediaActive("xl");
   const [selectedId, setSelectedId] = useState(null);
   const [menuEntryId, setMenuEntryId] = useState(null);
+  const [revealedEntryId, setRevealedEntryId] = useState(null);
   const listRef = useRef(null);
   const closeRef = useRef(null);
   const selectedTrigger = useRef(null);
@@ -42,10 +44,17 @@ const EntryBrowser = ({
   }, [selected, selectedId]);
 
   useEffect(() => {
+    if (revealedEntryId !== null && !entries.some((entry) => entry.id === revealedEntryId)) {
+      setRevealedEntryId(null);
+    }
+  }, [entries, revealedEntryId]);
+
+  useEffect(() => {
     if (requestedEntryId == null || !entries.some((entry) => entry.id === requestedEntryId)) return;
     selectedTrigger.current = listRef.current?.querySelector(
       `[data-entry-id="${requestedEntryId}"]`
     );
+    setRevealedEntryId(null);
     setSelectedId(requestedEntryId);
     onRequestedEntryOpen?.();
   }, [entries, requestedEntryId, onRequestedEntryOpen]);
@@ -136,6 +145,7 @@ const EntryBrowser = ({
             selectedIds={selected ? [String(selected.id)] : []}
             onItemAction={(_id, entry, event) => {
               selectedTrigger.current = event.currentTarget;
+              setRevealedEntryId(null);
               setSelectedId(entry.id);
             }}
             renderItem={(ctx, { getItemProps, getItemViewProps, getCellProps }) => (
@@ -145,24 +155,51 @@ const EntryBrowser = ({
                 hovered={menuEntryId === ctx.item.id ? true : undefined}
                 startContent={<Icon data={ctx.item.kind === "note" ? FileText : Key} />}
                 description={
-                  <Flex gap="spacing-2" wrap="wrap" alignItems="center">
-                    <Text ellipsis>
-                      {ctx.item.kind === "note"
-                        ? t("entry.kind.note")
-                        : ctx.item.username || ctx.item.url || t("entry.kind.login")}
-                    </Text>
-                    {ctx.item.access === "read" && (
-                      <Label size="s">{t("sharing.readOnlyAccess")}</Label>
-                    )}
-                    {ctx.item.folder && (
-                      <Text ellipsis color="secondary">
-                        {ctx.item.folder}
+                  <Flex direction="column" gap="spacing-2" minWidth="0" width="100%">
+                    <Flex gap="spacing-2" wrap="wrap" alignItems="center" qa="entry-metadata">
+                      <Text wordBreak="break-all" qa="entry-primary-value">
+                        {ctx.item.kind === "note"
+                          ? t("entry.kind.note")
+                          : ctx.item.username || ctx.item.url || t("entry.kind.login")}
                       </Text>
-                    )}
-                    {ctx.item.attachment_count > 0 && (
-                      <Text>
-                        <Icon data={Paperclip} size={12} /> {ctx.item.attachment_count}
-                      </Text>
+                      {ctx.item.access === "read" && (
+                        <Label size="s">{t("sharing.readOnlyAccess")}</Label>
+                      )}
+                      {ctx.item.folder && (
+                        <Text wordBreak="break-word" color="secondary">
+                          {ctx.item.folder}
+                        </Text>
+                      )}
+                      {ctx.item.attachment_count > 0 && (
+                        <Text>
+                          <Icon data={Paperclip} size={12} /> {ctx.item.attachment_count}
+                        </Text>
+                      )}
+                    </Flex>
+                    {revealedEntryId === ctx.item.id && (
+                      <Flex
+                        direction="column"
+                        gap="spacing-1"
+                        minWidth="0"
+                        qa="entry-revealed-value"
+                      >
+                        <Divider qa="entry-revealed-separator" />
+                        <Text variant="caption-2" color="secondary">
+                          {t(
+                            ctx.item.kind === "note"
+                              ? "entry.labels.note"
+                              : "common.fields.password"
+                          )}
+                        </Text>
+                        <Text
+                          as="code"
+                          variant="code-1"
+                          whiteSpace="break-spaces"
+                          wordBreak="break-all"
+                        >
+                          {ctx.item.password_value}
+                        </Text>
+                      </Flex>
                     )}
                   </Flex>
                 }
@@ -173,16 +210,22 @@ const EntryBrowser = ({
                         entry={ctx.item}
                         onCopy={onCopy}
                         {...actions}
+                        revealed={revealedEntryId === ctx.item.id}
+                        onRevealChange={(revealed) =>
+                          setRevealedEntryId(revealed ? ctx.item.id : null)
+                        }
                         onMenuOpenChange={(open) => setMenuEntryId(open ? ctx.item.id : null)}
                       />
                     </Box>
                   ) : undefined
                 }
               >
-                <span {...getCellProps()}>
-                  <Text ellipsis>{ctx.item.password_name}</Text>
+                <Flex {...getCellProps()} alignItems="center" gap="spacing-1" minWidth="0">
+                  <Text wordBreak="break-word" qa="entry-name">
+                    {ctx.item.password_name}
+                  </Text>
                   {ctx.item.favorite && <Icon data={StarFill} size={12} />}
-                </span>
+                </Flex>
               </List.ItemView>
             )}
           />

@@ -45,14 +45,12 @@ const TotpCell = ({ secret, onCopy }) => {
         aria-label={`${t("totp.copy")} ${code.slice(0, 3)} ${code.slice(3)} ${remaining}s`}
         onClick={() => onCopy?.(code)}
       >
-        <span>
-          <Text variant="code-1">
-            {code.slice(0, 3)} {code.slice(3)}
-          </Text>
-        </span>{" "}
-        <span aria-hidden="true">
-          <Text color={remaining <= 5 ? "warning" : "secondary"}>{remaining}s</Text>
-        </span>
+        <Text as="span" variant="code-1">
+          {code.slice(0, 3)} {code.slice(3)}
+        </Text>{" "}
+        <Text as="span" aria-hidden="true" color={remaining <= 5 ? "warning" : "secondary"}>
+          {remaining}s
+        </Text>
       </Button>
     </Tooltip>
   );

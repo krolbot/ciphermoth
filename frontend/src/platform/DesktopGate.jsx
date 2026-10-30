@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Text, Button } from "@gravity-ui/uikit";
+import { Button, Flex, Text } from "@gravity-ui/uikit";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 
@@ -63,17 +63,17 @@ export default function DesktopGate({ children }) {
   if (!IS_DESKTOP || status?.state === "ready") return children;
   if (status?.state === "failed")
     return (
-      <main>
-        <Text as="h1" variant="header-1">
+      <Flex as="main" direction="column" gap="spacing-4" padding="spacing-6">
+        <Text as="div" role="heading" aria-level={1} variant="header-1">
           {t("desktopGate.openFailedTitle")}
         </Text>
-        <Text as="p" color="secondary" wordBreak="break-word">
+        <Text as="div" color="secondary" wordBreak="break-word">
           {t("desktopGate.openFailedDescription")}
         </Text>
         <Button type="button" view="action" size="l" onClick={() => coreRestart()}>
           {t("common.actions.retry")}
         </Button>
-      </main>
+      </Flex>
     );
   return <LoadingScreen label={t("desktopGate.opening")} />;
 }
