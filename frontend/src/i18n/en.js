@@ -57,15 +57,6 @@ const en = {
     switchToLight: "Use light theme",
     switchToDark: "Use dark theme",
   },
-  environment: {
-    development: "DEV",
-    live: "LIVE",
-    developmentAria: "Development environment",
-    liveAria: "Production environment",
-    developmentTooltip:
-      "Development environment. Use test data only: make clean deletes it. Your production vault runs separately.",
-    liveTooltip: "Production environment. Changes here affect your saved entries.",
-  },
   auth: {
     tagline: "Your passwords, under your control.",
     setupTitle: "Create the first administrator",

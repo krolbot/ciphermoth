@@ -40,7 +40,6 @@ import { endSession } from "../api/session";
 import { useColorMode } from "../hooks/useColorMode";
 import { getCurrentUser } from "../utils";
 
-import EnvBadge from "./EnvBadge";
 import BrandMark from "./BrandMark";
 import PasswordChangeDialog from "./PasswordChangeDialog";
 import SettingsModal from "./SettingsModal";
@@ -214,12 +213,9 @@ const TopMenu = () => {
           <Text variant="subheader-1" ellipsis>
             {currentUser?.username}
           </Text>
-          <Flex alignItems="center" gap="spacing-1" wrap>
-            <Text color="secondary" variant="caption-2" ellipsis>
-              {t(`users.roles.${currentUser?.role}`)}
-            </Text>
-            <EnvBadge />
-          </Flex>
+          <Text color="secondary" variant="caption-2" ellipsis>
+            {t(`users.roles.${currentUser?.role}`)}
+          </Text>
         </Flex>
       </Flex>
       <Flex direction="column" qa="navigation-preferences">

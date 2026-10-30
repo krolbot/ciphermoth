@@ -57,15 +57,6 @@ const ru = {
     switchToLight: "Включить светлую тему",
     switchToDark: "Включить тёмную тему",
   },
-  environment: {
-    development: "DEV",
-    live: "LIVE",
-    developmentAria: "Среда разработки",
-    liveAria: "Рабочая среда",
-    developmentTooltip:
-      "Тестовая среда. Данные здесь временные: make clean сотрёт их. Рабочее хранилище находится отдельно.",
-    liveTooltip: "Рабочая среда. Изменения здесь влияют на сохранённые записи.",
-  },
   auth: {
     tagline: "Ваши пароли — под вашим контролем.",
     setupTitle: "Создайте первого администратора",

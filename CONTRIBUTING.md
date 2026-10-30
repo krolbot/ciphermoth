@@ -25,9 +25,8 @@ make dev     # build + start with hot-reload
 | Compose project | `ciphermoth-dev` | `ciphermoth` |
 | Vault volume (one SQLite file) | `ciphermoth-dev_vault_data` (disposable) | `ciphermoth_vault_data` (persistent) |
 | UI / API | `:3000` / `:8000` | `:3000` / `:8000` (configurable) |
-| Badge in app bar | amber **DEV** | calm **LIVE** |
 
-They are separate Compose projects with separate volumes, so the dev sandbox can never see or clobber your real vault. The environment badge is derived from the build itself (Vite dev server vs `vite build`), so there's nothing to configure. If you ever see amber, you're in the sandbox, don't type anything real.
+They are separate Compose projects with separate volumes, so the dev sandbox does not use the real vault's data.
 
 > Both default to port `3000`. That's fine because dev is local and the real vault runs on your server. If you ever run both on one host, remap the prod ports with `CIPHERMOTH_FRONTEND_PORT` / `CIPHERMOTH_BACKEND_PORT`.
 
